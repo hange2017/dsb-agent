@@ -72,7 +72,10 @@ jobs:
       - name: Package .vsix
         run: npx vsce package --out dist/dsb-agent-release.vsix
 
+      # Marketplace 发布:未配置 VSCE_PAT 时(如网页手动上传)不阻塞 GitHub Release。
+      # 若已配置,发布到官方 Marketplace;失败仅告警,不中断。
       - name: Publish to VS Code Marketplace
+        continue-on-error: true
         run: npx vsce publish -p "${{ secrets.VSCE_PAT }}" --packagePath dist/dsb-agent-release.vsix
 
       - name: Create GitHub Release
