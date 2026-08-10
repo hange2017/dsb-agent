@@ -1,5 +1,10 @@
 # DSBAgent
+##  使用方法
+1、在vscode中按下组合件ctr+shift+p，输入DSBAgent:Open，点击之后右侧弹出窗口
+2、点击agent界面右上角的设置图标，然后点击弹窗左下角的供应商和模型
+3、新建供应商处，名称随便乱写，填入两个关键信息bae URL和APIkey两项点击创建即可。并在下方供应商列表中，选择设置为当前即可关闭设置界面返回使用
 
+## 概述
 基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Agent（开源，非官方；操作方式参考主流编码 Agent 工具）。
 
 可对接任意 Anthropic Messages 兼容 `baseUrl`；内置模板默认指向公开兼容端点（技术地址见设置中的 Base URL，可随时改掉）。
