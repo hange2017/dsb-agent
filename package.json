@@ -175,7 +175,7 @@
         },
         "dsbAgent.compaction.historyTokenBudget": {
           "type": "number",
-          "default": 10000,
+          "default": 100000,
           "minimum": 0,
           "description": "%configuration.dsbAgent.compaction.historyTokenBudget.description%"
         },
@@ -190,7 +190,7 @@
         },
         "dsbAgent.contextWindowTokens": {
           "type": "number",
-          "default": 0,
+          "default": 1000000,
           "minimum": 0,
           "description": "%configuration.dsbAgent.contextWindowTokens.description%"
         },

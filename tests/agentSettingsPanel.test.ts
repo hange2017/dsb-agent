@@ -14,8 +14,8 @@ import { normalizeConfig, normalizeSplit } from "../src/settings/agentSettingsPa
 import { handleMessage } from "../src/settings/agentSettingsPanel";
 
 const defaultConfig = () => ({
-  windowTokens: 0,
-  budget: 10000,
+  windowTokens: 1000000,
+  budget: 100000,
   split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
   triggerPct: 0.75,
   targetPct: 0.5,
@@ -99,8 +99,8 @@ describe("normalizeConfig", () => {
       triggerPct: 0.75,
       targetPct: 0.5,
     });
-    expect(out.windowTokens).toBe(0);
-    expect(out.budget).toBe(10000);
+    expect(out.windowTokens).toBe(1000000);
+    expect(out.budget).toBe(100000);
     expect(out.split).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
   });
 
@@ -162,7 +162,7 @@ describe("agentSettingsPanel handleMessage", () => {
     expect(types).toContain("toast");
   });
 
-  it("rejects invalid budget with default 10000", async () => {
+  it("rejects invalid budget with default 100000", async () => {
     const { panel } = fakePanel();
     const updateBudget = vi.fn();
     const services = {
@@ -175,7 +175,7 @@ describe("agentSettingsPanel handleMessage", () => {
       panel as never,
       services,
     );
-    expect(updateBudget).toHaveBeenCalledWith({ ...defaultConfig(), budget: 10000 });
+    expect(updateBudget).toHaveBeenCalledWith({ ...defaultConfig(), budget: 100000 });
   });
 
   it("resets to defaults on reset_defaults", async () => {

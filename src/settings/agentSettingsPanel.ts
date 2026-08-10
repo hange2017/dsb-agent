@@ -90,8 +90,8 @@ export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetS
 /** 归一化 5 项配置:非法项回退默认;targetPct 须满足 0 < target < trigger ≤ 1。 */
 export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): AgentBudgetConfig {
   const def: AgentBudgetConfig = {
-    windowTokens: 0,
-    budget: 10000,
+    windowTokens: 1000000,
+    budget: 100000,
     split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     triggerPct: 0.75,
     targetPct: 0.5,
@@ -158,7 +158,7 @@ async function handleMessage(
         break;
       }
       case "reset_defaults": {
-        // 恢复默认 5 项:窗口 0 / 总预算 10000 / 45-20-35 / 触发 75% / 目标 50%
+        // 恢复默认 5 项:窗口 1M / 总预算 100K / 45-20-35 / 触发 75% / 目标 50%
         await services.updateBudget(normalizeConfig(undefined));
         await postState(panel, services);
         await toast(panel, t("已恢复默认参数", services.getLocale()));
