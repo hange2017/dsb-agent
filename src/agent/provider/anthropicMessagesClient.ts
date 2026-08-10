@@ -15,6 +15,21 @@ function positiveInt(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
 }
 
+/**
+ * 规范化 Anthropic 兼容 baseUrl:
+ * - 去尾斜杠
+ * - 若用户误填了 `/v1` 或 `/v1/messages`,剥掉以免拼出 `/v1/v1/messages`(典型 404)
+ */
+export function normalizeAnthropicBaseUrl(baseUrl: string): string {
+  let base = baseUrl
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+    .trim()
+    .replace(/\/+$/, "");
+  base = base.replace(/\/v1\/messages$/i, "");
+  base = base.replace(/\/v1$/i, "");
+  return base.replace(/\/+$/, "");
+}
+
 function reasoningTextFrom(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -87,7 +102,7 @@ export class AnthropicMessagesClient implements ProviderClient {
     fetchImpl?: typeof fetch;
   }) {
     this.apiKey = deps.apiKey;
-    this.baseUrl = deps.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = normalizeAnthropicBaseUrl(deps.baseUrl);
     this.model = deps.model;
     this.capabilities = deps.capabilities ?? { supportsVision: true, supportsThinking: true };
     this.fetchImpl = deps.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -125,8 +140,9 @@ export class AnthropicMessagesClient implements ProviderClient {
     }
 
     let response: Response;
+    const requestUrl = `${this.baseUrl}/v1/messages`;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/v1/messages`, {
+      response = await this.fetchImpl(requestUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -150,7 +166,8 @@ export class AnthropicMessagesClient implements ProviderClient {
       const detail = errText.slice(0, 500);
       if (response.status === 401) throw new Error("Invalid API key.");
       if (response.status === 429) throw new Error("Rate limited. Please retry later.");
-      throw new Error(`API error (${response.status}): ${detail}`);
+      const urlHint = response.status === 404 ? ` [${requestUrl}]` : "";
+      throw new Error(`API error (${response.status}): ${detail}${urlHint}`);
     }
 
     const reader = response.body?.getReader();

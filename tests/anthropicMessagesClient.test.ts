@@ -132,6 +132,34 @@ describe("AnthropicMessagesClient", () => {
     await expect(client.round([{ role: "user", content: "hi" }], { system: "s", tools: TOOLS }, () => {})).rejects.toThrow("Invalid API key");
   });
 
+  it("normalizes baseUrl that already ends with /v1 so request is not /v1/v1/messages", async () => {
+    let hit = "";
+    const fetchImpl = (async (url: string) => {
+      hit = String(url);
+      return makeFetch(200, sseBody([["content_block_stop", { index: 0 }]]))(url);
+    }) as typeof fetch;
+    const client = new AnthropicMessagesClient({
+      apiKey: "sk",
+      baseUrl: "https://api.deepseek.com/anthropic/v1",
+      model: "m",
+      fetchImpl,
+    });
+    await client.round([{ role: "user", content: "hi" }], { system: "s", tools: [] }, () => {});
+    expect(hit).toBe("https://api.deepseek.com/anthropic/v1/messages");
+  });
+
+  it("404 error includes the request URL for diagnosis", async () => {
+    const client = new AnthropicMessagesClient({
+      apiKey: "sk",
+      baseUrl: "https://api.deepseek.com",
+      model: "m",
+      fetchImpl: makeFetch(404, "not found"),
+    });
+    await expect(
+      client.round([{ role: "user", content: "hi" }], { system: "s", tools: [] }, () => {}),
+    ).rejects.toThrow(/API error \(404\).*https:\/\/api\.deepseek\.com\/v1\/messages/);
+  });
+
   it("sends thinking disabled when capabilities.supportsThinking is false", async () => {
     const stream = sseBody([
       ["content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }],
