@@ -71,6 +71,37 @@
   .model-cap label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
   .empty { opacity: 0.6; font-size: 12px; padding: 8px 0; }
   .hidden { display: none !important; }
+  .popover {
+    position: fixed;
+    z-index: 1000;
+    min-width: 260px;
+    max-width: min(420px, calc(100vw - 16px));
+    background: var(--vscode-editor-background, #1e1e1e);
+    border: 1px solid var(--border, rgba(127, 127, 127, 0.4));
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .popover-title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .popover input {
+    background: var(--vscode-input-background);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    min-width: 0;
+  }
+  .popover-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
+  .popover-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg); border-radius: 4px;
+    padding: 3px 10px; cursor: pointer; font-size: 12px;
+  }
+  .popover-actions button.primary { background: var(--accent, #1d4ed8); color: #fff; border-color: transparent; }
 </style>
 </head>
 <body>

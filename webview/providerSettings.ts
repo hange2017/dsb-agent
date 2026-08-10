@@ -3,7 +3,8 @@
  * 协议:载入后 postMessage({ type: "ready" });
  * host 下发 { type: "state"; providers; activeProviderId; models } / { type: "toast"; ... };
  * 用户操作发送 create_provider / update_provider / remove_provider / set_active /
- * set_api_key / refresh_models / set_capability / import_ccswitch。
+ * set_api_key / prompt_api_key / prompt_edit_provider / refresh_models /
+ * set_capability / import_ccswitch / test_connection。
  */
 
 declare function acquireVsCodeApi(): {
@@ -69,9 +70,9 @@ type WebviewMessage =
   | { type: "refresh_models"; providerId?: string }
   | { type: "set_capability"; providerId: string; modelId: string; supportsVision?: boolean; supportsThinking?: boolean }
   | { type: "import_ccswitch" }
-  | { type: "test_connection"; providerId: string };
-
-const ALL_MODES = ["agent", "plan", "ask"] as const;
+  | { type: "test_connection"; providerId: string }
+  | { type: "prompt_api_key"; id: string }
+  | { type: "prompt_edit_provider"; id: string };
 
 const post = (msg: WebviewMessage): void => vscode.postMessage(msg);
 
@@ -142,111 +143,121 @@ function checkbox(
   return lab;
 }
 
-// ---- 供应商卡片 ----
+// ---- 点击位置弹窗(popover)----
+// 「配置 API Key」「编辑」在按钮点击位置弹出小窗直接输入保存,避免跳转/打断整体性。
 
-interface EditPanelRefs {
-  name: HTMLInputElement;
-  baseUrl: HTMLInputElement;
-  modelListUrl: HTMLInputElement;
-  vision: HTMLInputElement;
-  thinking: HTMLInputElement;
-  modes: Map<string, HTMLInputElement>;
+let activePopover: HTMLElement | undefined;
+let popoverCleanup: (() => void) | undefined;
+
+function closePopover(): void {
+  if (activePopover) activePopover.remove();
+  activePopover = undefined;
+  popoverCleanup?.();
+  popoverCleanup = undefined;
 }
 
-function buildEditPanel(p: ProviderView): { panel: HTMLFormElement; refs: EditPanelRefs } {
-  const panel = el("form", "inline-form hidden") as HTMLFormElement;
-  panel.hidden = true;
+function openPopover(anchor: HTMLElement, build: (container: HTMLElement) => void): void {
+  closePopover();
+  const pop = el("div", "popover");
+  build(pop);
+  document.body.append(pop);
 
-  const name = el("input") as HTMLInputElement;
-  name.dataset.field = "name";
-  name.placeholder = t("名称", locale);
-  name.required = true;
-  name.value = p.name;
-
-  const baseUrl = el("input") as HTMLInputElement;
-  baseUrl.dataset.field = "baseUrl";
-  baseUrl.placeholder = "Base URL";
-  baseUrl.required = true;
-  baseUrl.value = p.baseUrl;
-
-  const modelListUrl = el("input") as HTMLInputElement;
-  modelListUrl.dataset.field = "modelListUrl";
-  modelListUrl.className = "full";
-  modelListUrl.placeholder = t("自定义模型列表 URL(留空则移除)", locale);
-  modelListUrl.value = p.modelListUrl ?? "";
-
-  const vision = checkbox(t("默认 vision", locale), p.defaultCapabilities.supportsVision, { cap: "supportsVision" });
-  const thinking = checkbox(t("默认 thinking", locale), p.defaultCapabilities.supportsThinking, { cap: "supportsThinking" });
-  const modes = new Map<string, HTMLInputElement>();
-  for (const m of ALL_MODES) {
-    modes.set(m, checkbox(m, p.modes.includes(m), { mode: m }));
+  // 以按钮(anchor)为参考定位,贴近点击位置;视口边缘自动翻转/收拢
+  const rect = anchor.getBoundingClientRect();
+  const popRect = pop.getBoundingClientRect();
+  const gap = 6;
+  let top = rect.bottom + gap;
+  if (top + popRect.height > window.innerHeight - 8 && rect.top - gap - popRect.height > 0) {
+    top = rect.top - gap - popRect.height;
   }
+  let left = rect.left;
+  if (left + popRect.width > window.innerWidth - 8) {
+    left = Math.max(8, window.innerWidth - 8 - popRect.width);
+  }
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  activePopover = pop;
 
-  const checks = el("div", "checks");
-  checks.append(vision, thinking, ...modes.values(), el("span", "hint", t("模式集合", locale)));
-
-  const save = el("button", "primary", t("保存", locale)) as HTMLButtonElement;
-  save.type = "submit";
-  const cancel = el("button", undefined, t("取消", locale)) as HTMLButtonElement;
-  cancel.type = "button";
-  cancel.addEventListener("click", () => {
-    panel.hidden = true;
-  });
-  const actions = el("div", "actions");
-  actions.append(save, cancel);
-
-  panel.append(name, baseUrl, modelListUrl, checks, actions);
-  panel.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const patch = {
-      name: name.value.trim() || p.name,
-      baseUrl: baseUrl.value.trim() || p.baseUrl,
-      modelListUrl: modelListUrl.value.trim() || undefined,
-      defaultCapabilities: {
-        supportsVision: vision.querySelector("input")?.checked ?? p.defaultCapabilities.supportsVision,
-        supportsThinking: thinking.querySelector("input")?.checked ?? p.defaultCapabilities.supportsThinking,
-      },
-      modes: ALL_MODES.filter((m) => modes.get(m)?.checked ?? false),
-    };
-    post({ type: "update_provider", id: p.id, patch });
-    panel.hidden = true;
-  });
-
-  return { panel, refs: { name, baseUrl, modelListUrl, vision: vision.querySelector("input") as HTMLInputElement, thinking: thinking.querySelector("input") as HTMLInputElement, modes } };
+  const onDocMouseDown = (e: MouseEvent): void => {
+    if (!pop.contains(e.target as Node)) closePopover();
+  };
+  const onEsc = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") closePopover();
+  };
+  document.addEventListener("mousedown", onDocMouseDown);
+  window.addEventListener("keydown", onEsc);
+  popoverCleanup = () => {
+    document.removeEventListener("mousedown", onDocMouseDown);
+    window.removeEventListener("keydown", onEsc);
+  };
+  const firstInput = pop.querySelector("input") as HTMLInputElement | null;
+  firstInput?.focus();
 }
 
-function buildApiKeyPanel(p: ProviderView): HTMLFormElement {
-  const panel = el("form", "inline-form hidden") as HTMLFormElement;
-  panel.hidden = true;
-
-  const input = el("input") as HTMLInputElement;
-  input.className = "full";
-  input.type = "password";
-  input.placeholder = t("API Key(存入 secretStorage,不落盘明文)", locale);
-  input.required = true;
-
-  const save = el("button", "primary", t("保存", locale)) as HTMLButtonElement;
-  save.type = "submit";
-  const cancel = el("button", undefined, t("取消", locale)) as HTMLButtonElement;
-  cancel.type = "button";
-  cancel.addEventListener("click", () => {
-    panel.hidden = true;
-  });
-  const actions = el("div", "actions");
-  actions.append(save, cancel);
-
-  panel.append(input, actions);
-  panel.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const key = input.value.trim();
-    if (!key) return;
-    post({ type: "set_api_key", id: p.id, apiKey: key });
-    input.value = "";
-    panel.hidden = true;
-  });
-  return panel;
+/** 保存类按钮小助手(popover 内样式与卡片按钮一致)。 */
+function popoverButton(text: string, primary: boolean): HTMLButtonElement {
+  const btn = el("button", primary ? "primary" : undefined, text) as HTMLButtonElement;
+  btn.type = "button";
+  return btn;
 }
 
+function openApiKeyPopover(p: ProviderView, anchor: HTMLElement): void {
+  openPopover(anchor, (pop) => {
+    pop.append(el("div", "popover-title", t("配置 API Key", locale)));
+    const input = el("input") as HTMLInputElement;
+    input.type = "password";
+    input.placeholder = "sk-...";
+    input.className = "full";
+    const actions = el("div", "popover-actions");
+    const saveBtn = popoverButton(t("保存", locale), true);
+    const cancelBtn = popoverButton(t("取消", locale), false);
+    saveBtn.addEventListener("click", () => {
+      const key = input.value.trim();
+      if (!key) return;
+      post({ type: "set_api_key", id: p.id, apiKey: key });
+      closePopover();
+    });
+    cancelBtn.addEventListener("click", closePopover);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveBtn.click();
+    });
+    actions.append(saveBtn, cancelBtn);
+    pop.append(input, actions);
+  });
+}
+
+function openEditPopover(p: ProviderView, anchor: HTMLElement): void {
+  openPopover(anchor, (pop) => {
+    pop.append(el("div", "popover-title", t("编辑", locale)));
+    const nameInput = el("input") as HTMLInputElement;
+    nameInput.value = p.name;
+    nameInput.placeholder = t("名称", locale);
+    const urlInput = el("input") as HTMLInputElement;
+    urlInput.value = p.baseUrl;
+    urlInput.placeholder = "https://api.deepseek.com/anthropic";
+    const modelListInput = el("input") as HTMLInputElement;
+    modelListInput.value = p.modelListUrl ?? "";
+    modelListInput.placeholder = t("自定义模型列表 URL(留空则移除)", locale);
+    const actions = el("div", "popover-actions");
+    const saveBtn = popoverButton(t("保存", locale), true);
+    const cancelBtn = popoverButton(t("取消", locale), false);
+    saveBtn.addEventListener("click", () => {
+      const name = nameInput.value.trim() || p.name;
+      const baseUrl = urlInput.value.trim() || p.baseUrl;
+      post({
+        type: "update_provider",
+        id: p.id,
+        patch: { name, baseUrl, modelListUrl: modelListInput.value.trim() || undefined },
+      });
+      closePopover();
+    });
+    cancelBtn.addEventListener("click", closePopover);
+    actions.append(saveBtn, cancelBtn);
+    pop.append(nameInput, urlInput, modelListInput, actions);
+  });
+}
+
+// ---- 供应商卡片 ----
 function renderProviderCard(p: ProviderView, active: boolean): HTMLElement {
   const card = el("div", `card${active ? " active" : ""}`);
   card.dataset.providerId = p.id;
@@ -262,27 +273,17 @@ function renderProviderCard(p: ProviderView, active: boolean): HTMLElement {
   card.append(head);
 
   const actions = el("div", "card-actions");
-  const setActiveBtn = el("button", active ? undefined : "primary", t("设为当前", locale)) as HTMLButtonElement;
+  const setActiveBtn = el("button", active ? undefined : "primary", t("设为当前使用", locale)) as HTMLButtonElement;
+  setActiveBtn.type = "button";
   setActiveBtn.disabled = active;
   setActiveBtn.addEventListener("click", () => post({ type: "set_active", id: p.id }));
 
-  const { panel: editPanel, refs } = buildEditPanel(p);
   const editBtn = el("button", undefined, t("编辑", locale)) as HTMLButtonElement;
-  editBtn.addEventListener("click", () => {
-    // 每次展开都用当前值重填(期间 host 状态可能已变)
-    refs.name.value = p.name;
-    refs.baseUrl.value = p.baseUrl;
-    refs.modelListUrl.value = p.modelListUrl ?? "";
-    refs.vision.checked = p.defaultCapabilities.supportsVision;
-    refs.thinking.checked = p.defaultCapabilities.supportsThinking;
-    for (const m of ALL_MODES) {
-      const box = refs.modes.get(m);
-      if (box) box.checked = p.modes.includes(m);
-    }
-    editPanel.hidden = !editPanel.hidden;
-  });
+  editBtn.type = "button";
+  editBtn.addEventListener("click", () => openEditPopover(p, editBtn));
 
   const deleteBtn = el("button", "danger", t("删除", locale)) as HTMLButtonElement;
+  deleteBtn.type = "button";
   deleteBtn.addEventListener("click", () => {
     // 两步确认:再次点击才真正删除(webview 中 confirm() 不可用)
     if (deleteBtn.dataset.confirm !== "1") {
@@ -298,12 +299,11 @@ function renderProviderCard(p: ProviderView, active: boolean): HTMLElement {
   });
 
   const apiKeyBtn = el("button", undefined, t("配置 API Key", locale)) as HTMLButtonElement;
-  const apiKeyPanel = buildApiKeyPanel(p);
-  apiKeyBtn.addEventListener("click", () => {
-    apiKeyPanel.hidden = !apiKeyPanel.hidden;
-  });
+  apiKeyBtn.type = "button";
+  apiKeyBtn.addEventListener("click", () => openApiKeyPopover(p, apiKeyBtn));
 
   const refreshBtn = el("button", undefined, t("刷新模型", locale)) as HTMLButtonElement;
+  refreshBtn.type = "button";
   refreshBtn.addEventListener("click", () => {
     refreshBtn.disabled = true;
     refreshBtn.textContent = t("刷新中…", locale);
@@ -315,6 +315,7 @@ function renderProviderCard(p: ProviderView, active: boolean): HTMLElement {
   });
 
   const testBtn = el("button", undefined, t("测试连接", locale)) as HTMLButtonElement;
+  testBtn.type = "button";
   testBtn.addEventListener("click", () => {
     testBtn.disabled = true;
     testBtn.textContent = t("测试中…", locale);
@@ -326,7 +327,7 @@ function renderProviderCard(p: ProviderView, active: boolean): HTMLElement {
   });
 
   actions.append(setActiveBtn, editBtn, deleteBtn, apiKeyBtn, refreshBtn, testBtn);
-  card.append(actions, editPanel, apiKeyPanel);
+  card.append(actions);
   return card;
 }
 

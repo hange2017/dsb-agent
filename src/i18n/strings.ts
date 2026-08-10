@@ -281,7 +281,7 @@ export const en: Record<string, string> = {
   "当前": "Current",
   "Anthropic 兼容": "Anthropic-compatible",
   "OpenAI(聊天不可用)": "OpenAI (unavailable in chat)",
-  "设为当前": "Set active",
+  "设为当前使用": "Set as active",
   "编辑": "Edit",
   "确认删除?": "Confirm delete?",
   "刷新中…": "Refreshing…",
