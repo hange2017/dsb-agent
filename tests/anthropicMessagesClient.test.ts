@@ -61,6 +61,53 @@ describe("AnthropicMessagesClient", () => {
     expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 2 });
   });
 
+  it("parses cache hit/miss tokens from usage (Anthropic & DeepSeek style)", async () => {
+    const stream = sseBody([
+      ["content_block_start", { index: 0, content_block: { type: "text", text: "" } }],
+      ["content_block_delta", { index: 0, delta: { type: "text_delta", text: "hi" } }],
+      ["content_block_stop", { index: 0 }],
+      [
+        "message_delta",
+        {
+          usage: {
+            input_tokens: 100,
+            output_tokens: 7,
+            cache_read_input_tokens: 60,
+            cache_creation_input_tokens: 40,
+          },
+        },
+      ],
+    ]);
+    const client = new AnthropicMessagesClient({ apiKey: "sk-test", baseUrl: "https://api.deepseek.com/anthropic", model: "deepseek-v4-flash", fetchImpl: makeFetch(200, stream) });
+    const result = await client.round([{ role: "user", content: "hi" }], { system: "sys", tools: TOOLS }, () => {});
+    expect(result.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 7,
+      cacheReadTokens: 60,
+      cacheWriteTokens: 40,
+    });
+  });
+
+  it("falls back to DeepSeek cache token names when Anthropic names absent", async () => {
+    const stream = sseBody([
+      ["content_block_start", { index: 0, content_block: { type: "text", text: "" } }],
+      ["content_block_delta", { index: 0, delta: { type: "text_delta", text: "hi" } }],
+      ["content_block_stop", { index: 0 }],
+      [
+        "message_delta",
+        { usage: { input_tokens: 200, output_tokens: 9, prompt_cache_hit_tokens: 120, prompt_cache_miss_tokens: 80 } },
+      ],
+    ]);
+    const client = new AnthropicMessagesClient({ apiKey: "sk-test", baseUrl: "https://api.deepseek.com/anthropic", model: "deepseek-v4-flash", fetchImpl: makeFetch(200, stream) });
+    const result = await client.round([{ role: "user", content: "hi" }], { system: "sys", tools: TOOLS }, () => {});
+    expect(result.usage).toEqual({
+      inputTokens: 200,
+      outputTokens: 9,
+      cacheReadTokens: 120,
+      cacheWriteTokens: 80,
+    });
+  });
+
   it("collects tool_use blocks", async () => {
     const stream = sseBody([
       ["content_block_start", { index: 0, content_block: { type: "tool_use", id: "t1", name: "Read", input: { path: "a.txt" } } }],

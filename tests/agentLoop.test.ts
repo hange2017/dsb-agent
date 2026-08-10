@@ -419,6 +419,23 @@ describe("AgentSession", () => {
     });
   });
 
+  it("reports real usage + cache tokens via onProviderRound", async () => {
+    const { provider } = fakeProvider([
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [], usage: { inputTokens: 1234, outputTokens: 56, cacheReadTokens: 900, cacheWriteTokens: 334 } } },
+    ]);
+    const rounds: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }> = [];
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      onProviderRound: (u) => rounds.push(u),
+    });
+    await session.send("hi", () => {});
+    expect(rounds).toEqual([{ inputTokens: 1234, outputTokens: 56, cacheReadTokens: 900, cacheWriteTokens: 334 }]);
+  });
+
   it("compacts with default trigger ratio 0.75 (200000/256000 ≈ 0.781)", async () => {
     const { provider } = fakeProvider([
       {

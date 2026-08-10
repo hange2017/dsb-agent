@@ -10,7 +10,14 @@ export type ProviderToolUse = { id: string; name: string; input: Record<string, 
 export type ProviderRoundResult = {
   blocks: ProviderBlock[];
   toolUses: ProviderToolUse[];
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    /** 缓存命中的输入 token(Anthropic cache_read_input_tokens / DeepSeek prompt_cache_hit_tokens)。 */
+    cacheReadTokens?: number;
+    /** 未命中缓存的输入 token(Anthropic cache_creation_input_tokens / DeepSeek prompt_cache_miss_tokens)。 */
+    cacheWriteTokens?: number;
+  };
 };
 
 export type ProviderAssistantContent = ProviderBlock[];

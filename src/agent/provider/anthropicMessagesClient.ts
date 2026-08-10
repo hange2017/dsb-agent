@@ -254,11 +254,35 @@ export class AnthropicMessagesClient implements ProviderClient {
           break;
         }
         case "message_delta": {
-          const md = data as { usage?: { input_tokens?: number; output_tokens?: number } };
+          const md = data as {
+            usage?: {
+              input_tokens?: number;
+              output_tokens?: number;
+              // Anthropic 风格:缓存命中/新建
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+              // DeepSeek 风格:缓存命中/未命中
+              prompt_cache_hit_tokens?: number;
+              prompt_cache_miss_tokens?: number;
+            };
+          };
           if (md.usage) {
+            const u = md.usage;
             usage = {
-              inputTokens: md.usage.input_tokens ?? 0,
-              outputTokens: md.usage.output_tokens ?? 0,
+              inputTokens: u.input_tokens ?? 0,
+              outputTokens: u.output_tokens ?? 0,
+              cacheReadTokens:
+                (u.cache_read_input_tokens ?? 0) > 0
+                  ? (u.cache_read_input_tokens ?? 0)
+                  : (u.prompt_cache_hit_tokens ?? 0) > 0
+                    ? (u.prompt_cache_hit_tokens ?? 0)
+                    : undefined,
+              cacheWriteTokens:
+                (u.cache_creation_input_tokens ?? 0) > 0
+                  ? (u.cache_creation_input_tokens ?? 0)
+                  : (u.prompt_cache_miss_tokens ?? 0) > 0
+                    ? (u.prompt_cache_miss_tokens ?? 0)
+                    : undefined,
             };
           }
           break;

@@ -370,6 +370,10 @@ export class ChatViewProvider {
             onProviderSend: (breakdown) => {
               this.statsStore?.record("provider_send", breakdown as unknown as Record<string, unknown>);
             },
+            // 发送后打点:记录模型返回的真实 usage(含缓存命中 token),供命中率统计
+            onProviderRound: (usage) => {
+              this.statsStore?.record("provider_round", usage);
+            },
             // 压缩打点:记录每次压缩的位置 × 原因 × before/after tokens(只记数字不记内容)
             onCompaction: (ev) => {
               this.statsStore?.record("compaction", ev as unknown as Record<string, unknown>);

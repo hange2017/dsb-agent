@@ -15,6 +15,10 @@ import { ContextManager } from "./contextManager";
 import type { ContextStore } from "../context/contextStore";
 import { CompactionStats, type CompactionStatsSnapshot } from "./compactionStats";
 import { estimateProviderSendTokens, type ProviderSendBreakdown } from "../stats/providerSendStats";
+import type { ProviderRoundResult } from "./provider/types";
+
+/** 一次 provider.round 的真实 usage(来自 API 响应 usage 字段;缓存字段按厂商字段名归一化)。 */
+export type ProviderRoundUsage = NonNullable<ProviderRoundResult["usage"]>;
 import {
   findConsumedToolResults,
   planToolResultTrim,
@@ -44,7 +48,7 @@ export type AgentLoopEvent =
       input?: unknown;
       detail?: string;
     }
-  | { type: "usage"; inputTokens?: number; outputTokens?: number }
+  | { type: "usage"; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number }
   | { type: "compaction_stats"; stats: CompactionStatsSnapshot }
   | { type: "done" }
   | { type: "error"; message: string };
@@ -114,6 +118,13 @@ export class AgentSession {
       targetPct?: number;
       /** 每次 provider.round 发送前的消息组成统计(只记 token 数,不记内容);缺省不回调。 */
       onProviderSend?: (breakdown: ProviderSendBreakdown) => void;
+      /** 每次 provider.round 成功返回后,记录真实 usage(含缓存命中 token);缺省不回调。 */
+      onProviderRound?: (usage: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+      }) => void;
       /** 每次压缩的 4 位置 before/after token 统计(只记数字,不记内容);缺省不回调。 */
       onCompaction?: (ev: CompactionRecord) => void;
       /** subagent 嵌套深度;顶层为 0,子代理工厂按 +1 创建嵌套会话。 */
@@ -427,7 +438,15 @@ export class AgentSession {
           rollback();
           return;
         }
-        if (result.usage) onEvent({ type: "usage", inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens });
+        if (result.usage) {
+          onEvent({ type: "usage", inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens });
+          this.deps.onProviderRound?.({
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            ...(result.usage.cacheReadTokens !== undefined ? { cacheReadTokens: result.usage.cacheReadTokens } : {}),
+            ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
+          });
+        }
         this.contextManager.track(result.usage);
 
         // 去掉 SSE 稀疏下标留下的空洞;以实际入历史的 tool_use 块为准收集待执行列表,
