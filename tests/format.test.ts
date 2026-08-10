@@ -88,4 +88,26 @@ describe("linkifyJumpables", () => {
     expect(out).toContain('data-jump-path="src/main.ts"');
     expect(out).toContain("</td>");
   });
+
+  it("linkifies paths/urls inside inline code (agent 表格/列表常见 `` `path` `` 风格)", () => {
+    // formatInline 之后路径在 <code> 内:inline code 不算代码块,必须可跳转
+    const out = linkifyJumpables(
+      "<code>src/agent/contextManager.ts</code> <code>src/agent/agentLoop.ts:139</code> <code>https://example.com/x</code>"
+    );
+    expect(out).toContain('data-jump-path="src/agent/contextManager.ts"');
+    expect(out).toContain('data-jump-path="src/agent/agentLoop.ts"');
+    expect(out).toContain('data-jump-line="139"');
+    expect(out).toContain('data-jump-url="https://example.com/x"');
+  });
+
+  it("skips paths inside inline code inside a code block", () => {
+    const out = linkifyJumpables("<pre><code>see `src/a.ts` here\n</code></pre>");
+    expect(out).not.toContain("jumpable");
+  });
+
+  it("renderMarkdown marks inline-code paths in markdown tables", () => {
+    const md = "| 文件 | 职责 |\n|---|---|\n| `src/agent/contextManager.ts` | 主控 |";
+    const out = renderMarkdown(md);
+    expect(out).toContain('data-jump-path="src/agent/contextManager.ts"');
+  });
 });

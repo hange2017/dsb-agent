@@ -135,21 +135,25 @@ function linkifyPlain(text: string): string {
   return out;
 }
 
-/** 遍历已渲染 HTML,跳过标签/实体与 pre/code 代码块,把纯文本段里的路径与 URL 标记为可跳转。 */
+/**
+ * 遍历已渲染 HTML,把纯文本段里的路径与 URL 标记为可跳转。
+ * 只跳过块级 <pre>(整体代码块,内容已转义,路径以文件名首行形式存在,由 markJumpableInText 处理);
+ * 行内 <code> 内的路径/URL 同样需要跳转(agent 输出常见 `` `path:line` `` 风格),不跳过。
+ */
 export function linkifyJumpables(html: string): string {
   let out = "";
   let last = 0;
-  let inCode = 0;
+  let inPre = 0;
   for (const m of html.matchAll(HTML_TOKEN_RE)) {
     const tag = m[0];
     const seg = html.slice(last, m.index);
-    out += inCode > 0 ? seg : linkifyPlain(seg);
+    out += inPre > 0 ? seg : linkifyPlain(seg);
     out += tag;
-    if (/^<(pre|code)\b/.test(tag)) inCode++;
-    else if (/^<\/(pre|code)>/.test(tag) && inCode > 0) inCode--;
+    if (/^<pre\b/.test(tag)) inPre++;
+    else if (/^<\/pre>/.test(tag) && inPre > 0) inPre--;
     last = (m.index ?? 0) + tag.length;
   }
   const seg = html.slice(last);
-  out += inCode > 0 ? seg : linkifyPlain(seg);
+  out += inPre > 0 ? seg : linkifyPlain(seg);
   return out;
 }
