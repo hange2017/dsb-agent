@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Compile (esbuild)
+        run: npm run compile
+
+      - name: Package .vsix (smoke)
+        run: npx vsce package --out dist/dsb-agent-ci.vsix --allow-missing-repository --no-rewrite-relative-links
+        # 正式发布前移除 --allow-missing-repository / --no-rewrite-relative-links
+        # 并确保 package.json 已配置真实 repository 字段。
+
+      - name: Verify vsix artifact
+        run: |
+          test -f dist/dsb-agent-ci.vsix
+          ls -lh dist/dsb-agent-ci.vsix
+          unzip -l dist/dsb-agent-ci.vsix | grep -E "extension.js|webview/main.js|bin/rg" || true
+
+      - name: Upload vsix artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsb-agent-vsix
+          path: dist/dsb-agent-ci.vsix
+          if-no-files-found: error
+          retention-days: 7

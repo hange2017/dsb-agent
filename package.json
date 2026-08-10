@@ -1,0 +1,258 @@
+{
+  "name": "dsb-agent",
+  "displayName": "DSBAgent",
+  "description": "基于 Anthropic Messages 兼容 API 的 VS Code 编码 Agent（DSBAgent；可对接任意兼容端点）",
+  "version": "0.1.0",
+  "publisher": "zhaoNingHan",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Chat",
+    "Other",
+    "AI",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dsbAgent.open",
+        "title": "%commands.dsbAgent.open.title%"
+      },
+      {
+        "command": "dsbAgent.newSession",
+        "title": "%commands.dsbAgent.newSession.title%"
+      },
+      {
+        "command": "dsbAgent.setApiKey",
+        "title": "%commands.dsbAgent.setApiKey.title%"
+      },
+      {
+        "command": "dsbAgent.memory",
+        "title": "%commands.dsbAgent.memory.title%"
+      },
+      {
+        "command": "dsbAgent.memoryManage",
+        "title": "%commands.dsbAgent.memoryManage.title%"
+      },
+      {
+        "command": "dsbAgent.contextBrowse",
+        "title": "%commands.dsbAgent.contextBrowse.title%"
+      },
+      {
+        "command": "dsbAgent.rewind",
+        "title": "%commands.dsbAgent.rewind.title%"
+      },
+      {
+        "command": "dsbAgent.listSessions",
+        "title": "%commands.dsbAgent.listSessions.title%"
+      },
+      {
+        "command": "dsbAgent.pluginAdd",
+        "title": "%commands.dsbAgent.pluginAdd.title%"
+      },
+      {
+        "command": "dsbAgent.pluginInstall",
+        "title": "%commands.dsbAgent.pluginInstall.title%"
+      },
+      {
+        "command": "dsbAgent.mcpConnect",
+        "title": "%commands.dsbAgent.mcpConnect.title%"
+      },
+      {
+        "command": "dsbAgent.hooks",
+        "title": "%commands.dsbAgent.hooks.title%"
+      },
+      {
+        "command": "dsbAgent.plugins",
+        "title": "%commands.dsbAgent.plugins.title%"
+      },
+      {
+        "command": "dsbAgent.skill",
+        "title": "%commands.dsbAgent.skill.title%"
+      },
+      {
+        "command": "dsbAgent.captureEditorCopy",
+        "title": "%commands.dsbAgent.captureEditorCopy.title%"
+      },
+      {
+        "command": "dsbAgent.attachTerminalClipboard",
+        "title": "%commands.dsbAgent.attachTerminalClipboard.title%"
+      },
+      {
+        "command": "dsbAgent.manageProviders",
+        "title": "%commands.dsbAgent.manageProviders.title%"
+      },
+      {
+        "command": "dsbAgent.providerSettings",
+        "title": "%commands.dsbAgent.providerSettings.title%"
+      },
+      {
+        "command": "dsbAgent.agentSettings",
+        "title": "%commands.dsbAgent.agentSettings.title%"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dsbAgent.captureEditorCopy",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "editorTextFocus && !editorReadonly && config.dsbAgent.autoChipsOnPaste"
+      }
+    ],
+    "configuration": {
+      "title": "DSBAgent",
+      "properties": {
+        "dsbAgent.baseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com/anthropic",
+          "description": "%configuration.dsbAgent.baseUrl.description%"
+        },
+        "dsbAgent.providers": {
+          "type": "array",
+          "default": [],
+          "description": "%configuration.dsbAgent.providers.description%"
+        },
+        "dsbAgent.activeProviderId": {
+          "type": "string",
+          "default": "",
+          "description": "%configuration.dsbAgent.activeProviderId.description%"
+        },
+        "dsbAgent.model": {
+          "type": "string",
+          "default": "deepseek-v4-flash",
+          "description": "%configuration.dsbAgent.model.description%"
+        },
+        "dsbAgent.fallbackModels": {
+          "type": "string",
+          "default": "deepseek-v4-pro",
+          "description": "%configuration.dsbAgent.fallbackModels.description%"
+        },
+        "dsbAgent.enableNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.dsbAgent.enableNotifications.description%"
+        },
+        "dsbAgent.vimMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "%configuration.dsbAgent.vimMode.description%"
+        },
+        "dsbAgent.memoryDir": {
+          "type": "string",
+          "default": "~/.dsb/memory",
+          "description": "%configuration.dsbAgent.memoryDir.description%"
+        },
+        "dsbAgent.permissionMode": {
+          "type": "string",
+          "enum": [
+            "default",
+            "acceptEdits",
+            "bypassPermissions"
+          ],
+          "default": "default",
+          "description": "%configuration.dsbAgent.permissionMode.description%"
+        },
+        "dsbAgent.language": {
+          "type": "string",
+          "enum": [
+            "",
+            "zh",
+            "en"
+          ],
+          "default": "",
+          "description": "%configuration.dsbAgent.language.description%"
+        },
+        "dsbAgent.autoChipsOnPaste": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.dsbAgent.autoChipsOnPaste.description%"
+        },
+        "dsbAgent.compaction.historyTokenBudget": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 0,
+          "description": "%configuration.dsbAgent.compaction.historyTokenBudget.description%"
+        },
+        "dsbAgent.compaction.budgetSplit": {
+          "type": "object",
+          "default": {
+            "compacted": 0.45,
+            "thinking": 0.2,
+            "tail": 0.35
+          },
+          "description": "%configuration.dsbAgent.compaction.budgetSplit.description%"
+        },
+        "dsbAgent.contextWindowTokens": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "%configuration.dsbAgent.contextWindowTokens.description%"
+        },
+        "dsbAgent.compaction.triggerPct": {
+          "type": "number",
+          "default": 0.75,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "%configuration.dsbAgent.compaction.triggerPct.description%"
+        },
+        "dsbAgent.compaction.targetPct": {
+          "type": "number",
+          "default": 0.5,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "%configuration.dsbAgent.compaction.targetPct.description%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "licenses:inventory": "node scripts/generate-third-party-notices.mjs",
+    "vscode:prepublish": "npm run compile",
+    "install-extension": "bash scripts/install-extension.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.93.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "cheerio": "^1.2.0",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
+  "icon": "resources/icon.png",
+  "keywords": [
+    "AI",
+    "agent",
+    "coding agent",
+    "LLM",
+    "Anthropic Messages",
+    "Chat",
+    "DeepSeek",
+    "assistant",
+    "context compaction"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hange2017/dsb-agent.git"
+  }
+}

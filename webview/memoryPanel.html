@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource}; img-src ${cspSource} data:;">
+<link href="${styles}" rel="stylesheet">
+<style>
+  body { display: block; height: auto; padding: 16px 20px; }
+  h1 { font-size: 16px; margin: 0; }
+  h2 { font-size: 13px; margin: 18px 0 8px; opacity: 0.9; font-weight: 600; }
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar h1 { margin-right: auto; }
+  .toolbar h2 { margin: 0; }
+  .hint { font-size: 11px; opacity: 0.65; }
+  .project-key { font-size: 11px; opacity: 0.7; font-family: var(--vscode-editor-font-family, monospace); }
+  #status { font-size: 12px; opacity: 0.8; flex: 1 1 100%; min-height: 16px; }
+  #status.error { color: #f43f5e; opacity: 1; }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: rgba(127, 127, 127, 0.06);
+  }
+  .card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card-name { font-weight: 600; font-size: 13px; }
+  .card-updated { font-size: 10px; opacity: 0.55; margin-left: auto; }
+  .card-desc { font-size: 12px; opacity: 0.85; margin-top: 4px; word-break: break-all; }
+  .card-body {
+    margin: 8px 0 0; padding: 8px;
+    background: rgba(127, 127, 127, 0.08);
+    border-radius: 6px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow: auto;
+  }
+  .badge {
+    font-size: 10px; line-height: 1.6;
+    padding: 0 6px; border-radius: 8px;
+    background: #1d4ed8; color: #fff;
+  }
+  .badge.global { background: #7c3aed; }
+  .card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .card-actions button, .toolbar button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg); border-radius: 4px;
+    padding: 3px 8px; cursor: pointer; font-size: 12px;
+  }
+  .card-actions button.primary { background: var(--accent, #1d4ed8); color: #fff; border-color: transparent; }
+  .card-actions button.danger { color: #f43f5e; border-color: rgba(244, 63, 94, 0.5); }
+  form.inline-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+  form.inline-form input, form.inline-form textarea {
+    background: var(--vscode-input-background);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    min-width: 0;
+    font-family: inherit;
+  }
+  form.inline-form textarea.full { grid-column: 1 / -1; min-height: 96px; resize: vertical; }
+  form.inline-form .actions { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; }
+  .empty { opacity: 0.6; font-size: 12px; padding: 8px 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <h1 data-i18n="记忆管理">记忆管理</h1>
+  <span class="hint" data-i18n="项目记忆按 git 仓库隔离;全局记忆跨项目共享。">项目记忆按 git 仓库隔离;全局记忆跨项目共享。</span>
+  <div id="status"></div>
+</header>
+
+<section id="projectSection">
+  <div class="toolbar">
+    <h2 data-i18n="项目记忆">项目记忆</h2>
+    <button id="projectNewBtn" data-i18n="新建记忆">新建记忆</button>
+    <span class="project-key" id="projectKeyLabel"></span>
+  </div>
+  <form id="projectForm" class="inline-form hidden">
+    <input id="projectName" placeholder="名称(kebab-case)" required />
+    <input id="projectDescription" placeholder="简短描述" required />
+    <textarea id="projectBody" class="full" placeholder="正文(对后续会话有价值的事实)" required></textarea>
+    <div class="actions">
+      <button type="submit" class="primary" data-i18n="保存">保存</button>
+      <button type="button" id="projectCancel" data-i18n="取消">取消</button>
+    </div>
+  </form>
+  <div id="projectList"></div>
+</section>
+
+<section id="globalSection">
+  <div class="toolbar">
+    <h2 data-i18n="全局记忆">全局记忆</h2>
+    <button id="globalNewBtn" data-i18n="新建记忆">新建记忆</button>
+    <span class="hint" data-i18n="所有项目可见">所有项目可见</span>
+  </div>
+  <form id="globalForm" class="inline-form hidden">
+    <input id="globalName" placeholder="名称(kebab-case)" required />
+    <input id="globalDescription" placeholder="简短描述" required />
+    <textarea id="globalBody" class="full" placeholder="正文(对后续会话有价值的事实)" required></textarea>
+    <div class="actions">
+      <button type="submit" class="primary" data-i18n="保存">保存</button>
+      <button type="button" id="globalCancel" data-i18n="取消">取消</button>
+    </div>
+  </form>
+  <div id="globalList"></div>
+</section>
+
+<script src="${scripts}"></script>
+</body>
+</html>

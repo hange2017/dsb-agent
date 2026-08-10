@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource}; img-src ${cspSource} data:;">
+<link href="${styles}" rel="stylesheet">
+<style>
+  body { display: block; height: auto; padding: 16px 20px; }
+  h1 { font-size: 16px; margin: 0; }
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar h1 { margin-right: auto; }
+  .hint { font-size: 11px; opacity: 0.65; }
+  #status { font-size: 12px; opacity: 0.8; flex: 1 1 100%; min-height: 16px; }
+  #status.error { color: #f43f5e; opacity: 1; }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    background: rgba(127, 127, 127, 0.06);
+  }
+  .card h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .row:last-child { margin-bottom: 0; }
+  .row label { font-size: 12px; min-width: 96px; opacity: 0.9; }
+  .row input[type="number"] {
+    background: var(--vscode-input-background);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    width: 96px;
+    font-family: inherit;
+  }
+  .row .unit { font-size: 11px; opacity: 0.6; }
+  .split-row { display: grid; grid-template-columns: 96px 1fr 96px 64px; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .split-row label { font-size: 12px; opacity: 0.9; }
+  .split-row input[type="range"] { width: 100%; accent-color: var(--accent, #1d4ed8); }
+  .split-row .pct { font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+  .split-row .tokens { font-size: 11px; opacity: 0.6; text-align: right; }
+  .divider { border-top: 1px dashed var(--border); margin: 12px 0; }
+  .reserved {
+    opacity: 0.45;
+    font-size: 11px;
+    line-height: 1.7;
+    background: rgba(127, 127, 127, 0.05);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .footer-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  .footer-actions button {
+    background: var(--accent, #1d4ed8); color: #fff;
+    border: none; border-radius: 4px;
+    padding: 5px 14px; cursor: pointer; font-size: 12px;
+  }
+  .footer-actions button:disabled { opacity: 0.5; cursor: default; }
+  .footer-actions button.secondary {
+    background: transparent; color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  .footer-actions button.secondary.confirm {
+    color: #f43f5e; border-color: rgba(244, 63, 94, 0.6);
+  }
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <h1 data-i18n="DSB Agent 参数设置">DSB Agent 参数设置</h1>
+  <span class="hint" data-i18n="调整发送给模型的历史信息组成。">调整发送给模型的历史信息组成。</span>
+  <div id="status"></div>
+</header>
+
+<section class="card">
+  <h2 data-i18n="上下文预算">上下文预算</h2>
+  <div class="row">
+    <label data-i18n="窗口总长度">窗口总长度</label>
+    <input type="number" id="windowTokensInput" min="0" step="1000" value="0" />
+    <span class="unit" data-i18n="tokens(0 = 跟随模型)">tokens(0 = 跟随模型)</span>
+  </div>
+  <div class="row">
+    <label data-i18n="历史信息总预算">历史信息总预算</label>
+    <input type="number" id="budgetInput" min="0" step="1000" value="10000" />
+    <span class="unit" data-i18n="tokens(0 = 关闭)">tokens(0 = 关闭)</span>
+  </div>
+  <div class="divider"></div>
+  <div class="split-row">
+    <label data-i18n="压缩块">压缩块</label>
+    <input type="range" id="compactedRange" min="0" max="100" value="45" />
+    <span class="pct" id="compactedPct">45%</span>
+    <span class="tokens" id="compactedTokens">4500</span>
+  </div>
+  <div class="split-row">
+    <label data-i18n="thinking 推理脉络">thinking 推理脉络</label>
+    <input type="range" id="thinkingRange" min="0" max="100" value="20" />
+    <span class="pct" id="thinkingPct">20%</span>
+    <span class="tokens" id="thinkingTokens">2000</span>
+  </div>
+  <div class="split-row">
+    <label data-i18n="tail 最近保留">tail 最近保留</label>
+    <input type="range" id="tailRange" min="0" max="100" value="35" />
+    <span class="pct" id="tailPct">35%</span>
+    <span class="tokens" id="tailTokens">3500</span>
+  </div>
+  <div class="row">
+    <span class="hint" data-i18n="拖动任一滑块,其余等比例缩放,总和恒 100%。">拖动任一滑块,其余等比例缩放,总和恒 100%。</span>
+  </div>
+  <div class="divider"></div>
+  <div class="row">
+    <label data-i18n="触发比例">触发比例</label>
+    <input type="number" id="triggerPctInput" min="1" max="100" step="1" value="75" />
+    <span class="unit" data-i18n="% (每块达额定×此比例触发压缩)">% (每块达额定×此比例触发压缩)</span>
+  </div>
+  <div class="row">
+    <label data-i18n="压缩后目标">压缩后目标</label>
+    <input type="number" id="targetPctInput" min="1" max="100" step="1" value="50" />
+    <span class="unit" data-i18n="% (触发后收缩到额定×此比例,滞回)">% (触发后收缩到额定×此比例,滞回)</span>
+  </div>
+  <div class="divider"></div>
+  <div class="reserved" data-i18n="第二层细化(预留):压缩块内四轨 / thinking 分组 / tail 消息优先级 —— 待统计数据支撑后启用。">第二层细化(预留):压缩块内四轨 / thinking 分组 / tail 消息优先级 —— 待统计数据支撑后启用。</div>
+</section>
+
+<div class="footer-actions">
+  <button id="resetBtn" class="secondary" data-i18n="恢复默认参数">恢复默认参数</button>
+  <button id="saveBtn" data-i18n="保存">保存</button>
+</div>
+
+<script src="${scripts}"></script>
+</body>
+</html>

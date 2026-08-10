@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource}; img-src ${cspSource} data:;">
+<link href="${styles}" rel="stylesheet">
+<style>
+  body { display: block; height: auto; padding: 16px 20px; }
+  h1 { font-size: 16px; margin: 0; }
+  h2 { font-size: 13px; margin: 18px 0 8px; opacity: 0.9; font-weight: 600; }
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar h1 { margin-right: auto; }
+  .hint { font-size: 11px; opacity: 0.65; }
+  #status { font-size: 12px; opacity: 0.8; flex: 1 1 100%; }
+  #status.error { color: #f43f5e; opacity: 1; }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: rgba(127, 127, 127, 0.06);
+  }
+  .card.active { border-color: #3b82f6; }
+  .card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card-name { font-weight: 600; font-size: 13px; }
+  .badge {
+    font-size: 10px; line-height: 1.6;
+    padding: 0 6px; border-radius: 8px;
+    background: #1d4ed8; color: #fff;
+  }
+  .badge.src { background: transparent; border: 1px solid var(--border); color: var(--fg); }
+  .card-url { opacity: 0.65; font-size: 11px; word-break: break-all; flex: 1 1 100%; }
+  .card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .card-actions button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--fg); border-radius: 4px;
+    padding: 3px 8px; cursor: pointer; font-size: 12px;
+  }
+  .card-actions button.primary { background: var(--accent, #1d4ed8); color: #fff; border-color: transparent; }
+  .card-actions button.danger { color: #f43f5e; border-color: rgba(244, 63, 94, 0.5); }
+  .card-actions button:disabled { opacity: 0.5; cursor: default; }
+  form.inline-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+  form.inline-form input {
+    background: var(--vscode-input-background);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 12px;
+    min-width: 0;
+  }
+  form.inline-form input.full { grid-column: 1 / -1; }
+  form.inline-form .actions { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; }
+  .checks { display: flex; gap: 14px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+  .checks label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .model-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(127, 127, 127, 0.12);
+    font-size: 12px;
+  }
+  .model-row:last-child { border-bottom: none; }
+  .model-id { font-family: var(--vscode-editor-font-family, monospace); flex: 1; word-break: break-all; }
+  .model-src {
+    font-size: 10px; opacity: 0.75;
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 0 6px; flex: none;
+  }
+  .model-cap { display: flex; gap: 12px; align-items: center; flex: none; }
+  .model-cap label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .empty { opacity: 0.6; font-size: 12px; padding: 8px 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <h1 data-i18n="Provider 设置">Provider 设置</h1>
+  <button id="importCcswitch" data-i18n="从 cc-switch 导入" title="从 ~/.cc-switch/cc-switch.db 导入兼容供应商(未安装 better-sqlite3 时降级读 ~/.claude/settings.json)">从 cc-switch 导入</button>
+  <div id="status"></div>
+</header>
+
+<section id="createSection">
+  <h2 data-i18n="新建供应商">新建供应商</h2>
+  <form id="createForm" class="inline-form">
+    <input id="createName" placeholder="名称(如 默认兼容端点)" required />
+    <input id="createBaseUrl" placeholder="Base URL(Anthropic 兼容端点)" required />
+    <input id="createModelListUrl" class="full" placeholder="自定义模型列表 URL(可选,默认探测 baseUrl 与 API 根 /models)" />
+    <input id="createApiKey" class="full" type="password" placeholder="API Key(可选,存入 secretStorage)" />
+    <div class="actions"><button type="submit" class="primary" data-i18n="创建">创建</button></div>
+  </form>
+</section>
+
+<section id="providersSection">
+  <h2 data-i18n="供应商列表">供应商列表</h2>
+  <div id="providerList"></div>
+</section>
+
+<section id="modelsSection">
+  <h2 data-i18n="模型(当前供应商)">模型(当前供应商)</h2>
+  <div class="toolbar">
+    <button id="refreshModelsBtn" data-i18n="刷新模型">刷新模型</button>
+    <span class="hint" data-i18n="来源:builtin(内置)/ remote(远程)/ pinned(固定)">来源:builtin(内置)/ remote(远程)/ pinned(固定)</span>
+  </div>
+  <div id="modelList"></div>
+</section>
+
+<script src="${scripts}"></script>
+</body>
+</html>

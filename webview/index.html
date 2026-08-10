@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource}; script-src ${cspSource}; img-src ${cspSource} data:;">
+<link href="${styles}" rel="stylesheet">
+</head>
+<body>
+<header id="appHeader">
+  <span id="dayPhase" title="—">🌅</span>
+  <span id="appTitle">DSBAgent</span>
+  <span id="agentMood" title="agent 状态">😊</span>
+  <select id="providerSelect" title="供应商"></select>
+  <select id="modeSelect" title="模式">
+    <option value="agent">Agent</option>
+    <option value="plan">Plan</option>
+    <option value="ask">Ask</option>
+  </select>
+  <select id="modelSelect" title="模型"></select>
+  <span id="usageRing" title="上下文用量">—</span>
+  <span id="compactionBadge" title="thinking 压缩频率">思考压缩 —</span>
+  <span id="compactionChart" title="压缩趋势(最近窗口)"></span>
+  <button id="sessionsBtn" title="会话列表">☰</button>
+  <button id="newBtn" title="新会话">＋</button>
+  <button id="superPermBtn" title="超级权限:开启后 agent 无需确认即可执行任何操作">超级权限</button>
+  <button id="settingsBtn" title="设置">⚙</button>
+</header>
+<main id="messages"></main>
+<div id="emptyHint"><span id="emptyEmoji">👋</span><span id="emptyText">在下方输入消息,开始对话。</span></div>
+<div id="sessionsPanel" hidden></div>
+<div id="settingsOverlay" hidden>
+  <div id="settingsPanel" role="dialog" aria-label="设置">
+    <header class="settings-header">
+      <h3 data-i18n="设置">设置</h3>
+      <button id="settingsCloseBtn" class="settings-close" title="关闭" aria-label="关闭">✕</button>
+    </header>
+    <div class="settings-body">
+      <fieldset class="settings-group">
+        <legend data-i18n="通用">通用</legend>
+        <label class="settings-row">
+          <span data-i18n="语言">语言</span>
+          <select id="languageSelect">
+            <option value="">跟随界面语言</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <label class="settings-row">
+          <span data-i18n="通知(任务完成/错误/待授权)">通知(任务完成/错误/待授权)</span>
+          <input type="checkbox" id="notificationsCb" />
+        </label>
+        <label class="settings-row">
+          <span data-i18n="vim 模式">vim 模式</span>
+          <input type="checkbox" id="vimModeCb" />
+        </label>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend data-i18n="权限模式">权限模式</legend>
+        <label class="settings-radio">
+          <input type="radio" name="permMode" value="default" /> <span data-i18n="严格(未命中规则都询问)">严格(未命中规则都询问)</span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="permMode" value="acceptEdits" /> <span data-i18n="自动接受编辑">自动接受编辑</span>
+        </label>
+        <label class="settings-radio">
+          <input type="radio" name="permMode" value="bypassPermissions" /> <span data-i18n="超级权限(任何操作不再确认)">超级权限(任何操作不再确认)</span>
+        </label>
+      </fieldset>
+    </div>
+    <footer class="settings-footer">
+      <button id="openProviderSettingsBtn" class="settings-link" data-i18n="供应商与模型…">供应商与模型…</button>
+      <button id="openMemoryManagerBtn" class="settings-link" data-i18n="记忆管理…">记忆管理…</button>
+      <button id="openAgentSettingsBtn" class="settings-link" data-i18n="参数设置…">参数设置…</button>
+    </footer>
+  </div>
+</div>
+<footer id="composer" class="composer">
+  <div id="composerHandle" title="拖动调整输入框高度"></div>
+  <span id="idleMood" title="agent 空闲中">😴</span>
+  <ul id="suggestList" class="suggest-list" hidden role="listbox"></ul>
+  <div id="pendingChips" hidden></div>
+  <textarea id="input" rows="1" placeholder="输入消息…(Enter 发送 / Shift+Enter 换行)"></textarea>
+  <div id="actions">
+    <button id="attachBtn" title="附加图片/文件">📎</button>
+    <input type="file" id="attachInput" multiple hidden/>
+    <span id="rocket" hidden title="发送中…">🚀</span>
+    <button id="sendBtn">发送</button>
+    <button id="stopBtn" hidden>停止</button>
+    <div id="status"></div>
+  </div>
+</footer>
+<script src="${scripts}"></script>
+</body>
+</html>
