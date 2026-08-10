@@ -165,7 +165,7 @@
             "zh",
             "en"
           ],
-          "default": "",
+          "default": "en",
           "description": "%configuration.dsbAgent.language.description%"
         },
         "dsbAgent.autoChipsOnPaste": {
