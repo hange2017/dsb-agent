@@ -114,6 +114,24 @@ export interface ContextManagerOptions {
   onCompaction?: (ev: CompactionRecord) => void;
 }
 
+/** A5:从消息列表内容中提取 `[r{n}]` 序号(保持出现顺序)。 */
+function extractSeqsFromMessages(messages: ProviderMessage[]): number[] {
+  const out: number[] = [];
+  for (const msg of messages) {
+    const content = msg.content;
+    if (typeof content !== "string") continue;
+    const re = /\[r(\d+)\]/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(content)) !== null) {
+      out.push(Number(mm[1]));
+    }
+  }
+  return out;
+}
+
+/** A7:压缩流程 LLM 调用用途标签。 */
+export type SummarizeTag = "resummarize" | "oversize" | "explanation" | "thinking";
+
 export class ContextManager {
   private lastInput = 0;
   private lastOutput = 0;
@@ -139,6 +157,24 @@ export class ContextManager {
   private flowSelfInputTokens = 0;
   /** 本次压缩流程 LLM 调用输出 token 总量。 */
   private flowSelfOutputTokens = 0;
+  /** A7:按 LLM 用途细分的流程累计(4 类)。 */
+  private flowLLMDetail: Record<SummarizeTag, { calls: number; ms: number; inTokens: number; outTokens: number }> = {
+    resummarize: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+    oversize: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+    explanation: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+    thinking: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+  };
+
+  /** A7:位置耗时打点——上一次 emit 时刻;首个 emit 以 compact 入口为起点。 */
+  private lastEmitAt = 0;
+  /** A7:上一次 emit 时各 tag 的 calls 快照,用于判定该位置是否调用了 LLM。 */
+  private lastLLMDetailCalls: Record<SummarizeTag, number> = {
+    resummarize: 0,
+    oversize: 0,
+    explanation: 0,
+    thinking: 0,
+  };
+
 
   /** 热更新上下文窗;后续 ratio / needsCompaction 使用新窗重算。 */
   setWindowTokens(n: number): void {
@@ -213,8 +249,16 @@ export class ContextManager {
     // 重置本次压缩流程的 LLM 调用统计(summarize 包装器会累加)
     this.flowLLMCalls = 0;
     this.flowLLMMs = 0;
+    this.flowLLMDetail = {
+      resummarize: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+      oversize: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+      explanation: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+      thinking: { calls: 0, ms: 0, inTokens: 0, outTokens: 0 },
+    };
     this.flowSelfInputTokens = 0;
     this.flowSelfOutputTokens = 0;
+    this.lastEmitAt = startedAt;
+    this.lastLLMDetailCalls = { resummarize: 0, oversize: 0, explanation: 0, thinking: 0 };
     const budget = this.budgetInfo();
     if (!budget && history.length <= 4) return history;
     // 触发原因:窗口兜底(安全阀)优先,其次 tail 自驱动;手动调用为 manual。
@@ -372,6 +416,8 @@ export class ContextManager {
         budget: budgetSnapshot,
         headCount: head.length,
         tailCount: tail.length,
+        // A5:被压缩掉的原始消息 [r{n}] 序号(供 QA 抽查;最多前 8 个)
+        compactedSeqs: extractSeqsFromMessages(head).slice(0, 8),
       });
     }
 
@@ -403,7 +449,7 @@ export class ContextManager {
       const { keep, oldestText, oldestSeq } = collapseOldestExplanations(current.explanations);
       if (oldestText && oldestSeq > 0) {
         const budget = Math.max(100, Math.floor((this.opts.maxCompactTextTokens ?? 800) / 4));
-        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget });
+        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget }, "resummarize");
         const line = `- [r${oldestSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
         current = { ...current, explanations: [...keep, line] };
         if (estimateBlockChars(current) <= maxChars) {
@@ -441,9 +487,12 @@ export class ContextManager {
   /** 压缩事件上报(sessionId 自动填充;缺省不回调)。 */
   /** summarize 包装器:记录本次压缩流程 LLM 调用次数/耗时/自身 token(压缩自身成本统计)。
    *  压缩自身成本是当前统计盲区,此包装器补齐;不记内容,只记数字。 */
+    /** summarize 包装器:记录本次压缩流程 LLM 调用次数/耗时/自身 token(压缩自身成本统计)。
+     *  压缩自身成本是当前统计盲区,此包装器补齐;不记内容,只记数字。 */
   private async trackedSummarize(
     text: string,
     opts: { maxTokens: number; rules?: string },
+    tag: SummarizeTag = "explanation",
   ): Promise<string> {
     const t0 = Date.now();
     try {
@@ -452,11 +501,20 @@ export class ContextManager {
       this.flowLLMMs += Date.now() - t0;
       this.flowSelfInputTokens += estimateTokens(text);
       this.flowSelfOutputTokens += estimateTokens(out);
+      // A7:按用途细分累计
+      const d = this.flowLLMDetail[tag];
+      d.calls += 1;
+      d.ms += Date.now() - t0;
+      d.inTokens += estimateTokens(text);
+      d.outTokens += estimateTokens(out);
       return out;
     } catch (err) {
       // 失败也计一次调用(耗时已发生),保证 llmCalls 与真实调用数一致
       this.flowLLMCalls += 1;
       this.flowLLMMs += Date.now() - t0;
+      const d = this.flowLLMDetail[tag];
+      d.calls += 1;
+      d.ms += Date.now() - t0;
       throw err;
     }
   }
@@ -472,9 +530,19 @@ export class ContextManager {
       | "algoMs"
       | "selfInputTokens"
       | "selfOutputTokens"
+      | "llmDetail"
+      | "posMs"
+      | "usedLLM"
     >,
   ): void {
-    const durationMs = Date.now() - this.compactStartedAt;
+    const nowMs = Date.now();
+    const durationMs = nowMs - this.compactStartedAt;
+    // A7:该位置耗时 = 自上一次 emit(或流程开始)以来的增量段,4 个位置加总 ≈ durationMs
+    const posMs = nowMs - this.lastEmitAt;
+    const tags: SummarizeTag[] = ["resummarize", "oversize", "explanation", "thinking"];
+    const usedLLM = tags.some((t) => this.flowLLMDetail[t].calls - this.lastLLMDetailCalls[t] > 0);
+    this.lastEmitAt = nowMs;
+    for (const t of tags) this.lastLLMDetailCalls[t] = this.flowLLMDetail[t].calls;
     this.opts.onCompaction?.({
       ...ev,
       sessionId: this.sessionId,
@@ -486,6 +554,15 @@ export class ContextManager {
       algoMs: Math.max(0, durationMs - this.flowLLMMs),
       selfInputTokens: this.flowSelfInputTokens,
       selfOutputTokens: this.flowSelfOutputTokens,
+      // A7:按用途细分的 LLM 统计(4 类;calls=0 的类保留 0 值便于分析)
+      llmDetail: {
+        resummarize: { ...this.flowLLMDetail.resummarize },
+        oversize: { ...this.flowLLMDetail.oversize },
+        explanation: { ...this.flowLLMDetail.explanation },
+        thinking: { ...this.flowLLMDetail.thinking },
+      },
+      posMs,
+      usedLLM,
     });
   }
 
@@ -536,7 +613,7 @@ export class ContextManager {
       const { keep, oldestText, oldestSeq } = collapseOldestExplanations(current.explanations);
       if (oldestText && oldestSeq > 0) {
         const budget = Math.max(100, Math.floor((this.opts.maxCompactTextTokens ?? 800) / 4));
-        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget });
+        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget }, "resummarize");
         const line = `- [r${oldestSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
         current = { ...current, explanations: [...keep, line] };
         if (this.blockTokens(current) <= budgetTokens) return current;
@@ -664,7 +741,7 @@ export class ContextManager {
     // 解释轨:低压缩比,整段过 summarize(仅新增文本)
     if (explanationTexts.length > 0) {
       const joined = explanationTexts.map((e) => `[r${e.seq}] ${e.text}`).join("\n\n");
-      const summary = await this.trackedSummarize(joined, { maxTokens });
+      const summary = await this.trackedSummarize(joined, { maxTokens }, "explanation");
       explanations.push(`- [r${explanationTexts[0].seq}] ${summary}`);
       pushChunk(
         {
@@ -728,7 +805,7 @@ export class ContextManager {
     const prompt = sources
       .map((s) => `[r${s.seq}] 推理原文:\n${s.thinking}\n配对上下文:\n${s.context.join("\n")}`)
       .join("\n\n---\n\n");
-    const raw = await this.trackedSummarize(prompt, { maxTokens: budget, rules: THINKING_COMPACTION_RULES });
+    const raw = await this.trackedSummarize(prompt, { maxTokens: budget, rules: THINKING_COMPACTION_RULES }, "thinking");
     const parts = parseThinkingBlock(raw);
     // 宽容识别:模型可能不带 `[thinking]` 标记,行前缀可能是 `- [r{n}]` 或直接 `[r{n}]`;
     // 按 `[r{seq}]` 子串匹配,避免有效脉络行被误判 missing 而补占位。

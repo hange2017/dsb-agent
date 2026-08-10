@@ -207,6 +207,20 @@
           "minimum": 0,
           "maximum": 1,
           "description": "%configuration.dsbAgent.compaction.targetPct.description%"
+        },
+        "dsbAgent.stats.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.dsbAgent.stats.enabled.description%"
+        },
+        "dsbAgent.stats.detailLevel": {
+          "type": "string",
+          "enum": [
+            "basic",
+            "full"
+          ],
+          "default": "full",
+          "description": "%configuration.dsbAgent.stats.detailLevel.description%"
         }
       }
     }

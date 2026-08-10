@@ -50,4 +50,18 @@ export interface CompactionRecord {
   headCount?: number;
   /** tail 位置:压缩后保留的最近消息条数。 */
   tailCount?: number;
+
+  /** A7:按 LLM 用途细分的压缩流程统计(4 类);detailLevel=full 时记录。 */
+  llmDetail?: {
+    resummarize: { calls: number; ms: number; inTokens: number; outTokens: number };
+    oversize: { calls: number; ms: number; inTokens: number; outTokens: number };
+    explanation: { calls: number; ms: number; inTokens: number; outTokens: number };
+    thinking: { calls: number; ms: number; inTokens: number; outTokens: number };
+  };
+  /** A7:该位置压缩自身耗时(ms;位置开始 → 结束,含算法与 LLM)。 */
+  posMs?: number;
+  /** A7:该位置压缩是否调用了 LLM。 */
+  usedLLM?: boolean;
+  /** A5:该次压缩被压掉的原始消息 [r{n}] 序号(QA 抽查用,最多前 8 个)。 */
+  compactedSeqs?: number[];
 }

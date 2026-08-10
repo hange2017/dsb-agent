@@ -245,3 +245,14 @@ describe("messageBreakdown per-part detail", () => {
     expect(b.messageBreakdown[0].tokens).toBe(b.thinkingBlockTokens);
   });
 });
+
+describe("preparedMs", () => {
+  it("estimateProviderSendTokens always returns preparedMs as a non-negative number", () => {
+    const b = estimateProviderSendTokens("system", [
+      { role: "user", content: "第一个问题" },
+      { role: "assistant", content: [{ type: "text", text: "第一个回答" }] },
+    ]);
+    expect(b.preparedMs).toEqual(expect.any(Number));
+    expect(b.preparedMs).toBeGreaterThanOrEqual(0);
+  });
+});

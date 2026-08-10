@@ -1065,4 +1065,38 @@ describe("ContextManager compaction events", () => {
     // 一致性:算法耗时 + LLM 耗时 ≈ 总耗时
     expect(ev!.algoMs + ev!.llmMs).toBeLessThanOrEqual(ev!.durationMs + 10);
   });
+  it("A7: compaction 事件携带逐位置 llmDetail/posMs/usedLLM/compactedSeqs", async () => {
+    const events: Ev[] = [];
+    let summarizeCalls = 0;
+    const cm = new ContextManager({
+      windowTokens: 5000,
+      triggerRatio: 0.5,
+      targetPct: 0.3,
+      summarize: async () => {
+        summarizeCalls++;
+        return "S";
+      },
+      historyTokenBudget: 800,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
+      onCompaction: (ev) => events.push(ev),
+    });
+    await cm.compact([
+      { role: "user", content: "[r1] 需求:做一个登录页" },
+      { role: "assistant", content: [{ type: "text", text: "结论:用表单 + JWT" }] },
+      { role: "user", content: "[r3] 继续:加注册接口" },
+      ...Array.from({ length: 4 }, () => textMsg(50)),
+    ]);
+
+    const ev = events.find((e) => e.position === "tail");
+    expect(ev).toBeDefined();
+    expect(ev!.llmDetail).toBeDefined();
+    const detail = ev!.llmDetail!;
+    const totalCalls = detail.resummarize.calls + detail.oversize.calls + detail.explanation.calls + detail.thinking.calls;
+    expect(totalCalls).toBe(summarizeCalls);
+    expect(totalCalls).toBe(ev!.llmCalls);
+    expect(ev!.posMs).toBeGreaterThanOrEqual(0);
+    expect(typeof ev!.usedLLM).toBe("boolean");
+    // compactedSeqs:tail 压缩应带出被压掉的 [r{n}] 序号
+    expect(Array.isArray(ev!.compactedSeqs)).toBe(true);
+  });
 });

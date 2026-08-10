@@ -333,7 +333,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 每日活动统计:记录每天最后一次发送时间,按项目 key 分目录;供工作总结提醒使用。
   const activityStats = new ActivityStatsStore(path.join(path.dirname(configuration.memoryDir()), "stats", projectKey));
   // 统计大模块:通用事件日志(JSONL,按天分文件),供未来使用方式/参数调优分析。
-  const statsStore = new StatsStore(path.join(path.dirname(configuration.memoryDir()), "stats", projectKey));
+  // 总开关 dsbAgent.stats.enabled=false 时注入 undefined,所有打点经 `?.` 静默跳过(不逐打点改)。
+  const statsStore = configuration.statsEnabled()
+    ? new StatsStore(path.join(path.dirname(configuration.memoryDir()), "stats", projectKey))
+    : undefined;
   // 旧版会话文件(直接落在 sessionsRoot 根下)迁移到 `<sessionsRoot>/<projectKey>/`,
   // 会话 id 不变,lastSessionId 指向的旧会话仍可恢复。
   const sessionsRoot = vscode.Uri.joinPath(context.globalStorageUri, "sessions").fsPath;
@@ -878,7 +881,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               triggerPct: config.triggerPct,
               targetPct: config.targetPct,
             };
-            statsStore.record("settings_change", buildSettingsChangeData(before, after));
+            statsStore?.record("settings_change", buildSettingsChangeData(before, after));
           },
         },
       );

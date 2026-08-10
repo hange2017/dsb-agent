@@ -1382,4 +1382,37 @@ describe("clampHistoryTokenBudget", () => {
   it("keeps undefined as undefined", () => {
     expect(clampHistoryTokenBudget(undefined, 256000)).toBe(undefined);
   });
+  it("A5: 自动压缩后触发 compaction_qa 抽查(独立 provider.round,不含 onProviderRound 污染)", async () => {
+    const { provider } = fakeProvider([
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const qas: any[] = [];
+    const rounds: any[] = [];
+    const history: ProviderMessage[] = [
+      { role: "user", content: "[r1] 需求:做一个登录页" },
+      { role: "assistant", content: [{ type: "text", text: "结论:用表单 + JWT" }] },
+      { role: "user", content: "[r3] 继续:加注册接口" },
+      ...Array.from({ length: 5 }, () => ({ role: "user" as const, content: "中".repeat(50) })),
+    ];
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      initialHistory: history,
+      triggerRatio: 0, // 立即触发窗口兜底压缩
+      historyTokenBudget: 1000, // 预算模式触发压缩
+      onProviderRound: (u) => rounds.push(u),
+      onCompactionQa: (ev) => qas.push(ev),
+    });
+    await session.send("hello", () => {});
+    expect(qas.length).toBeGreaterThan(0);
+    const qa = qas[0];
+    expect(typeof qa.answerable).toBe("boolean");
+    expect(qa.qaMs).toBeGreaterThanOrEqual(0);
+    expect(typeof qa.seq).toBe("number");
+    // QA 的 provider.round 不打 onProviderRound(不污染对话轮次统计)
+    expect(rounds.filter((r) => r.phase === "compact").length).toBe(0);
+  });
 });

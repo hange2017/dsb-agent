@@ -155,4 +155,20 @@ describe("Configuration context window & trigger/target pct", () => {
     expect(mk("1").compactionTargetPct()).toBe(0.5);
     expect(mk("x").compactionTargetPct()).toBe(0.5);
   });
+
+  it("statsEnabled defaults to true and honors false", () => {
+    expect(new Configuration({ getString: () => "" }).statsEnabled()).toBe(true);
+    const off = new Configuration({ getString: (k) => (k === "dsbAgent.stats.enabled" ? "false" : "") });
+    expect(off.statsEnabled()).toBe(false);
+    const junk = new Configuration({ getString: (k) => (k === "dsbAgent.stats.enabled" ? "yes" : "") });
+    expect(junk.statsEnabled()).toBe(true);
+  });
+
+  it("statsDetailLevel defaults to full and accepts basic", () => {
+    expect(new Configuration({ getString: () => "" }).statsDetailLevel()).toBe("full");
+    const basic = new Configuration({ getString: (k) => (k === "dsbAgent.stats.detailLevel" ? "basic" : "") });
+    expect(basic.statsDetailLevel()).toBe("basic");
+    const junk = new Configuration({ getString: (k) => (k === "dsbAgent.stats.detailLevel" ? "verbose" : "") });
+    expect(junk.statsDetailLevel()).toBe("full");
+  });
 });

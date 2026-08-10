@@ -45,6 +45,8 @@ export interface ProviderSendBreakdown {
    * 只记数字不记内容,用于定位「哪条消息/哪个块最大」(如超大的 tool_result)。
    */
   messageBreakdown: ProviderSendPart[];
+  /** 本次估算耗时(ms):estimateProviderSendTokens 从开始到返回的耗时。 */
+  preparedMs?: number;
 }
 
 /** 明细中一个部分的种类(与汇总字段一一对应)。 */
@@ -139,6 +141,7 @@ export function estimateMessageTokens(msg: ProviderMessage): number {
  * - assistant 消息:text / thinking 原文 / tool_use(参数 JSON)分开计。
  */
 export function estimateProviderSendTokens(system: string, messages: ProviderMessage[]): ProviderSendBreakdown {
+  const t0 = Date.now();
   const systemTokens = estimateTokens(system);
   let compactedBlockTokens = 0;
   let thinkingBlockTokens = 0;
@@ -259,5 +262,6 @@ export function estimateProviderSendTokens(system: string, messages: ProviderMes
     tailMessageCount,
     hasCompactedBlock: compactedBlockTokens > 0,
     messageBreakdown,
+    preparedMs: Date.now() - t0,
   };
 }

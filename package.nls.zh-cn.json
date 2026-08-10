@@ -33,5 +33,7 @@
   "configuration.dsbAgent.compaction.budgetSplit.description": "压缩块 / thinking 块 / tail 的预算比例(合计应为 1)。",
   "configuration.dsbAgent.contextWindowTokens.description": "发送给模型的输入最大长度(上下文窗口);0 跟随模型能力(默认)。大于 0 时覆盖压缩触发与输出预算所用的窗口。",
   "configuration.dsbAgent.compaction.triggerPct.description": "流水线触发比例:某块 token 达到额定×该比例时触发压缩(默认 0.75)。",
-  "configuration.dsbAgent.compaction.targetPct.description": "压缩后目标比例:触发后收缩到额定×该比例(滞回,默认 0.5,须小于 triggerPct)。"
+  "configuration.dsbAgent.compaction.targetPct.description": "压缩后目标比例:触发后收缩到额定×该比例(滞回,默认 0.5,须小于 triggerPct)。",
+  "configuration.dsbAgent.stats.enabled.description": "启用本地使用统计(关闭后不再记录任何统计事件)。",
+  "configuration.dsbAgent.stats.detailLevel.description": "统计详细级别:basic 仅基础轮次统计,full 含压缩逐位置明细与压缩质量抽查。"
 }

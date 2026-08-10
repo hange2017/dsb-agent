@@ -117,4 +117,15 @@ export class Configuration {
     if (!(Number.isFinite(v) && v > 0 && v < 1 && v < trigger)) return 0.5;
     return v;
   }
+
+  /** 统计总开关:false 关闭后不再记录任何统计事件(StatsStore 不落盘);缺省 true。 */
+  statsEnabled(): boolean {
+    return this.reader.getString("dsbAgent.stats.enabled") !== "false";
+  }
+
+  /** 统计详细级别:basic=仅基础轮次统计,full=含压缩逐位置明细与压缩质量抽查;非法值回退 full。 */
+  statsDetailLevel(): "basic" | "full" {
+    const v = this.reader.getString("dsbAgent.stats.detailLevel");
+    return v === "basic" ? "basic" : "full";
+  }
 }

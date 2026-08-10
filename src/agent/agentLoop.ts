@@ -15,6 +15,7 @@ import { ContextManager } from "./contextManager";
 import type { ContextStore } from "../context/contextStore";
 import { CompactionStats, type CompactionStatsSnapshot } from "./compactionStats";
 import { estimateProviderSendTokens, type ProviderSendBreakdown } from "../stats/providerSendStats";
+import { isCompactedBlock } from "./contextCompactor";
 import type { ProviderRoundResult } from "./provider/types";
 
 /** 一次 provider.round 的真实 usage(来自 API 响应 usage 字段;缓存字段按厂商字段名归一化)。 */
@@ -78,6 +79,8 @@ export class AgentSession {
   private abortController: AbortController | undefined;
   private readonly todo: TodoManager;
   private readonly contextManager: ContextManager;
+  /** A5:最近一次压缩事件(含 compactedSeqs),供 QA 抽查使用。 */
+  private lastCompaction: CompactionRecord | undefined = undefined;
   private readonly hooks?: HookRunner;
   /** 最近一次 send 的事件通道:thinking 压缩/对话轮次统计变化时推送 compaction_stats。 */
   private currentOnEvent: ((ev: AgentLoopEvent) => void) | undefined;
@@ -131,6 +134,17 @@ export class AgentSession {
       }) => void;
       /** 每次压缩的 4 位置 before/after token 统计(只记数字,不记内容);缺省不回调。 */
       onCompaction?: (ev: CompactionRecord) => void;
+      /** A5:压缩质量抽查事件(压缩后对 [r{n}] 提问验证信息保真);缺省不回调 = 不触发 QA。 */
+      onCompactionQa?: (ev: {
+        sessionId: string;
+        seq: number;
+        answerable: boolean;
+        qaMs: number;
+        qaInputTokens: number;
+        qaOutputTokens: number;
+        inTokens: number;
+        outTokens: number;
+      }) => void;
       /** subagent 嵌套深度;顶层为 0,子代理工厂按 +1 创建嵌套会话。 */
       subagentDepth?: number;
       /** Hook 生命周期:会话创建时 SessionStart,每次运行结束时 Stop。 */
@@ -152,7 +166,11 @@ export class AgentSession {
       sessionId: this.deps.sessionId ?? "default",
       summarize: (text, opts) => this.summarizeMessages(text, opts.maxTokens, opts.rules),
       onThinkingCompaction: () => this.recordThinkingCompaction(),
-      onCompaction: this.deps.onCompaction,
+      onCompaction: (ev) => {
+        // A5:缓存最近一次压缩事件(含 compactedSeqs),供 QA 抽查使用
+        this.lastCompaction = ev;
+        this.deps.onCompaction?.(ev);
+      },
       historyTokenBudget: clampHistoryTokenBudget(this.deps.historyTokenBudget, windowTokens),
       budgetSplit: this.deps.budgetSplit,
       triggerPct: this.deps.triggerPct,
@@ -205,6 +223,60 @@ export class AgentSession {
   }
 
   /** 调用 provider 单发一条"总结前文"请求,提取模型返回的文本作为摘要。失败时返回兜底摘要。rules 存在时作为完整 system 提示(thinking 压缩规则)。 */
+  /**
+   * A5:压缩质量抽查——对被压缩掉的 [r{n}] 序号提问,验证压缩块是否保留关键信息。
+   * 独立 provider.round(不打 onProviderRound,避免污染对话轮次统计);
+   * token 只记在 compaction_qa 事件上,聚合时单列扣减。
+   */
+  private async runCompactionQa(ev: CompactionRecord): Promise<void> {
+    const seqs = ev.compactedSeqs ?? [];
+    if (seqs.length === 0 || !this.deps.onCompactionQa) return;
+    const seq = seqs[Math.floor(Math.random() * seqs.length)];
+    const block = this.messages.find((m) => m.role === "user" && typeof m.content === "string" && isCompactedBlock(m.content));
+    if (!block || typeof block.content !== "string") return;
+    const qaStart = Date.now();
+    try {
+      const result = await this.deps.provider.round(
+        [{ role: "user", content: block.content }],
+        {
+          system: `压缩质量抽查:下面是历史对话的压缩摘要块。请回答:[r${seq}] 对应的原始内容是什么?只回 1-2 句简要结论;不确定就回 UNKNOWN。`,
+          tools: [],
+          signal: this.abortController?.signal,
+          maxTokens: 200,
+        },
+        () => {},
+      );
+      const answer = result.blocks
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      const answerable = answer.length > 0 && !/^UNKNOWN$/i.test(answer);
+      this.deps.onCompactionQa({
+        sessionId: this.deps.sessionId ?? "default",
+        seq,
+        answerable,
+        qaMs: Date.now() - qaStart,
+        qaInputTokens: result.usage?.inputTokens ?? 0,
+        qaOutputTokens: result.usage?.outputTokens ?? 0,
+        inTokens: ev.beforeTokens,
+        outTokens: ev.afterTokens,
+      });
+    } catch {
+      // QA 失败静默:不影响主对话
+      this.deps.onCompactionQa({
+        sessionId: this.deps.sessionId ?? "default",
+        seq,
+        answerable: false,
+        qaMs: Date.now() - qaStart,
+        qaInputTokens: 0,
+        qaOutputTokens: 0,
+        inTokens: ev.beforeTokens,
+        outTokens: ev.afterTokens,
+      });
+    }
+  }
+
   private async summarizeMessages(text: string, maxTokens: number, rules?: string): Promise<string> {
     try {
       const message: ProviderMessage = { role: "user", content: text };
@@ -388,6 +460,10 @@ export class AgentSession {
             const compacted = await this.contextManager.compact(this.messages);
             this.messages = sanitizeOutbound(provider.capabilities, compacted);
             this.persistNow(); // compact 后立刻同步持久化,避免「JSONL 全量、内存已摘要」分叉
+            // A5:压缩质量抽查(自动压缩且配置了回调时才触发;手动 compactNow 不掺入)
+            if (this.deps.onCompactionQa && this.lastCompaction) {
+              void this.runCompactionQa(this.lastCompaction);
+            }
             onEvent({ type: "info", text: "已压缩上下文" });
           } catch {
             // 注入的 ContextManager 摘要失败时不阻断主循环:保持原消息继续

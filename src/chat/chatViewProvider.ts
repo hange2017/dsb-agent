@@ -376,7 +376,15 @@ export class ChatViewProvider {
             },
             // 压缩打点:记录每次压缩的位置 × 原因 × before/after tokens(只记数字不记内容)
             onCompaction: (ev) => {
-              this.statsStore?.record("compaction", ev as unknown as Record<string, unknown>);
+              // detailLevel=basic:只保留基础轮次统计,过滤 A7 压缩逐位置 llm 明细
+              const payload =
+                this.configuration.statsDetailLevel() === "basic" ? { ...ev, llmDetail: undefined } : ev;
+              this.statsStore?.record("compaction", payload as unknown as Record<string, unknown>);
+            },
+            // A5 压缩质量抽查:独立 compaction_qa 事件(聚合时单列扣减,不混入真实使用成本)
+            onCompactionQa: (ev) => {
+              if (this.configuration.statsDetailLevel() === "basic") return;
+              this.statsStore?.record("compaction_qa", ev);
             },
           });
           return session;
