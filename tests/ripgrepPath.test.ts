@@ -19,7 +19,7 @@ describe("resolveRipgrepCandidates", () => {
       arch: "x64",
     });
     expect(candidates[0]).toBe(path.join("/ext/dist", "bin", "rg"));
-    expect(candidates[1]).toBe(path.join("/ext/dist", "bin", "linux-rg.linux"));
+    expect(candidates[1]).toBe(path.join("/ext/dist", "bin", "linux-x64-rg.linux"));
     expect(candidates).toContain(
       path.join("/ext", "node_modules", "@vscode/ripgrep-linux-x64", "bin", "rg"),
     );
@@ -54,14 +54,14 @@ describe("resolveRipgrepCandidates", () => {
       platform: "linux",
       arch: "x64",
     });
-    expect(linux).toContain(path.join("/ext/dist", "bin", "linux-rg.linux"));
+    expect(linux).toContain(path.join("/ext/dist", "bin", "linux-x64-rg.linux"));
     const darwin = resolveRipgrepCandidates({
       extensionPath: "/ext",
       distDir: "/ext/dist",
       platform: "darwin",
       arch: "arm64",
     });
-    expect(darwin).toContain(path.join("/ext/dist", "bin", "darwin-rg.darwin"));
+    expect(darwin).toContain(path.join("/ext/dist", "bin", "darwin-arm64-rg.darwin"));
   });
 });
 

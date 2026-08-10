@@ -65,9 +65,13 @@ function copyRipgrepBinary() {
   // 避免 Windows/macOS 用户安装后无内置 rg,只能回退 VS Code 内置版本。
   const destDir = path.join("dist", "bin");
   fs.mkdirSync(destDir, { recursive: true });
-  const candidates = fs
-    .readdirSync("node_modules", { withFileTypes: true })
-    .filter((d) => d.isDirectory() && d.name.startsWith("@vscode/ripgrep-"));
+  // @vscode/ripgrep-* 是 node_modules/@vscode/ 下的子目录,需两层读取
+  const scopedDir = path.join("node_modules", "@vscode");
+  const candidates = fs.existsSync(scopedDir)
+    ? fs.readdirSync(scopedDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && d.name.startsWith("ripgrep-"))
+        .map((d) => `@vscode/${d.name}`)
+    : [];
   if (candidates.length === 0) {
     const p = process.platform;
     const a = process.arch;
@@ -79,25 +83,25 @@ function copyRipgrepBinary() {
     }
     fs.copyFileSync(src, path.join(destDir, rgName));
   }
-  for (const d of candidates) {
-    const dir = d.name; // e.g. @vscode/ripgrep-win32-x64
+  for (const dir of candidates) {
     const platform = dir.replace("@vscode/ripgrep-", "").split("-")[0];
+    const arch = dir.replace("@vscode/ripgrep-", "").split("-")[1];
     const rgName = platform === "win32" ? "rg.exe" : "rg";
     const src = path.join("node_modules", dir, "bin", rgName);
     if (!fs.existsSync(src)) {
       console.warn(`[esbuild] ripgrep binary not found at ${src}`);
       continue;
     }
-    // 目标名带平台后缀,避免同名覆盖:rg / rg.exe / darwin-rg ...
+    // 目标名带平台+arch 后缀,避免同名覆盖:rg.exe / linux-x64-rg.linux / darwin-arm64-rg.darwin
     const suffix = platform === "win32" ? "exe" : platform;
-    const dest = path.join(destDir, `${suffix === "exe" ? "rg" : `${suffix}-rg`}.${suffix}`);
+    const dest = path.join(destDir, `${platform}-${arch}-rg.${suffix}`);
     fs.copyFileSync(src, dest);
     try {
       fs.chmodSync(dest, 0o755);
     } catch {
       // Windows 等可不设
     }
-    console.log(`[esbuild] copied ripgrep for ${platform}: ${dest}`);
+    console.log(`[esbuild] copied ripgrep for ${platform}-${arch}: ${dest}`);
   }
 }
 
