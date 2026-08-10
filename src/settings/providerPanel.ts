@@ -44,7 +44,7 @@ export interface ProviderPanelServices {
   getActiveProviderId(): string | undefined;
   /** 当前 UI 语言(设置面板文案跟随,zh=中文,en=英文)。 */
   getLocale(): "zh" | "en";
-  createProvider(input: { name: string; baseUrl: string; apiKey?: string }): Promise<{ id: string }>;
+  createProvider(input: { name: string; baseUrl: string; modelListUrl?: string; apiKey?: string }): Promise<{ id: string }>;
   updateProvider(
     id: string,
     patch: Partial<{
@@ -65,6 +65,16 @@ export interface ProviderPanelServices {
   importFromCcSwitch(): Promise<{ imported: number }>;
   /** 测试连接:发最小请求验证 baseUrl + API key。返回 { ok, message }。 */
   testConnection(providerId: string): Promise<{ ok: boolean; message: string }>;
+  /**
+   * 用宿主原生输入框配置 API Key(webview 内联表单在部分环境下展开无反应)。
+   * 取消输入时 no-op。
+   */
+  promptApiKey(providerId: string): Promise<void>;
+  /**
+   * 用宿主原生输入框编辑名称/Base URL。
+   * 取消输入时 no-op。
+   */
+  promptEditProvider(providerId: string): Promise<void>;
 }
 
 /** host → webview 消息。 */
@@ -100,7 +110,9 @@ export type ProviderPanelMessage =
   | { type: "refresh_models"; providerId?: string }
   | { type: "set_capability"; providerId: string; modelId: string; supportsVision?: boolean; supportsThinking?: boolean; vision?: boolean; thinking?: boolean }
   | { type: "import_ccswitch" }
-  | { type: "test_connection"; providerId: string };
+  | { type: "test_connection"; providerId: string }
+  | { type: "prompt_api_key"; id: string }
+  | { type: "prompt_edit_provider"; id: string };
 
 /**
  * 与 vscode.WebviewPanel 结构兼容的最小面板接口。
@@ -173,6 +185,7 @@ async function handleMessage(
         const { id } = await services.createProvider({
           name: raw.name,
           baseUrl: raw.baseUrl,
+          modelListUrl: raw.modelListUrl,
           apiKey: raw.apiKey || undefined,
         });
         if (raw.apiKey) await services.setApiKey(id, raw.apiKey);
@@ -238,6 +251,14 @@ async function handleMessage(
         }
         break;
       }
+      case "prompt_api_key":
+        await services.promptApiKey(raw.id);
+        await postState(panel, services);
+        break;
+      case "prompt_edit_provider":
+        await services.promptEditProvider(raw.id);
+        await postState(panel, services);
+        break;
     }
   } catch (err) {
     await toast(panel, err instanceof Error ? err.message : String(err), true);

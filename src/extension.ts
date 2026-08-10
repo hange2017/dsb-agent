@@ -514,6 +514,56 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             await providerStore.setApiKey(id, key);
             syncChatProviderUi();
           },
+          promptApiKey: async (id) => {
+            const p = providerStore.get(id);
+            if (!p) return;
+            const key = await vscode.window.showInputBox({
+              prompt: t("API Key({name})", defaultLocale, { name: p.name }),
+              password: true,
+              placeHolder: "sk-...",
+            });
+            if (key) {
+              await providerStore.setApiKey(id, key);
+              void vscode.window.showInformationMessage(t("API Key 已保存", defaultLocale));
+              syncChatProviderUi();
+            }
+          },
+          promptEditProvider: async (id) => {
+            const p = providerStore.get(id);
+            if (!p) return;
+            const name = await vscode.window.showInputBox({
+              prompt: t("供应商名称(如 默认兼容端点)", defaultLocale),
+              value: p.name,
+              placeHolder: t("名称", defaultLocale),
+            });
+            if (name === undefined) return;
+            const trimmedName = name.trim() || p.name;
+            if (isProviderNameTaken(providerStore.list(), trimmedName, id)) {
+              void vscode.window.showErrorMessage(t("供应商名称已存在: {name}", defaultLocale, { name: trimmedName }));
+              return;
+            }
+            const baseUrl = await vscode.window.showInputBox({
+              prompt: t("Anthropic 兼容 API Base URL", defaultLocale),
+              value: p.baseUrl,
+              placeHolder: "https://api.deepseek.com/anthropic",
+            });
+            if (baseUrl === undefined) return;
+            const modelListUrl = await vscode.window.showInputBox({
+              prompt: t("自定义模型列表 URL(留空则移除)", defaultLocale),
+              value: p.modelListUrl ?? "",
+              placeHolder: t("可选", defaultLocale),
+            });
+            if (modelListUrl === undefined) return;
+            const nextUrl = sanitizeProviderUrl(baseUrl) || p.baseUrl;
+            providerStore.upsert({
+              ...p,
+              name: trimmedName,
+              baseUrl: nextUrl,
+              modelListUrl: modelListUrl.trim() ? sanitizeProviderUrl(modelListUrl) : undefined,
+            });
+            void vscode.window.showInformationMessage(t("供应商已更新", defaultLocale));
+            syncChatProviderUi();
+          },
           resolveModels: (providerId) => {
             const p = providerStore.get(providerId);
             return p ? modelCatalog.resolveModels(p) : [];
@@ -522,8 +572,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const p = providerStore.get(providerId);
             if (!p) return;
             const apiKey = (await providerStore.getApiKey(providerId)) ?? undefined;
+            if (!apiKey?.trim()) {
+              throw new Error(t("未配置 API Key,请先保存密钥", defaultLocale));
+            }
             // force 跳过 TTL 但不先清缓存:失败时仍保留上次成功列表
-            await modelCatalog.fetchModels(p, { apiKey: apiKey || undefined, force: true });
+            await modelCatalog.fetchModels(p, { apiKey, force: true });
           },
           setCapabilityOverride: async (providerId, modelId, patch) => {
             const p = providerStore.get(providerId);

@@ -103,6 +103,8 @@ export const en: Record<string, string> = {
   "API Key({name})": "API Key ({name})",
   "API Key 已保存": "API Key saved",
   "Base URL 已更新": "Base URL updated",
+  "供应商已更新": "Provider updated",
+  "可选": "Optional",
   "删除供应商 {name}?": "Delete provider {name}?",
   "删除": "Delete",
   // ---- 冷存储浏览面板 ----

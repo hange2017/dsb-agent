@@ -38,6 +38,8 @@ function makeServices(overrides: Partial<ProviderPanelServices> = {}): ProviderP
     setCapabilityOverride: vi.fn(async () => {}),
     importFromCcSwitch: vi.fn(async () => ({ imported: 2 })),
     testConnection: vi.fn(async () => ({ ok: true, message: "连接成功" })),
+    promptApiKey: vi.fn(async () => {}),
+    promptEditProvider: vi.fn(async () => {}),
   };
   return { ...base, ...overrides };
 }
@@ -192,5 +194,23 @@ describe("providerPanel", () => {
     expect(toastMsg?.error).toBe(true);
     expect(String(toastMsg?.message)).toContain("Invalid API key");
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("Invalid API key"));
+  });
+
+  it("prompt_api_key 调 services.promptApiKey 并回发 state", async () => {
+    const promptApiKey = vi.fn(async () => {});
+    const services = makeServices({ promptApiKey });
+    createProviderPanel(fake.panel, services);
+    await dispatch(fake, { type: "prompt_api_key", id: "p1" });
+    expect(promptApiKey).toHaveBeenCalledWith("p1");
+    expect(fake.posted.some((m) => m.type === "state")).toBe(true);
+  });
+
+  it("prompt_edit_provider 调 services.promptEditProvider 并回发 state", async () => {
+    const promptEditProvider = vi.fn(async () => {});
+    const services = makeServices({ promptEditProvider });
+    createProviderPanel(fake.panel, services);
+    await dispatch(fake, { type: "prompt_edit_provider", id: "p1" });
+    expect(promptEditProvider).toHaveBeenCalledWith("p1");
+    expect(fake.posted.some((m) => m.type === "state")).toBe(true);
   });
 });
