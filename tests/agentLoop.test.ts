@@ -433,7 +433,9 @@ describe("AgentSession", () => {
       onProviderRound: (u) => rounds.push(u),
     });
     await session.send("hi", () => {});
-    expect(rounds).toEqual([{ inputTokens: 1234, outputTokens: 56, cacheReadTokens: 900, cacheWriteTokens: 334 }]);
+    expect(rounds).toEqual([
+      { inputTokens: 1234, outputTokens: 56, cacheReadTokens: 900, cacheWriteTokens: 334, phase: "chat", roundMs: expect.any(Number) },
+    ]);
   });
 
   it("compacts with default trigger ratio 0.75 (200000/256000 ≈ 0.781)", async () => {

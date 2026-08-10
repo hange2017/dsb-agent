@@ -124,6 +124,10 @@ export class AgentSession {
         outputTokens: number;
         cacheReadTokens?: number;
         cacheWriteTokens?: number;
+        /** 调用阶段:chat = 主对话轮,compact = 压缩流程内部 summarize 调用。 */
+        phase: "chat" | "compact";
+        /** 本次 provider.round 总耗时(ms),便于区分对话/压缩延迟。 */
+        roundMs: number;
       }) => void;
       /** 每次压缩的 4 位置 before/after token 统计(只记数字,不记内容);缺省不回调。 */
       onCompaction?: (ev: CompactionRecord) => void;
@@ -209,6 +213,7 @@ export class AgentSession {
         messages: [message],
         lastInputTokens: this.contextManager.getLastInputTokens?.() ?? 0,
       });
+      const roundStart = Date.now();
       const result = await this.deps.provider.round(
         [message],
         {
@@ -226,6 +231,17 @@ export class AgentSession {
         },
         () => {},
       );
+      // 压缩流程的 LLM 调用也打点(phase=compact),补齐压缩自身成本统计盲区
+      if (result.usage) {
+        this.deps.onProviderRound?.({
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          ...(result.usage.cacheReadTokens !== undefined ? { cacheReadTokens: result.usage.cacheReadTokens } : {}),
+          ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
+          phase: "compact",
+          roundMs: Date.now() - roundStart,
+        });
+      }
       const extracted = result.blocks
         .filter((b) => b.type === "text")
         .map((b) => b.text)
@@ -385,6 +401,7 @@ export class AgentSession {
         };
 
         let result;
+        let roundStart = 0;
         let roundParallel: { mode: "read_safe" | "serial"; maxParallelTools: number } = {
           mode: "read_safe",
           maxParallelTools: 8,
@@ -410,6 +427,7 @@ export class AgentSession {
           // 传原始 messages + lastInputTokens:Fallback 会按子 client caps 重 prepare;直连 client 入口再 sanitize。
           const lastInputTokens = this.contextManager.getLastInputTokens?.() ?? 0;
           // 发送前打点:记录这一包消息的 token 组成(只记数字不记内容),供历史占比统计
+          roundStart = Date.now();
           this.deps.onProviderSend?.(estimateProviderSendTokens(roundSystem, this.messages));
           result = await provider.round(this.messages, {
             system: roundSystem,
@@ -445,6 +463,8 @@ export class AgentSession {
             outputTokens: result.usage.outputTokens,
             ...(result.usage.cacheReadTokens !== undefined ? { cacheReadTokens: result.usage.cacheReadTokens } : {}),
             ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
+            phase: "chat",
+            roundMs: Date.now() - roundStart,
           });
         }
         this.contextManager.track(result.usage);

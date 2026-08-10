@@ -123,13 +123,22 @@ export class ContextManager {
   private thinkingEnabled: boolean;
   /** thinking 压缩发生时的回调(成功或失败均触发,用于成本统计);缺省不回调。 */
   onThinkingCompaction?: () => void;
-  /** 当前压缩流程开始时间(epoch ms);每次 compact 入口重置,emitCompaction 用其计算耗时。 */
-  private compactStartedAt = 0;
 
   constructor(private readonly opts: ContextManagerOptions) {
     this.thinkingEnabled = opts.thinkingEnabled ?? true;
     this.onThinkingCompaction = opts.onThinkingCompaction;
   }
+
+  /** 当前压缩流程开始时间(epoch ms);每次 compact 入口重置,emitCompaction 用其计算耗时。 */
+  private compactStartedAt = 0;
+  /** 本次压缩流程的 LLM 调用次数(summarize 包装器累加;压缩自身成本统计)。 */
+  private flowLLMCalls = 0;
+  /** 本次压缩流程 LLM 调用总耗时(ms)。 */
+  private flowLLMMs = 0;
+  /** 本次压缩流程 LLM 调用输入 token 总量(压缩自身消耗)。 */
+  private flowSelfInputTokens = 0;
+  /** 本次压缩流程 LLM 调用输出 token 总量。 */
+  private flowSelfOutputTokens = 0;
 
   /** 热更新上下文窗;后续 ratio / needsCompaction 使用新窗重算。 */
   setWindowTokens(n: number): void {
@@ -201,6 +210,11 @@ export class ContextManager {
   async compact(history: ProviderMessage[]): Promise<ProviderMessage[]> {
     const startedAt = Date.now();
     this.compactStartedAt = startedAt;
+    // 重置本次压缩流程的 LLM 调用统计(summarize 包装器会累加)
+    this.flowLLMCalls = 0;
+    this.flowLLMMs = 0;
+    this.flowSelfInputTokens = 0;
+    this.flowSelfOutputTokens = 0;
     const budget = this.budgetInfo();
     if (!budget && history.length <= 4) return history;
     // 触发原因:窗口兜底(安全阀)优先,其次 tail 自驱动;手动调用为 manual。
@@ -389,7 +403,7 @@ export class ContextManager {
       const { keep, oldestText, oldestSeq } = collapseOldestExplanations(current.explanations);
       if (oldestText && oldestSeq > 0) {
         const budget = Math.max(100, Math.floor((this.opts.maxCompactTextTokens ?? 800) / 4));
-        const summary = await this.opts.summarize(oldestText, { maxTokens: budget });
+        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget });
         const line = `- [r${oldestSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
         current = { ...current, explanations: [...keep, line] };
         if (estimateBlockChars(current) <= maxChars) {
@@ -425,12 +439,53 @@ export class ContextManager {
   }
 
   /** 压缩事件上报(sessionId 自动填充;缺省不回调)。 */
-  private emitCompaction(ev: Omit<CompactionRecord, "sessionId" | "startedAt" | "durationMs">): void {
+  /** summarize 包装器:记录本次压缩流程 LLM 调用次数/耗时/自身 token(压缩自身成本统计)。
+   *  压缩自身成本是当前统计盲区,此包装器补齐;不记内容,只记数字。 */
+  private async trackedSummarize(
+    text: string,
+    opts: { maxTokens: number; rules?: string },
+  ): Promise<string> {
+    const t0 = Date.now();
+    try {
+      const out = await this.opts.summarize(text, opts);
+      this.flowLLMCalls += 1;
+      this.flowLLMMs += Date.now() - t0;
+      this.flowSelfInputTokens += estimateTokens(text);
+      this.flowSelfOutputTokens += estimateTokens(out);
+      return out;
+    } catch (err) {
+      // 失败也计一次调用(耗时已发生),保证 llmCalls 与真实调用数一致
+      this.flowLLMCalls += 1;
+      this.flowLLMMs += Date.now() - t0;
+      throw err;
+    }
+  }
+
+  private emitCompaction(
+    ev: Omit<
+      CompactionRecord,
+      | "sessionId"
+      | "startedAt"
+      | "durationMs"
+      | "llmCalls"
+      | "llmMs"
+      | "algoMs"
+      | "selfInputTokens"
+      | "selfOutputTokens"
+    >,
+  ): void {
+    const durationMs = Date.now() - this.compactStartedAt;
     this.opts.onCompaction?.({
       ...ev,
       sessionId: this.sessionId,
       startedAt: this.compactStartedAt,
-      durationMs: Date.now() - this.compactStartedAt,
+      durationMs,
+      // 压缩流程内 LLM 调用统计(压缩自身成本;无调用时为 0/缺省)
+      llmCalls: this.flowLLMCalls,
+      llmMs: this.flowLLMMs,
+      algoMs: Math.max(0, durationMs - this.flowLLMMs),
+      selfInputTokens: this.flowSelfInputTokens,
+      selfOutputTokens: this.flowSelfOutputTokens,
     });
   }
 
@@ -481,7 +536,7 @@ export class ContextManager {
       const { keep, oldestText, oldestSeq } = collapseOldestExplanations(current.explanations);
       if (oldestText && oldestSeq > 0) {
         const budget = Math.max(100, Math.floor((this.opts.maxCompactTextTokens ?? 800) / 4));
-        const summary = await this.opts.summarize(oldestText, { maxTokens: budget });
+        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget });
         const line = `- [r${oldestSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
         current = { ...current, explanations: [...keep, line] };
         if (this.blockTokens(current) <= budgetTokens) return current;
@@ -609,7 +664,7 @@ export class ContextManager {
     // 解释轨:低压缩比,整段过 summarize(仅新增文本)
     if (explanationTexts.length > 0) {
       const joined = explanationTexts.map((e) => `[r${e.seq}] ${e.text}`).join("\n\n");
-      const summary = await this.opts.summarize(joined, { maxTokens });
+      const summary = await this.trackedSummarize(joined, { maxTokens });
       explanations.push(`- [r${explanationTexts[0].seq}] ${summary}`);
       pushChunk(
         {
@@ -673,7 +728,7 @@ export class ContextManager {
     const prompt = sources
       .map((s) => `[r${s.seq}] 推理原文:\n${s.thinking}\n配对上下文:\n${s.context.join("\n")}`)
       .join("\n\n---\n\n");
-    const raw = await this.opts.summarize(prompt, { maxTokens: budget, rules: THINKING_COMPACTION_RULES });
+    const raw = await this.trackedSummarize(prompt, { maxTokens: budget, rules: THINKING_COMPACTION_RULES });
     const parts = parseThinkingBlock(raw);
     // 宽容识别:模型可能不带 `[thinking]` 标记,行前缀可能是 `- [r{n}]` 或直接 `[r{n}]`;
     // 按 `[r{seq}]` 子串匹配,避免有效脉络行被误判 missing 而补占位。

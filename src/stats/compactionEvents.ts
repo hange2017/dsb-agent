@@ -29,6 +29,16 @@ export interface CompactionRecord {
   afterTokens: number;
   /** 会话 id。 */
   sessionId: string;
+  /** 本次压缩流程 LLM 调用次数(所有 summarize 调用;当前盲区,现补齐)。 */
+  llmCalls: number;
+  /** 本次压缩流程 LLM 调用总耗时(ms;串行实现为累计,并行改造后须改为取 max)。 */
+  llmMs: number;
+  /** 纯本地算法耗时(ms)= durationMs - llmMs;负数按 0(并行后需重算口径)。 */
+  algoMs: number;
+  /** 压缩自身消耗的输入 token(所有 summarize 的 prompt 估算之和)。 */
+  selfInputTokens: number;
+  /** 压缩自身产生的输出 token(所有 summarize 返回值估算之和)。 */
+  selfOutputTokens: number;
   /** 预算快照(总 + 三块额定),便于后续分析规模与频率;未开启预算时缺省。 */
   budget?: {
     total: number;
