@@ -82,6 +82,7 @@ let pendingChips: PendingChip[] = [];
 let queuedUserChips: ChipView[][] = [];
 let busy = false;
 let toastTimer: number | undefined;
+let transientTimer: number | undefined;
 // host 通过 init 消息下发 vim 模式开关;vim 输入框在 normal 模式下拦截导航键
 let vimEnabled = false;
 
@@ -106,6 +107,26 @@ function showToast(message: string, isError = false): void {
       statusEl.classList.remove("error");
     }
   }, 4000);
+}
+
+/** 瞬态 status 文本(如「已压缩上下文」):保持 busy,延迟后只清文本,不改变按钮/表情状态。 */
+function scheduleTransientClear(delayMs: number): void {
+  if (transientTimer !== undefined) window.clearTimeout(transientTimer);
+  transientTimer = window.setTimeout(() => {
+    transientTimer = undefined;
+    if (busy) {
+      statusEl.textContent = "";
+      statusEl.classList.remove("error");
+    }
+  }, delayMs);
+}
+
+/** 非瞬态 status(开始/完成/错误)到达时,取消未决的瞬态清空,避免误清后续状态。 */
+function cancelTransientClear(): void {
+  if (transientTimer !== undefined) {
+    window.clearTimeout(transientTimer);
+    transientTimer = undefined;
+  }
 }
 
 function scrollBottom(): void {
@@ -1520,6 +1541,11 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
     case "status":
       setBusy(msg.busy, msg.info ?? "");
       statusEl.classList.toggle("error", Boolean(msg.error));
+      if (msg.transient) {
+        scheduleTransientClear(2000);
+      } else {
+        cancelTransientClear();
+      }
       break;
     case "toast":
       showToast(msg.message, Boolean(msg.error));

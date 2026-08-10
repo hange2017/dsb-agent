@@ -1258,6 +1258,24 @@ describe("ChatController", () => {
       expect(toasts.some((t) => t?.includes("没有可压缩的会话"))).toBe(true);
     });
 
+    it("forwards agent info (compacted) as transient status so the hint auto-dismisses", async () => {
+      const { controller, posted } = makeSessionToolsDeps({
+        sessionImpl: {
+          send: async (_text: string, onEvent: (ev: AgentLoopEvent) => void) => {
+            onEvent({ type: "info", text: "已压缩上下文" });
+            onEvent({ type: "done" });
+          },
+        },
+      });
+      await controller.handle({ type: "send", text: "hi" });
+      const status = posted.find(
+        (m) => typeOf(m) === "status" && (m as { info?: string }).info === "已压缩上下文",
+      ) as { busy: boolean; transient: boolean } | undefined;
+      expect(status).toBeDefined();
+      expect(status!.busy).toBe(true); // 压缩发生在轮次之间,保持 busy
+      expect(status!.transient).toBe(true); // webview 端 2 秒后自动清空提示文本
+    });
+
     it("/compact propagates compaction failure as an error toast", async () => {
       const compactNow = vi.fn(async () => {
         throw new Error("boom");

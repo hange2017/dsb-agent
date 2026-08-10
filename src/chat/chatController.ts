@@ -1663,7 +1663,8 @@ export class ChatController {
         break;
       case "info":
         // 压缩发生在轮次之间,agent 仍在运行:保持 busy,避免 UI 中途 idle(允许发消息/隐藏停止按钮)
-        this.post({ type: "status", busy: true, info: ev.text });
+        // transient:webview 端 2 秒后自动清空该提示文本,不改变 busy 状态
+        this.post({ type: "status", busy: true, info: ev.text, transient: true });
         break;
       case "text_delta": {
         this.finishThinking(assistantId);

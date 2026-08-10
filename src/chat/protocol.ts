@@ -99,7 +99,7 @@ export type HostToWebviewMessage =
   | { type: "stream"; messageId: string; text: string; stepId?: string }
   | { type: "tool"; messageId: string; name: string; status: "running" | "completed" | "error"; detail?: string }
   | TimelineStepMessage
-  | { type: "status"; busy: boolean; info?: string; error?: boolean }
+  | { type: "status"; busy: boolean; info?: string; error?: boolean; transient?: boolean }
   | { type: "toast"; message: string; error?: boolean }
   | { type: "usage"; inputTokens?: number; outputTokens?: number }
   | { type: "compaction_stats"; stats: CompactionStatsSnapshot }
