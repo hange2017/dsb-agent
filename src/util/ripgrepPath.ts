@@ -28,6 +28,10 @@ export function resolveRipgrepCandidates(
 
   if (options.distDir) {
     out.push(path.join(options.distDir, "bin", rgName));
+    // 多平台打包产物(esbuild.mjs 复制):dist/bin/rg.exe / linux-rg.linux / darwin-rg.darwin
+    if (platform !== "win32") {
+      out.push(path.join(options.distDir, "bin", `${platform}-${rgName}.${platform}`));
+    }
   }
 
   out.push(

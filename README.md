@@ -31,9 +31,22 @@
 
 ## 安装
 
-### 从 `.vsix` 安装（推荐）
+### 从 Open VSX 市场安装（推荐）
 
-1. 从 Release 下载最新 `dsb-agent-<版本>.vsix`，或自行打包（见下文「从源码构建」）。
+扩展发布在 [Open VSX](https://open-vsx.org)(Eclipse 基金会运营的开源扩展市场):
+
+1. 访问扩展页面:https://open-vsx.org/extension/zhaoNingHan/dsb-agent
+2. 点击页面 **Install** 按钮(浏览器会拉起 VS Code 自动安装);或复制页面上给出的命令行:
+   ```bash
+   code --install-extension zhaoNingHan.dsb-agent
+   ```
+3. 安装后重载窗口(Reload Window),从命令面板打开 **DSBAgent**,按提示配置 API Key 与供应商。
+
+> 说明:Open VSX 是独立于 VS Code 官方 Marketplace 的开源市场,默认不收录进 VS Code 内置扩展搜索(官方市场收录需另走微软 Azure DevOps 发布流程)。从 Open VSX 安装后与官方渠道安装的扩展功能完全一致。
+
+### 从 `.vsix` 安装
+
+1. 从 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 下载最新 `dsb-agent-<版本>.vsix`，或自行打包（见下文「从源码构建」）。
 2. 打开 VS Code。
 3. 命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）→ **Extensions: Install from VSIX…**，选择下载的 `.vsix`。
    - **Windows** 也可直接双击 `.vsix`（会自动用 VS Code 打开安装）；若 `code` 不在 PATH，请先运行 VS Code 内「Shell Command: Install 'code' command in PATH」。

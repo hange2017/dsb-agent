@@ -60,27 +60,44 @@ const agentSettingsPanelBuild = {
 };
 
 function copyRipgrepBinary() {
-  const platform = process.platform;
-  const arch = process.arch;
-  const rgName = platform === "win32" ? "rg.exe" : "rg";
-  const src = path.join(
-    "node_modules",
-    `@vscode/ripgrep-${platform}-${arch}`,
-    "bin",
-    rgName,
-  );
-  if (!fs.existsSync(src)) {
-    console.warn(`[esbuild] ripgrep binary not found at ${src}; Grep may fail in packaged extension`);
-    return;
-  }
+  // 复制 node_modules 中所有已安装平台的 rg 二进制到 dist/bin:
+  // Linux 打包机也会把 win32/darwin 的 rg.exe/rg 一并打进去(若已安装),
+  // 避免 Windows/macOS 用户安装后无内置 rg,只能回退 VS Code 内置版本。
   const destDir = path.join("dist", "bin");
   fs.mkdirSync(destDir, { recursive: true });
-  const dest = path.join(destDir, rgName);
-  fs.copyFileSync(src, dest);
-  try {
-    fs.chmodSync(dest, 0o755);
-  } catch {
-    // Windows 等可不设
+  const candidates = fs
+    .readdirSync("node_modules", { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name.startsWith("@vscode/ripgrep-"));
+  if (candidates.length === 0) {
+    const p = process.platform;
+    const a = process.arch;
+    const rgName = p === "win32" ? "rg.exe" : "rg";
+    const src = path.join("node_modules", `@vscode/ripgrep-${p}-${a}`, "bin", rgName);
+    if (!fs.existsSync(src)) {
+      console.warn(`[esbuild] ripgrep binary not found at ${src}; Grep may fail in packaged extension`);
+      return;
+    }
+    fs.copyFileSync(src, path.join(destDir, rgName));
+  }
+  for (const d of candidates) {
+    const dir = d.name; // e.g. @vscode/ripgrep-win32-x64
+    const platform = dir.replace("@vscode/ripgrep-", "").split("-")[0];
+    const rgName = platform === "win32" ? "rg.exe" : "rg";
+    const src = path.join("node_modules", dir, "bin", rgName);
+    if (!fs.existsSync(src)) {
+      console.warn(`[esbuild] ripgrep binary not found at ${src}`);
+      continue;
+    }
+    // 目标名带平台后缀,避免同名覆盖:rg / rg.exe / darwin-rg ...
+    const suffix = platform === "win32" ? "exe" : platform;
+    const dest = path.join(destDir, `${suffix === "exe" ? "rg" : `${suffix}-rg`}.${suffix}`);
+    fs.copyFileSync(src, dest);
+    try {
+      fs.chmodSync(dest, 0o755);
+    } catch {
+      // Windows 等可不设
+    }
+    console.log(`[esbuild] copied ripgrep for ${platform}: ${dest}`);
   }
 }
 
