@@ -1036,4 +1036,33 @@ describe("ContextManager compaction events", () => {
     await cm2.compact(Array.from({ length: 3 }, () => textMsg(50)));
     expect(events).toHaveLength(0);
   });
+
+  it("records LLM call stats (llmCalls/llmMs/algoMs/selfTokens) on compaction events", async () => {
+    const events: Ev[] = [];
+    let summarizeCalls = 0;
+    const cm = new ContextManager({
+      windowTokens: 1_000_000,
+      triggerRatio: 0.75,
+      summarize: async (text, opts) => {
+        summarizeCalls += 1;
+        expect(opts.maxTokens).toBeGreaterThan(0);
+        return "S".repeat(20);
+      },
+      onCompaction: (ev) => events.push(ev),
+    });
+    // 触发一次完整压缩(含解释段 summarize → 至少 1 次 LLM 调用)
+    await cm.compact([...eightMessages(), ...Array.from({ length: 4 }, () => textMsg(50))]);
+    expect(summarizeCalls).toBeGreaterThan(0);
+
+    const ev = events.find((e) => e.position === "tail");
+    expect(ev).toBeDefined();
+    expect(ev!.llmCalls).toBeGreaterThan(0);
+    expect(ev!.llmCalls).toBe(summarizeCalls);
+    expect(ev!.llmMs).toBeGreaterThanOrEqual(0);
+    expect(ev!.algoMs).toBeGreaterThanOrEqual(0);
+    expect(ev!.selfInputTokens).toBeGreaterThan(0);
+    expect(ev!.selfOutputTokens).toBeGreaterThan(0);
+    // 一致性:算法耗时 + LLM 耗时 ≈ 总耗时
+    expect(ev!.algoMs + ev!.llmMs).toBeLessThanOrEqual(ev!.durationMs + 10);
+  });
 });
