@@ -383,6 +383,9 @@ export class ChatController {
       case "open_file":
         await this.openFile(message.path, message.line);
         break;
+      case "open_url":
+        await this.openUrl(message.url);
+        break;
       case "skill_command":
         await this.invokeSkill(message.name);
         break;
@@ -1153,6 +1156,18 @@ export class ChatController {
     }
     const match = vscode.window.terminals.find((t) => t.name === chip.terminalName);
     (match ?? vscode.window.activeTerminal)?.show();
+  }
+
+  /** 消息正文内联链接双击跳转:外部 URL 交给系统浏览器打开。 */
+  private async openUrl(rawUrl: string): Promise<void> {
+    const url = (rawUrl ?? "").trim();
+    if (!/^https?:\/\/\S+$/i.test(url)) return;
+    try {
+      const vscode = await import("vscode");
+      await vscode.env.openExternal(vscode.Uri.parse(url));
+    } catch {
+      this.post({ type: "toast", message: t("无法打开链接:{url}", this.locale, { url }), error: true });
+    }
   }
 
   /** 对话页面代码块双击跳转:打开文件并定位到行(相对路径按工作区根解析,失败 toast)。 */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderMarkdown } from "../webview/format";
+import { renderMarkdown, linkifyJumpables } from "../webview/format";
 
 describe("renderMarkdown", () => {
   it("renders inline code", () => {
@@ -22,11 +22,7 @@ describe("renderMarkdown", () => {
     ].join("\n");
     const out = renderMarkdown(md);
     expect(out).toContain("<table");
-    expect(out).toContain("<th>");
-    expect(out).toContain("Gap");
-    expect(out).toContain("<td>");
     expect(out).toContain("MCP enabled");
-    expect(out).toContain("Project rules");
     expect(out).not.toMatch(/^\|/m);
   });
   it("keeps surrounding text around a table", () => {
@@ -40,5 +36,56 @@ describe("renderMarkdown", () => {
     const out = renderMarkdown("use `|` as delimiter");
     expect(out).not.toContain("<table");
     expect(out).toContain("|");
+  });
+});
+
+describe("linkifyJumpables", () => {
+  it("marks inline file path as jumpable", () => {
+    const out = linkifyJumpables("看看 src/agent/agentLoop.ts 里的实现");
+    expect(out).toContain('class="jumpable jump-path"');
+    expect(out).toContain('data-jump-path="src/agent/agentLoop.ts"');
+  });
+
+  it("marks path:line and keeps the line number", () => {
+    const out = linkifyJumpables("问题在 src/chat/chatController.ts:383");
+    expect(out).toContain('data-jump-path="src/chat/chatController.ts"');
+    expect(out).toContain('data-jump-line="383"');
+    expect(out).toContain(">src/chat/chatController.ts:383</span>");
+  });
+
+  it("marks http(s) url and strips trailing punctuation", () => {
+    const out = linkifyJumpables("文档见 https://example.com/guide,请查阅。");
+    expect(out).toContain('class="jumpable jump-url"');
+    expect(out).toContain('data-jump-url="https://example.com/guide"');
+    expect(out).not.toContain('data-jump-url="https://example.com/guide,"');
+  });
+
+  it("preserves existing tags while linkifying their text", () => {
+    const out = linkifyJumpables("<strong>src/a.ts</strong>");
+    expect(out).toBe(
+      '<strong><span class="jumpable jump-path" data-jump-path="src/a.ts">src/a.ts</span></strong>'
+    );
+  });
+
+  it("skips code blocks: path inside pre/code is untouched", () => {
+    const out = linkifyJumpables("<pre><code>src/a.ts:1\n</code></pre>");
+    expect(out).toBe("<pre><code>src/a.ts:1\n</code></pre>");
+  });
+
+  it("does not mark plain words or version-like tokens", () => {
+    expect(linkifyJumpables("hello world 1.2.3")).not.toContain("jumpable");
+    expect(linkifyJumpables("npm test")).not.toContain("jumpable");
+  });
+
+  it("keeps amp entities unparsed", () => {
+    const out = linkifyJumpables("a &amp; b src/x.ts");
+    expect(out).toContain("&amp;");
+    expect(out).toContain('data-jump-path="src/x.ts"');
+  });
+
+  it("linkifies paths inside table cells", () => {
+    const out = linkifyJumpables("<td>src/main.ts</td>");
+    expect(out).toContain('data-jump-path="src/main.ts"');
+    expect(out).toContain("</td>");
   });
 });

@@ -202,6 +202,21 @@ body {
 .jumpable { cursor: pointer; }
 .jumpable:hover { outline: 1px dashed var(--vscode-textLink-foreground, #4d9fff); }
 .jumpable:hover .tl-file-path { text-decoration: underline; }
+/* 行内跳转(消息正文里内联的路径/URL):不换行、主题链接色 */
+.jumpable.jump-url,
+.jumpable.jump-path {
+  display: inline-block;
+  cursor: pointer;
+  color: var(--vscode-textLink-foreground, #4d9fff);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+.jumpable.jump-url:hover,
+.jumpable.jump-path:hover {
+  background: var(--vscode-textLink-foreground, #4d9fff);
+  color: var(--vscode-editor-background, #1e1e1e);
+}
 
 /* 助手消息:正文只在时间线 text 步里,不再使用底部 .body/.final */
 

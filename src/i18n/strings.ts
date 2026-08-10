@@ -238,6 +238,7 @@ export const en: Record<string, string> = {
   "中间过程 {n} 步 · 收起": "{n} intermediate steps · collapse",
   "双击跳转到文件": "Double-click to open file",
   "无法打开文件:{path}": "Cannot open file: {path}",
+  "无法打开链接:{url}": "Cannot open link: {url}",
   "早晨": "Morning",
   "中午": "Noon",
   "下午": "Afternoon",

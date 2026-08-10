@@ -126,6 +126,7 @@ export type WebviewToHostMessage =
   | { type: "paste"; text: string }
   | { type: "open_chip"; id: string }
   | { type: "open_file"; path: string; line?: number }
+  | { type: "open_url"; url: string }
   | { type: "skill_command"; name: string }
   | { type: "recommend_plugins"; query: string }
   | { type: "install_plugin"; marketplace: string; name: string }

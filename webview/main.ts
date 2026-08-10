@@ -1099,11 +1099,18 @@ function closeSettings(): void {
 settingsBtn.addEventListener("click", openSettings);
 settingsCloseBtn.addEventListener("click", closeSettings);
 
-// 代码块/文件结果双击跳转:事件委托到消息区,命中 .jumpable(携带 data-jump-path)时打开文件
+// 代码块/文件结果/内联路径/URL 双击跳转:事件委托到消息区
+// - .jumpable[data-jump-path] → open_file(文件+可选行)
+// - .jumpable[data-jump-url]  → open_url(外部链接)
 messagesEl.addEventListener("dblclick", (e) => {
   const target = e.target as HTMLElement;
   const el = target.closest<HTMLElement>(".jumpable");
   if (!el) return;
+  const jumpUrl = el.dataset.jumpUrl;
+  if (jumpUrl) {
+    post({ type: "open_url", url: jumpUrl });
+    return;
+  }
   const filePath = el.dataset.jumpPath;
   if (!filePath) return;
   const line = el.dataset.jumpLine ? Number(el.dataset.jumpLine) : undefined;
