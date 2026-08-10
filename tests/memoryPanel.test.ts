@@ -11,6 +11,10 @@ vi.mock("vscode", () => ({
     }),
     file: (p: string) => ({ fsPath: p, toString: () => p }),
   },
+  workspace: {
+    onDidChangeConfiguration: () => ({ dispose: () => {} }),
+    getConfiguration: () => ({ get: () => "", update: async () => {} }),
+  },
 }));
 
 import { MemoryStore } from "../src/agent/memory/memoryStore";

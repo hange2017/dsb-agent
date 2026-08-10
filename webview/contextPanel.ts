@@ -79,12 +79,12 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-const TYPE_LABEL: Record<ChunkView["type"], string> = {
-  demand: "需求",
-  conclusion: "结论",
-  explanation: "说明",
-  ledger: "工具履历",
-};
+function typeLabel(type: ChunkView["type"]): string {
+  return t(
+    type === "demand" ? "需求" : type === "conclusion" ? "结论" : type === "explanation" ? "说明" : "工具履历",
+    locale,
+  );
+}
 
 function renderSessions(): void {
   sessionListEl.replaceChildren();
@@ -136,7 +136,7 @@ function renderChunks(): void {
     const head = el("div", "card-head");
     head.append(
       el("span", "card-name", `[r${c.seq}]`),
-      el("span", "badge", TYPE_LABEL[c.type]),
+      el("span", "badge", typeLabel(c.type)),
       el("span", "badge role", c.role),
       el("span", "card-summary", c.summary),
     );

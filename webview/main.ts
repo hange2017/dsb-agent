@@ -374,8 +374,8 @@ function renderBodyBlocks(main: HTMLElement, body?: Array<{ kind: string; label:
         const cols = (block.columns as string[]) ?? [];
         const rows = (block.rows as string[][]) ?? [];
         // Grep 类结果(path:line:content)可双击跳转:表头含「文件」且含「行」时,行级标记跳转
-        const pathIdx = cols.findIndex((c) => c === "文件" || c === "名称");
-        const lineIdx = cols.indexOf("行");
+        const pathIdx = cols.findIndex((c) => c === "文件" || c === "File" || c === "名称" || c === "Name");
+        const lineIdx = cols.findIndex((c) => c === "行" || c === "Line");
         const table = document.createElement("table");
         table.className = "tl-table";
         const thead = document.createElement("thead");
@@ -1106,7 +1106,20 @@ function applyLocale(): void {
     const key = el.dataset.i18n;
     if (key) el.textContent = t(key, locale);
   }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-i18n-title]")) {
+    const key = el.dataset.i18nTitle;
+    if (key) el.title = t(key, locale);
+  }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-i18n-placeholder]")) {
+    const key = el.dataset.i18nPlaceholder;
+    if (key) el.setAttribute("placeholder", t(key, locale));
+  }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-i18n-aria-label]")) {
+    const key = el.dataset.i18nAriaLabel;
+    if (key) el.setAttribute("aria-label", t(key, locale));
+  }
   superPermBtn.textContent = t("超级权限", locale);
+  vim.setLocale(locale);
   syncVisionUi();
 }
 

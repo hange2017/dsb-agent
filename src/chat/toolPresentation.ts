@@ -2,6 +2,8 @@
 
 export type DiffLine = { type: "same" | "add" | "del"; text: string };
 
+import { t } from "../i18n/strings";
+
 export type ToolBodyBlock =
   | { kind: "text"; label: string; content: string }
   | { kind: "table"; label: string; columns: string[]; rows: string[][] }
@@ -103,6 +105,7 @@ export function presentTool(
   input: unknown,
   result: string | undefined,
   status: "running" | "completed" | "error",
+  locale: "zh" | "en" = "zh",
 ): ToolPresentation {
   const inp = asRecord(input);
   const err = status === "error";
@@ -179,7 +182,7 @@ export function presentTool(
         headerSecondary: pattern ? `pattern: "${pattern}"` : undefined,
         summary,
         body: lines.length
-          ? [{ kind: "table", label: "Files", columns: ["文件"], rows: lines.slice(0, kMaxTableRows).map((l) => [l]) }]
+          ? [{ kind: "table", label: "Files", columns: [t("文件", locale)], rows: lines.slice(0, kMaxTableRows).map((l) => [l]) }]
           : undefined,
       };
     }
@@ -208,7 +211,7 @@ export function presentTool(
         headerSecondary: pattern ? sec : undefined,
         summary,
         body: rows.length
-          ? [{ kind: "table", label: "Matches", columns: ["文件", "行", "内容"], rows: rows.slice(0, kMaxTableRows) }]
+          ? [{ kind: "table", label: "Matches", columns: [t("文件", locale), t("行", locale), t("内容", locale)], rows: rows.slice(0, kMaxTableRows) }]
           : result
             ? [{ kind: "text", label: "Show full", content: truncate(result) }]
             : undefined,
@@ -231,7 +234,7 @@ export function presentTool(
             : err
               ? result?.slice(0, 120)
               : undefined,
-        body: rows.length ? [{ kind: "table", label: "Entries", columns: ["名称", "类型"], rows: rows.slice(0, kMaxTableRows) }] : undefined,
+        body: rows.length ? [{ kind: "table", label: "Entries", columns: [t("名称", locale), t("类型", locale)], rows: rows.slice(0, kMaxTableRows) }] : undefined,
       };
     }
     case "Bash": {

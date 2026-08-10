@@ -1,11 +1,21 @@
+import { t } from "../src/i18n/strings";
+
 export class VimInput {
   private m: "normal" | "insert" = "normal";
   private pending = "";
+
+  private locale: "zh" | "en" = "zh";
 
   constructor(
     private readonly el: HTMLTextAreaElement,
     private readonly opts: { enabled: () => boolean },
   ) {}
+
+  /** 语言切换时由外部刷新提示文案。 */
+  setLocale(locale: "zh" | "en"): void {
+    this.locale = locale;
+    this.updateHint();
+  }
 
   get mode(): "normal" | "insert" {
     return this.m;
@@ -62,7 +72,7 @@ export class VimInput {
   }
 
   private updateHint(): void {
-    this.el.title = this.m === "normal" ? "Vim: Normal (按 i 进入编辑)" : "";
+    this.el.title = this.m === "normal" ? t("Vim: Normal(按 i 进入编辑)", this.locale) : "";
   }
 
   private moveCaret(offset: number): void {

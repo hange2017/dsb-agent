@@ -69,6 +69,13 @@ export function createMemoryPanel(
   panel.webview.onDidReceiveMessage((msg) => {
     void handleMessage(msg, panel, services);
   });
+  // 语言设置变更时刷新已打开面板,使界面文案即时跟随。
+  const disposable = vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration("dsbAgent.language")) {
+      void postState(panel, services);
+    }
+  });
+  panel.onDidDispose(() => disposable.dispose());
 }
 
 function collectState(services: MemoryPanelServices): MemoryPanelHostMessage & { type: "state" } {

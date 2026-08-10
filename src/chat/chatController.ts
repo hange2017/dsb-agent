@@ -569,7 +569,7 @@ export class ChatController {
         installable: r.candidate.source === "marketplace",
       }));
       this.post({ type: "plugin_recommendations", items });
-      this.post({ type: "status", busy: false, info: "完成" });
+      this.post({ type: "status", busy: false, info: t("完成", this.locale) });
     } catch (err) {
       this.post({
         type: "status",
@@ -1436,7 +1436,7 @@ export class ChatController {
         const messageId = ensureAssistantShell();
         const presentation =
           ev.presentation ??
-          presentTool(ev.name, ev.input, ev.detail, ev.status === "running" ? "running" : ev.status);
+          presentTool(ev.name, ev.input, ev.detail, ev.status === "running" ? "running" : ev.status, this.locale);
         this.post({
           type: "timeline_step",
           messageId,
@@ -1629,7 +1629,7 @@ export class ChatController {
     input: unknown,
     detail?: string,
   ): void {
-    const presentation = presentTool(name, input, detail, status);
+    const presentation = presentTool(name, input, detail, status, this.locale);
     this.post({
       type: "timeline_step",
       messageId: assistantId,
@@ -1723,7 +1723,7 @@ export class ChatController {
         this.sessionUiState.setInterrupted(undefined);
         this.writeProgressMemory();
         this.post({ type: "assistant_done", messageId: assistantId });
-        this.post({ type: "status", busy: false, info: "完成" });
+        this.post({ type: "status", busy: false, info: t("完成", this.locale) });
         if (this.notificationsEnabled() && !this.isVisible()) this.notifier.info("DSBAgent", t("任务完成", this.locale));
         break;
       }

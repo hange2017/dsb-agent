@@ -184,10 +184,18 @@ function renderState(msg: Extract<HostMessage, { type: "state" }>): void {
   projectKeyEl.textContent = msg.projectKey;
   renderEntries(projectSection, msg.project, "project");
   renderEntries(globalSection, msg.global, "global");
-  // 静态模板文案随语言重渲染
+  // 静态模板文案随语言重渲染(textContent / placeholder / title)
   for (const el of document.querySelectorAll<HTMLElement>("[data-i18n]")) {
     const key = el.dataset.i18n;
     if (key) el.textContent = t(key, locale);
+  }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-i18n-placeholder]")) {
+    const key = el.dataset.i18nPlaceholder;
+    if (key) el.setAttribute("placeholder", t(key, locale));
+  }
+  for (const el of document.querySelectorAll<HTMLElement>("[data-i18n-title]")) {
+    const key = el.dataset.i18nTitle;
+    if (key) el.title = t(key, locale);
   }
 }
 

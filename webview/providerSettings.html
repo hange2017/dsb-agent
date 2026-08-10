@@ -114,10 +114,10 @@
 <section id="createSection">
   <h2 data-i18n="新建供应商">新建供应商</h2>
   <form id="createForm" class="inline-form">
-    <input id="createName" placeholder="名称(如 默认兼容端点)" required />
-    <input id="createBaseUrl" value="https://api.deepseek.com/anthropic" placeholder="Base URL(Anthropic 兼容端点)" required />
-    <input id="createModelListUrl" class="full" placeholder="自定义模型列表 URL(可选,默认探测 baseUrl 与 API 根 /models)" />
-    <input id="createApiKey" class="full" type="password" placeholder="API Key(可选,存入 secretStorage)" />
+    <input id="createName" data-i18n-placeholder="名称(如 默认兼容端点)" placeholder="名称(如 默认兼容端点)" required />
+    <input id="createBaseUrl" value="https://api.deepseek.com/anthropic" data-i18n-placeholder="Base URL(Anthropic 兼容端点)" placeholder="Base URL(Anthropic 兼容端点)" required />
+    <input id="createModelListUrl" class="full" data-i18n-placeholder="自定义模型列表 URL(可选,默认探测 baseUrl 与 API 根 /models)" placeholder="自定义模型列表 URL(可选,默认探测 baseUrl 与 API 根 /models)" />
+    <input id="createApiKey" class="full" type="password" data-i18n-placeholder="API Key(可选,存入 secretStorage)" placeholder="API Key(可选,存入 secretStorage)" />
     <div class="actions"><button type="submit" class="primary" data-i18n="创建">创建</button></div>
   </form>
 </section>
