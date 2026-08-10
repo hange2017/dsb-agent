@@ -26,6 +26,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 打包内置多平台 ripgrep(Linux CI 机器默认只装 linux 包;手动拉取其余平台,
+      # esbuild copyRipgrepBinary 会全部复制进 dist/bin,保证 Windows/macOS 用户有内置 rg)
+      - name: Fetch multi-platform ripgrep binaries
+        run: |
+          mkdir -p /tmp/rg node_modules/@vscode
+          for pkg in win32-x64 darwin-x64 darwin-arm64; do
+            npm pack "@vscode/ripgrep-$pkg"@1.18.0 --pack-destination /tmp/rg >/dev/null 2>&1 || { echo "npm pack failed for $pkg"; exit 1; }
+            tar -xzf /tmp/rg/vscode-ripgrep-$pkg-*.tgz -C /tmp/rg
+            mkdir -p "node_modules/@vscode/ripgrep-$pkg"
+            cp -r /tmp/rg/package/* "node_modules/@vscode/ripgrep-$pkg/"
+            rm -rf /tmp/rg/package
+          done
+          ls node_modules/@vscode/
+
       - name: Type check
         run: npx tsc --noEmit
 
@@ -69,6 +83,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # 打包内置多平台 ripgrep(Linux CI 机器默认只装 linux 包;手动拉取其余平台,
+      # esbuild copyRipgrepBinary 会全部复制进 dist/bin,保证 Windows/macOS 用户有内置 rg)
+      - name: Fetch multi-platform ripgrep binaries
+        run: |
+          mkdir -p /tmp/rg node_modules/@vscode
+          for pkg in win32-x64 darwin-x64 darwin-arm64; do
+            npm pack "@vscode/ripgrep-$pkg"@1.18.0 --pack-destination /tmp/rg >/dev/null 2>&1 || { echo "npm pack failed for $pkg"; exit 1; }
+            tar -xzf /tmp/rg/vscode-ripgrep-$pkg-*.tgz -C /tmp/rg
+            mkdir -p "node_modules/@vscode/ripgrep-$pkg"
+            cp -r /tmp/rg/package/* "node_modules/@vscode/ripgrep-$pkg/"
+            rm -rf /tmp/rg/package
+          done
+          ls node_modules/@vscode/
 
       - name: Compile (esbuild)
         run: npm run compile
