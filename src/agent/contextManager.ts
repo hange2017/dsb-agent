@@ -123,6 +123,8 @@ export class ContextManager {
   private thinkingEnabled: boolean;
   /** thinking 压缩发生时的回调(成功或失败均触发,用于成本统计);缺省不回调。 */
   onThinkingCompaction?: () => void;
+  /** 当前压缩流程开始时间(epoch ms);每次 compact 入口重置,emitCompaction 用其计算耗时。 */
+  private compactStartedAt = 0;
 
   constructor(private readonly opts: ContextManagerOptions) {
     this.thinkingEnabled = opts.thinkingEnabled ?? true;
@@ -197,6 +199,8 @@ export class ContextManager {
   }
 
   async compact(history: ProviderMessage[]): Promise<ProviderMessage[]> {
+    const startedAt = Date.now();
+    this.compactStartedAt = startedAt;
     const budget = this.budgetInfo();
     if (!budget && history.length <= 4) return history;
     // 触发原因:窗口兜底(安全阀)优先,其次 tail 自驱动;手动调用为 manual。
@@ -421,8 +425,13 @@ export class ContextManager {
   }
 
   /** 压缩事件上报(sessionId 自动填充;缺省不回调)。 */
-  private emitCompaction(ev: Omit<CompactionRecord, "sessionId">): void {
-    this.opts.onCompaction?.({ ...ev, sessionId: this.sessionId });
+  private emitCompaction(ev: Omit<CompactionRecord, "sessionId" | "startedAt" | "durationMs">): void {
+    this.opts.onCompaction?.({
+      ...ev,
+      sessionId: this.sessionId,
+      startedAt: this.compactStartedAt,
+      durationMs: Date.now() - this.compactStartedAt,
+    });
   }
 
   /** 预算信息:总预算 × 三块比例;预算关闭(≤0)或比例非法时返回 null。 */

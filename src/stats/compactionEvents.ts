@@ -19,6 +19,10 @@ export interface CompactionRecord {
   position: CompactionPosition;
   /** 触发原因。 */
   reason: CompactionReason;
+  /** 压缩流程开始时间(epoch ms):contextManager.compact 入口。 */
+  startedAt: number;
+  /** 压缩耗时(ms):一次 compact 流程从开始到完成(含 LLM 摘要调用)。 */
+  durationMs: number;
   /** 压缩前 token(估算口径同 providerSendStats.estimateTokens)。 */
   beforeTokens: number;
   /** 压缩后 token。 */

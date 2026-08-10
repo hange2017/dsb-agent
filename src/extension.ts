@@ -28,6 +28,7 @@ import { createAgentSettingsPanel } from "./settings/agentSettingsPanel";
 import { MemoryManager } from "./agent/memory/memoryManager";
 import { ActivityStatsStore, DailySummaryReminder } from "./stats/activityStats";
 import { StatsStore } from "./stats/statsStore";
+import { buildSettingsChangeData } from "./stats/settingsChange";
 import type { ProviderDef } from "./providers/types";
 import type { ApiKeyStore } from "./settings/apiKeyStore";
 
@@ -844,6 +845,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           updateBudget: async (config) => {
             // await 写配置完成,确保保存后回读能拿到新值(异步写未落盘会导致界面刷回旧值)
             const cfg = vscode.workspace.getConfiguration();
+            // 记录修改前快照,便于后续对比「改了什么」
+            const before = {
+              windowTokens: configuration.contextWindowTokens(),
+              budget: configuration.historyTokenBudget(),
+              split: configuration.budgetSplit(),
+              triggerPct: configuration.compactionTriggerPct(),
+              targetPct: configuration.compactionTargetPct(),
+            };
             await cfg.update(
               "dsbAgent.contextWindowTokens",
               config.windowTokens,
@@ -861,6 +870,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             );
             await cfg.update("dsbAgent.compaction.triggerPct", config.triggerPct, vscode.ConfigurationTarget.Global);
             await cfg.update("dsbAgent.compaction.targetPct", config.targetPct, vscode.ConfigurationTarget.Global);
+            // 参数修改留痕:记录修改前后完整快照 + 变更项,便于按参数分组统计各统计量(时间由 StatsStore 自动加 t)
+            const after = {
+              windowTokens: config.windowTokens,
+              budget: config.budget,
+              split: config.split,
+              triggerPct: config.triggerPct,
+              targetPct: config.targetPct,
+            };
+            statsStore.record("settings_change", buildSettingsChangeData(before, after));
           },
         },
       );

@@ -924,6 +924,9 @@ describe("ContextManager compaction events", () => {
     expect(ev).toBeDefined();
     expect(ev!.reason).toBe("tail_self_driven");
     expect(ev!.beforeTokens).toBeGreaterThan(ev!.afterTokens);
+    // 压缩耗时统计:startedAt 为 epoch ms,且一次 compact 流程结束后 durationMs ≥ 0
+    expect(ev!.startedAt).toBeGreaterThan(0);
+    expect(ev!.durationMs).toBeGreaterThanOrEqual(0);
     expect(ev!.headCount).toBe(17); // tail 目标 175 → 保留 3 条(150)
     expect(ev!.tailCount).toBe(3);
     expect(ev!.headCount! + ev!.tailCount!).toBe(msgs.length);
