@@ -4,6 +4,46 @@
 
 [English](README.en.md)
 
+## 快速开始
+
+1. 在 VS Code 中按下组合键 `Ctrl+Shift+P`，输入 `DSBAgent: Open`，点击之后右侧弹出窗口。
+2. 点击 Agent 界面右上角的设置图标，然后点击弹窗左下角的「供应商和模型」。
+3. 新建供应商处，名称随意填写，填入两个关键信息：**Base URL** 和 **API Key**，两项填写后点击创建；并在下方供应商列表中选择「设置为当前」，即可关闭设置界面返回使用。
+4. 在输入框发送第一条消息，开始对话。
+
+> ⚡ **设置建议(重要)** —— 使用前先在设置里调整这两项,体验更佳:
+>
+> <span style="color: green;">1. **超级权限**:设置 → 超级权限,一键开启,畅通无阻(工具不再逐个询问)。</span>
+>
+> <span style="color: green;">2. **参数设置**:历史信息总预算必须小于窗口总长度;64K 即可运行,但建议尝试 **256K 或更大** 的历史信息总预算,可显著减少压缩带来的卡顿。</span>
+
+> API Key 存于 VS Code SecretStorage（不落盘明文）；内置供应商模板默认指向公开兼容端点，可随时在设置中修改。
+
+## 安装
+
+### 从 GitHub Releases 安装 `.vsix`（当前推荐）
+
+1. 从 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 下载最新 `dsb-agent-<版本>.vsix`，或自行打包（见下文「从源码构建」）。
+2. 打开 VS Code。
+3. 命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）→ **Extensions: Install from VSIX…**，选择下载的 `.vsix`。
+   - **Windows** 也可直接双击 `.vsix`（会自动用 VS Code 打开安装）；若 `code` 不在 PATH，请先运行 VS Code 内「Shell Command: Install 'code' command in PATH」。
+4. 安装后重载窗口（Reload Window），从命令面板打开 **DSBAgent**，按提示配置供应商与 API Key（见上文「快速开始」）。
+
+### VS Code 官方扩展市场（发布中）
+
+扩展正在向 VS Code 官方扩展市场提交，审核通过后可直接在扩展面板（`Ctrl+Shift+X`）搜索 **DSBAgent** 安装。
+> 官方市场收录需走微软 Azure DevOps 发布流程，当前扩展的发布状态以 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 为准。
+
+### 从源码构建
+
+```bash
+npm install
+npm run compile          # esbuild → dist/
+npx vsce package         # 产出 .vsix
+# 或用一键脚本(自动 编译→打包→安装,需 code CLI):
+npm run install-extension
+```
+
 ## 概述
 
 基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Agent（开源，非官方；操作方式参考主流编码 Agent 工具）。
@@ -28,40 +68,6 @@
 - **会话能力**：会话恢复、回退（`rewind`）、会话列表、权限询问（默认未命中规则一律询问）
 
 详见总体框架文档 [`.dsb/docs/project-overview.md`](.dsb/docs/project-overview.md)。
-
-## 安装
-
-### 从 GitHub Releases 安装 `.vsix`（当前推荐）
-
-1. 从 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 下载最新 `dsb-agent-<版本>.vsix`，或自行打包（见下文「从源码构建」）。
-2. 打开 VS Code。
-3. 命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）→ **Extensions: Install from VSIX…**，选择下载的 `.vsix`。
-   - **Windows** 也可直接双击 `.vsix`（会自动用 VS Code 打开安装）；若 `code` 不在 PATH，请先运行 VS Code 内「Shell Command: Install 'code' command in PATH」。
-4. 安装后重载窗口（Reload Window），从命令面板打开 **DSBAgent**，按提示配置供应商与 API Key（见下文「快速开始」）。
-
-### VS Code 官方扩展市场（发布中）
-
-扩展正在向 VS Code 官方扩展市场提交，审核通过后可直接在扩展面板（`Ctrl+Shift+X`）搜索 **DSBAgent** 安装。
-> 官方市场收录需走微软 Azure DevOps 发布流程，当前扩展的发布状态以 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 为准。
-
-### 从源码构建
-
-```bash
-npm install
-npm run compile          # esbuild → dist/
-npx vsce package         # 产出 .vsix
-# 或用一键脚本(自动 编译→打包→安装,需 code CLI):
-npm run install-extension
-```
-
-## 快速开始
-
-1. 在 VS Code 中按下组合键 `Ctrl+Shift+P`，输入 `DSBAgent: Open`，点击之后右侧弹出窗口。
-2. 点击 Agent 界面右上角的设置图标，然后点击弹窗左下角的「供应商和模型」。
-3. 新建供应商处，名称随意填写，填入两个关键信息：**Base URL** 和 **API Key**，两项填写后点击创建；并在下方供应商列表中选择「设置为当前」，即可关闭设置界面返回使用。
-4. 在输入框发送第一条消息，开始对话。
-
-> API Key 存于 VS Code SecretStorage（不落盘明文）；内置供应商模板默认指向公开兼容端点，可随时在设置中修改。
 
 ## 支持平台
 
