@@ -1284,17 +1284,40 @@ export class ChatController {
     await store.setActive(providerId);
     this.currentModel = undefined; // 切供应商后模型回到该供应商默认
     this.newSession();
-    this.post({
-      type: "provider_changed",
-      providerId,
-      providerName: provider.name,
-      models: this.currentModels(),
-      modes: this.currentModes(),
-      capabilities: this.currentCapabilities(),
-    });
+    await this.broadcastProviderUi(provider);
     this.post({ type: "toast", message: t("已切换到供应商 {name}", this.locale, { name: provider.name }) });
     // 模型列表远程优先:切换后异步拉取该供应商模型列表
     void this.refreshActiveModels();
+  }
+
+  /**
+   * 设置面板增删改供应商后同步 Agent 顶栏,不重置会话。
+   * (webview 仅在 init 时拉过一次列表;不主动推送会导致「设置里有供应商、顶栏仍未配置」。)
+   */
+  syncProviderUi(): void {
+    const provider = this.activeProvider();
+    void this.broadcastProviderUi(provider);
+    void this.refreshActiveModels();
+  }
+
+  private async broadcastProviderUi(provider: ProviderDef | undefined): Promise<void> {
+    const providers = this.compatibleProviders().map((p) => ({
+      id: p.id,
+      name: p.name,
+      active: p.id === provider?.id,
+    }));
+    const providerKey = provider ? await this.deps.providerStore?.getApiKey(provider.id) : undefined;
+    const apiKey = await this.deps.apiKeyStore.getApiKey();
+    this.post({
+      type: "provider_changed",
+      providerId: provider?.id ?? "",
+      providerName: provider?.name ?? "",
+      providers,
+      models: this.currentModels(),
+      modes: this.currentModes(),
+      capabilities: this.currentCapabilities(),
+      hasKey: Boolean(providerKey ?? apiKey),
+    });
   }
 
   /**

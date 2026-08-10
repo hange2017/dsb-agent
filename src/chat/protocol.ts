@@ -76,7 +76,18 @@ export type HostToWebviewMessage =
       notificationsEnabled: boolean;
     }
   | { type: "locale_changed"; locale: "zh" | "en" }
-  | { type: "provider_changed"; providerId: string; providerName: string; models: ModelInfo[]; modes: Mode[]; capabilities: Capabilities }
+  | {
+      type: "provider_changed";
+      providerId: string;
+      providerName: string;
+      /** 完整供应商列表(设置面板变更后同步顶栏;缺省时 webview 仅更新选中项)。 */
+      providers?: ProviderListItem[];
+      models: ModelInfo[];
+      modes: Mode[];
+      capabilities: Capabilities;
+      /** 当前供应商是否已配置 API key(设置面板保存后用于刷新空状态提示)。 */
+      hasKey?: boolean;
+    }
   | {
       type: "models_updated";
       providerId: string;

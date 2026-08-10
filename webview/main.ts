@@ -1438,28 +1438,34 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
       }
       break;
     case "provider_changed":
-      renderProviderSelect(
-        [...providerSelect.options].map((o) => ({
-          id: o.value,
-          name: o.textContent ?? o.value,
-          active: o.value === msg.providerId,
-        })),
-      );
-      // provider_changed 不带完整供应商列表时,至少更新选中项
-      for (const opt of [...providerSelect.options]) {
-        opt.selected = opt.value === msg.providerId;
-      }
-      if (providerSelect.options.length === 0) {
-        const opt = document.createElement("option");
-        opt.value = msg.providerId;
-        opt.textContent = msg.providerName;
-        opt.selected = true;
-        providerSelect.append(opt);
+      if (msg.providers) {
+        // 设置面板同步:带完整列表,替换「未配置」占位
+        renderProviderSelect(msg.providers);
+      } else {
+        // 兼容旧消息:仅更新选中项;若仍是空占位则追加当前供应商
+        const existing = [...providerSelect.options]
+          .filter((o) => o.value !== "")
+          .map((o) => ({
+            id: o.value,
+            name: o.textContent ?? o.value,
+            active: o.value === msg.providerId,
+          }));
+        if (existing.length === 0 && msg.providerId) {
+          renderProviderSelect([{ id: msg.providerId, name: msg.providerName, active: true }]);
+        } else {
+          renderProviderSelect(existing.map((p) => ({ ...p, active: p.id === msg.providerId })));
+        }
       }
       renderModes(msg.modes);
       renderModels(msg.models, msg.models[0]?.id ?? "");
       currentCapabilities = msg.capabilities;
       syncVisionUi();
+      // 保存/切换供应商后同步「尚未设置 API Key」空状态提示
+      if (msg.hasKey !== undefined && !emptyHint.hidden) {
+        emptyHint.textContent = msg.hasKey
+          ? t("在下方输入消息,开始对话(model: {model})", locale, { model: modelSelect.value })
+          : t("尚未设置 API Key。运行命令:DSBAgent: Set API Key", locale);
+      }
       break;
     case "message":
       if (historyMode) {

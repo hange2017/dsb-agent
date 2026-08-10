@@ -33,6 +33,11 @@ import type { ApiKeyStore } from "./settings/apiKeyStore";
 
 let activeProvider: ChatViewProvider | undefined;
 
+/** 设置面板变更后把供应商列表同步到 Agent 顶栏(不重置会话)。 */
+function syncChatProviderUi(): void {
+  activeProvider?.getController()?.syncProviderUi();
+}
+
 /** 旧扁平配置迁移:providers 为空且 baseUrl 被用户自定义过 → 生成 legacy 供应商并迁移旧 API key。 */
 async function migrateLegacyConfig(
   providerStore: ProviderStore,
@@ -479,6 +484,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             providerStore.upsert(def);
             await providerStore.setActive(def.id);
             if (input.apiKey) await providerStore.setApiKey(def.id, input.apiKey);
+            syncChatProviderUi();
             return { id: def.id };
           },
           updateProvider: async (id, patch) => {
@@ -494,15 +500,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
               modes: modes ? (modes as ProviderDef["modes"]) : p.modes,
             });
+            syncChatProviderUi();
           },
           removeProvider: async (id) => {
             providerStore.remove(id);
+            syncChatProviderUi();
           },
           setActiveProvider: async (id) => {
             await providerStore.setActive(id);
+            syncChatProviderUi();
           },
           setApiKey: async (id, key) => {
             await providerStore.setApiKey(id, key);
+            syncChatProviderUi();
           },
           resolveModels: (providerId) => {
             const p = providerStore.get(providerId);
@@ -531,6 +541,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               },
               existing: providerStore.list(),
             });
+            syncChatProviderUi();
             return { imported: r.imported.length };
           },
           testConnection: async (providerId) => {

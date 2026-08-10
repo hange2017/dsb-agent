@@ -20,6 +20,12 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+/** 等待挂起的微任务(Promise 链),用于 async post 场景。 */
+async function flushAsync(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 function makeDeps(extra?: { sessionUiState?: SessionUiState; activityStats?: { recordActivity: (d: Date) => void } }) {
   const sessionImpl = {
     send: async (_text: string, onEvent: (ev: AgentLoopEvent) => void) => {
@@ -1418,16 +1424,38 @@ describe("ChatController provider/capability wiring", () => {
   it("set_provider persists active provider and broadcasts provider_changed", async () => {
     const { controller, posted, setActive } = providerDeps();
     await controller.handle({ type: "set_provider", providerId: "p1" });
+    await flushAsync();
     expect(setActive).toHaveBeenCalledWith("p1");
     const changed = posted.find((m) => typeOf(m) === "provider_changed") as {
       providerId?: string;
       providerName?: string;
+      providers?: Array<{ id: string; active: boolean }>;
       models?: unknown[];
       capabilities?: unknown;
+      hasKey?: boolean;
     } | undefined;
     expect(changed?.providerId).toBe("p1");
     expect(changed?.providerName).toBe("默认兼容端点");
+    expect(changed?.providers?.length).toBe(1);
+    expect(changed?.providers?.[0]).toEqual({ id: "p1", name: "默认兼容端点", active: true });
     expect(changed?.capabilities).toEqual({ supportsVision: true, supportsThinking: true });
+    expect(changed?.hasKey).toBe(true);
+  });
+
+  it("syncProviderUi broadcasts full provider list without resetting session (设置面板→Agent 顶栏)", async () => {
+    const { controller, posted } = providerDeps();
+    controller.syncProviderUi();
+    await flushAsync();
+    const changed = posted.find((m) => typeOf(m) === "provider_changed") as {
+      providerId?: string;
+      providers?: Array<{ id: string; name: string; active: boolean }>;
+      hasKey?: boolean;
+    } | undefined;
+    expect(changed?.providerId).toBe("p1");
+    expect(changed?.providers).toEqual([{ id: "p1", name: "默认兼容端点", active: true }]);
+    expect(changed?.hasKey).toBe(true);
+    // 不发 reset(与 set_provider 区分:设置面板改配置不应清会话)
+    expect(posted.some((m) => typeOf(m) === "reset")).toBe(false);
   });
 
   it("rejects attach_images when current model has no vision", async () => {
