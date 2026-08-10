@@ -1,11 +1,11 @@
 # DSBAgent
-## 使用方法
 
-1. 在 VS Code 中按下组合键 `Ctrl+Shift+P`，输入 `DSBAgent: Open`，点击之后右侧弹出窗口
-2. 点击 Agent 界面右上角的设置图标，然后点击弹窗左下角的「供应商和模型」
-3. 新建供应商处，名称随意填写，填入两个关键信息：Base URL 和 API Key，两项填写后点击创建即可；并在下方供应商列表中选择「设置为当前」，即可关闭设置界面返回使用
+> 基于 **Anthropic Messages 兼容 API** 的开源 VS Code 编码 Agent（非官方独立项目）。
+
+[English](README.en.md)
 
 ## 概述
+
 基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Agent（开源，非官方；操作方式参考主流编码 Agent 工具）。
 
 可对接任意 Anthropic Messages 兼容 `baseUrl`；内置模板默认指向公开兼容端点（技术地址见设置中的 Base URL，可随时改掉）。
@@ -31,26 +31,18 @@
 
 ## 安装
 
-### 从 Open VSX 市场安装（推荐）
-
-扩展发布在 [Open VSX](https://open-vsx.org)(Eclipse 基金会运营的开源扩展市场):
-
-1. 访问扩展页面:https://open-vsx.org/extension/zhaoNingHan/dsb-agent
-2. 点击页面 **Install** 按钮(浏览器会拉起 VS Code 自动安装);或复制页面上给出的命令行:
-   ```bash
-   code --install-extension zhaoNingHan.dsb-agent
-   ```
-3. 安装后重载窗口(Reload Window),从命令面板打开 **DSBAgent**,按提示配置 API Key 与供应商。
-
-> 说明:Open VSX 是独立于 VS Code 官方 Marketplace 的开源市场,默认不收录进 VS Code 内置扩展搜索(官方市场收录需另走微软 Azure DevOps 发布流程)。从 Open VSX 安装后与官方渠道安装的扩展功能完全一致。
-
-### 从 `.vsix` 安装
+### 从 GitHub Releases 安装 `.vsix`（当前推荐）
 
 1. 从 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 下载最新 `dsb-agent-<版本>.vsix`，或自行打包（见下文「从源码构建」）。
 2. 打开 VS Code。
 3. 命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）→ **Extensions: Install from VSIX…**，选择下载的 `.vsix`。
    - **Windows** 也可直接双击 `.vsix`（会自动用 VS Code 打开安装）；若 `code` 不在 PATH，请先运行 VS Code 内「Shell Command: Install 'code' command in PATH」。
-4. 安装后重载窗口（Reload Window），从命令面板打开 **DSBAgent**，按提示配置 API Key 与供应商。
+4. 安装后重载窗口（Reload Window），从命令面板打开 **DSBAgent**，按提示配置供应商与 API Key（见下文「快速开始」）。
+
+### VS Code 官方扩展市场（发布中）
+
+扩展正在向 VS Code 官方扩展市场提交，审核通过后可直接在扩展面板（`Ctrl+Shift+X`）搜索 **DSBAgent** 安装。
+> 官方市场收录需走微软 Azure DevOps 发布流程，当前扩展的发布状态以 [GitHub Releases](https://github.com/hange2017/dsb-agent/releases) 为准。
 
 ### 从源码构建
 
@@ -62,7 +54,16 @@ npx vsce package         # 产出 .vsix
 npm run install-extension
 ```
 
-### 支持平台
+## 快速开始
+
+1. 在 VS Code 中按下组合键 `Ctrl+Shift+P`，输入 `DSBAgent: Open`，点击之后右侧弹出窗口。
+2. 点击 Agent 界面右上角的设置图标，然后点击弹窗左下角的「供应商和模型」。
+3. 新建供应商处，名称随意填写，填入两个关键信息：**Base URL** 和 **API Key**，两项填写后点击创建；并在下方供应商列表中选择「设置为当前」，即可关闭设置界面返回使用。
+4. 在输入框发送第一条消息，开始对话。
+
+> API Key 存于 VS Code SecretStorage（不落盘明文）；内置供应商模板默认指向公开兼容端点，可随时在设置中修改。
+
+## 支持平台
 
 | 平台 | 状态 | 说明 |
 |------|------|------|
@@ -147,7 +148,7 @@ Copyright (c) 2026 ZhaoNingHan
 ```bash
 npm run compile    # esbuild 构建(dev)
 npm run typecheck  # tsc --noEmit
-npm test           # vitest 全量(100 文件 / 972 tests)
+npm test           # vitest 全量(100 文件 / 973 tests)
 npx vsce package   # 打 .vsix(发布前执行 licenses:inventory 刷新第三方清单)
 ```
 
