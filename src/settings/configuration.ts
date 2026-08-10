@@ -68,12 +68,12 @@ export class Configuration {
     return this.reader.getString("dsbAgent.compaction.thinking") !== "false";
   }
 
-  /** 历史信息 token 总预算;缺省 100000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
+  /** 历史信息 token 总预算;缺省 150000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
   historyTokenBudget(): number {
     const raw = this.reader.getString("dsbAgent.compaction.historyTokenBudget");
-    if (!raw) return 100000;
+    if (!raw) return 150000;
     const v = Number(raw);
-    return Number.isFinite(v) && v >= 0 ? v : 100000;
+    return Number.isFinite(v) && v >= 0 ? v : 150000;
   }
 
   /** 默认预算比例(压缩块/thinking/tail)。 */

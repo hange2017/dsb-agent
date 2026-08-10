@@ -91,7 +91,7 @@ export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetS
 export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): AgentBudgetConfig {
   const def: AgentBudgetConfig = {
     windowTokens: 1000000,
-    budget: 100000,
+    budget: 150000,
     split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     triggerPct: 0.75,
     targetPct: 0.5,

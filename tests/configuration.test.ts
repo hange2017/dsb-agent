@@ -55,8 +55,8 @@ describe("Configuration", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "yes" : "") });
     expect(junk.compactionThinkingEnabled()).toBe(true);
   });
-  it("historyTokenBudget defaults to 100000 and accepts 0 (disabled)", () => {
-    expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(100000);
+  it("historyTokenBudget defaults to 150000 and accepts 0 (disabled)", () => {
+    expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(150000);
     const zero = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "0" : "") });
     expect(zero.historyTokenBudget()).toBe(0);
     const custom = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "20000" : "") });
@@ -64,9 +64,9 @@ describe("Configuration", () => {
   });
   it("historyTokenBudget rejects non-numeric and negative", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "abc" : "") });
-    expect(junk.historyTokenBudget()).toBe(100000);
+    expect(junk.historyTokenBudget()).toBe(150000);
     const negative = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "-5" : "") });
-    expect(negative.historyTokenBudget()).toBe(100000);
+    expect(negative.historyTokenBudget()).toBe(150000);
   });
   it("budgetSplit defaults to 45/20/35", () => {
     expect(new Configuration({ getString: () => "" }).budgetSplit()).toEqual({

@@ -175,7 +175,7 @@
         },
         "dsbAgent.compaction.historyTokenBudget": {
           "type": "number",
-          "default": 100000,
+          "default": 150000,
           "minimum": 0,
           "description": "%configuration.dsbAgent.compaction.historyTokenBudget.description%"
         },
