@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [master, main]
+    tags: ["v*"] # 打 tag v<version> 触发发布(如 v0.1.0,须与 package.json 的 version 一致)
   pull_request:
   workflow_dispatch:
 
@@ -31,9 +32,7 @@ jobs:
         run: npm run compile
 
       - name: Package .vsix (smoke)
-        run: npx vsce package --out dist/dsb-agent-ci.vsix --allow-missing-repository --no-rewrite-relative-links
-        # 正式发布前移除 --allow-missing-repository / --no-rewrite-relative-links
-        # 并确保 package.json 已配置真实 repository 字段。
+        run: npx vsce package --out dist/dsb-agent-ci.vsix
 
       - name: Verify vsix artifact
         run: |
@@ -48,3 +47,36 @@ jobs:
           path: dist/dsb-agent-ci.vsix
           if-no-files-found: error
           retention-days: 7
+
+  publish:
+    # 仅在 push tag v* 时发布(如 v0.1.0);需在仓库 Settings → Secrets and variables
+    # 配置 VSCE_PAT:Azure DevOps PAT,权限范围勾选 Marketplace → Manage。
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile (esbuild)
+        run: npm run compile
+
+      - name: Package .vsix
+        run: npx vsce package --out dist/dsb-agent-release.vsix
+
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish -p "${{ secrets.VSCE_PAT }}" --packagePath dist/dsb-agent-release.vsix
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/dsb-agent-release.vsix
+          generate_release_notes: true

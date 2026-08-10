@@ -134,7 +134,7 @@ Copyright (c) 2026 ZhaoNingHan
 ```bash
 npm run compile    # esbuild 构建(dev)
 npm run typecheck  # tsc --noEmit
-npm test           # vitest 全量(97 文件 / 937 tests)
+npm test           # vitest 全量(100 文件 / 972 tests)
 npx vsce package   # 打 .vsix(发布前执行 licenses:inventory 刷新第三方清单)
 ```
 

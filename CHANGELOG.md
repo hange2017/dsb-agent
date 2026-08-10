@@ -2,17 +2,7 @@
 
 DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);实现计划与设计说明见 `.dsb/plans/` 与 `.dsb/specs/`。
 
-## [Unreleased]
-
-### 发布准备(2026-08-10)
-
-- 新增原创图标 `resources/icon.png`(与任何厂商商标无关)。
-- 补全 `categories`(`Chat / Other / AI / Programming Languages`)与 `keywords`。
-- 建立根级 `CHANGELOG.md`;README 扩充安装步骤、平台支持矩阵与已知限制。
-- 新增 GitHub Actions CI:compile + typecheck + vitest 全量 + `vsce package` 验包。
-- 待办(正式上架前):注册 Publisher 并替换 `publisher`;配置 `repository` 并移除安装脚本 `--no-rewrite-relative-links`;Windows/macOS 真机冒烟。
-
-## [0.1.0] — 2026-08-09(基线)
+## [0.1.0] — 2026-08-10(首发布)
 
 ### 新增
 
@@ -33,6 +23,15 @@ DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);�
 
 - 引擎层(`src/` 非 webview 部分)不依赖 `vscode` 模块,便于单测。
 - 打包排除 `.deepseek/**`、`.dsb/**`、`.cursor/**`、`.map` 等敏感/冗余文件。
+
+### 发布准备(2026-08-10)
+
+- 新增原创图标 `resources/icon.png`(与任何厂商商标无关)。
+- 补全 `categories`(`Chat / Other / AI / Programming Languages`)与 `keywords`。
+- 建立根级 `CHANGELOG.md`;README 扩充安装步骤、平台支持矩阵与已知限制。
+- 新增 GitHub Actions CI:compile + typecheck + vitest 全量 + `vsce package` 验包。
+- 注册 Marketplace Publisher(`zhaoNingHan`);配置 `repository` 与 `publisher`;`vsce package` 本地验包通过(103 文件 / ~5.5MB,无警告)。
+- 待办(上架前):配置 Marketplace PAT;Windows/macOS 真机冒烟。
 
 ## [0.0.x] — 2026-08-04 之前
 

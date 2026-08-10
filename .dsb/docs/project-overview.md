@@ -1,13 +1,13 @@
 # DSBAgent — 项目总体框架
 
 > 生成时间:2026-08-10(全项目盘点后重写)
-> 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 109 个文件、webview 13 个、tests 97 个测试文件 / 937 项)
+> 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 109 个文件、webview 13 个、tests 100 个测试文件 / 972 项)
 
 ## 项目简介
 
 DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Agent(开源,非官方;操作方式参考主流编码 Agent 工具)。可对接任意 Anthropic Messages 兼容 `baseUrl`(内置 DeepSeek 等预设,默认端点可在设置中修改)。对话、工具执行、记忆、上下文压缩、冷存储归档等能力全部本地化,密钥存 VS Code SecretStorage,扩展自身不收集遥测。
 
-**技术栈**:TypeScript + VS Code Extension API(引擎层不依赖 `vscode` 模块,便于单测);esbuild 打包(`dist/extension.js` + `dist/webview/`);Vitest 测试(97 文件 / 937 tests)。
+**技术栈**:TypeScript + VS Code Extension API(引擎层不依赖 `vscode` 模块,便于单测);esbuild 打包(`dist/extension.js` + `dist/webview/`);Vitest 测试(100 文件 / 972 tests)。
 
 ## 顶层目录
 
@@ -15,7 +15,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 ./ — 根(README / CHANGELOG / LICENSE / package.json / esbuild.mjs)
 ├── src/          引擎 + 扩展宿主(109 个 .ts)
 ├── webview/      Agent 聊天面板与各设置面板前端(13 个文件,esbuild 产物进 dist/webview)
-├── tests/        单元测试(97 个测试文件,937 项)
+├── tests/        单元测试(100 个测试文件,972 项)
 ├── resources/    打包资源(原创图标 resources/icon.png,128×128)
 ├── scripts/      构建/安装脚本(generate-third-party-notices.mjs、install-extension.sh)
 ├── .github/      CI 工作流(typecheck → vitest → vsce package)
@@ -114,6 +114,6 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ## 测试与验证
 
-- 单测:`npx vitest run`(97 文件 / 937 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(107 文件 / ~5.5MB)。
+- 单测:`npx vitest run`(100 文件 / 972 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(103 文件 / ~5.5MB)。
 - CI:`.github/workflows/ci.yml`(typecheck → vitest → vsce package)。
 - 引擎层(src/ 非 webview)不依赖 `vscode` 模块,全部逻辑可脱离宿主单测。
