@@ -93,6 +93,7 @@ async function manageProviders(
     }
     const baseUrl = await vscode.window.showInputBox({
       prompt: t("Anthropic 兼容 API Base URL", locale),
+      value: "https://api.deepseek.com/anthropic",
       placeHolder: "https://api.deepseek.com/anthropic",
     });
     if (!baseUrl) return;

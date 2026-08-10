@@ -16,6 +16,7 @@ declare function acquireVsCodeApi(): {
 const vscode = acquireVsCodeApi();
 
 import { t } from "../src/i18n/strings";
+import { DEFAULT_COMPAT_BASE_URL } from "../src/settings/providerChoices";
 
 export interface ProviderCapabilities {
   supportsVision: boolean;
@@ -384,7 +385,7 @@ createForm.addEventListener("submit", (e) => {
     apiKey: createApiKey.value.trim() || undefined,
   });
   createName.value = "";
-  createBaseUrl.value = "";
+  createBaseUrl.value = DEFAULT_COMPAT_BASE_URL;
   createModelListUrl.value = "";
   createApiKey.value = "";
 });
