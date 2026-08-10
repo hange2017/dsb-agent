@@ -24,23 +24,35 @@ export const kBuiltinCapabilities: Record<string, Partial<ModelCapabilities>> = 
 type CacheEntry = { at: number; models: ModelInfo[] };
 
 /**
+ * 去掉粘贴 Base URL 时常见的不可见字符(BOM / 零宽空格等),避免 /anthropic 后缀匹配失败。
+ */
+export function sanitizeProviderUrl(url: string): string {
+  return url
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+    .trim()
+    .replace(/\/+$/, "");
+}
+
+/**
  * 构造模型列表探测 URL。
  * Anthropic 兼容聊天端点常以 `/anthropic` 结尾,但 OpenAI 风格的 `/models`
- * 在 API 根路径(如 https://api.deepseek.com/models),故额外探测去后缀后的根。
+ * 在 API 根路径(如 https://api.deepseek.com/models)。对 /anthropic 基址优先探测 API 根,
+ * 再回退到基址下的 /v1/models 与 /models。
  */
 export function modelListUrlCandidates(baseUrl: string, modelListUrl?: string): string[] {
   if (modelListUrl?.trim()) {
-    return [modelListUrl.trim()];
+    return [sanitizeProviderUrl(modelListUrl)];
   }
-  const base = baseUrl.replace(/\/+$/, "");
-  const attempts = [`${base}/v1/models`, `${base}/models`];
+  const base = sanitizeProviderUrl(baseUrl);
+  const attempts: string[] = [];
   const anthropicSuffix = /\/anthropic$/i;
   if (anthropicSuffix.test(base)) {
-    const root = base.replace(anthropicSuffix, "");
+    const root = sanitizeProviderUrl(base.replace(anthropicSuffix, ""));
     if (root.length > 0) {
       attempts.push(`${root}/models`, `${root}/v1/models`);
     }
   }
+  attempts.push(`${base}/v1/models`, `${base}/models`);
   return [...new Set(attempts)];
 }
 
@@ -107,12 +119,18 @@ export class ModelCatalog {
     }
 
     let models: ModelInfo[] | undefined;
-    let lastError: unknown;
+    const failures: string[] = [];
     for (const url of attempts) {
       try {
         const res = await this.fetchImpl(url, { headers });
         if (!res.ok) {
-          lastError = new Error(`GET ${url} -> ${res.status}`);
+          failures.push(`GET ${url} -> ${res.status}`);
+          // 401/403:密钥问题,继续打其它路径通常无意义
+          if (res.status === 401 || res.status === 403) {
+            throw new Error(
+              `模型列表认证失败(${res.status})。请先在供应商设置中配置有效 API Key。尝试: ${url}`,
+            );
+          }
           continue;
         }
         const data = (await res.json()) as { data?: Array<Record<string, unknown>> };
@@ -121,7 +139,7 @@ export class ModelCatalog {
             Boolean(m) && typeof m === "object" && typeof m.id === "string" && m.id.length > 0,
         );
         if (items.length === 0) {
-          lastError = new Error(`GET ${url}: empty model list`);
+          failures.push(`GET ${url}: empty model list`);
           continue;
         }
         const builtin = this.builtinModels();
@@ -144,12 +162,19 @@ export class ModelCatalog {
         });
         break;
       } catch (err) {
-        lastError = err;
+        if (err instanceof Error && /认证失败|API Key/.test(err.message)) {
+          throw err;
+        }
+        failures.push(err instanceof Error ? err.message : String(err));
       }
     }
 
     if (!models) {
-      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+      throw new Error(
+        failures.length
+          ? `模型列表拉取失败:\n${failures.join("\n")}`
+          : "模型列表拉取失败:无可用探测 URL",
+      );
     }
 
     this.cache.set(provider.id, { at: Date.now(), models });

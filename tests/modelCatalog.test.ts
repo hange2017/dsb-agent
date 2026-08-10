@@ -54,15 +54,11 @@ describe("ModelCatalog.fetchModels", () => {
 
   it("for /anthropic baseUrl also probes API root /models", async () => {
     fetchMock
-      .mockResolvedValueOnce(jsonResponse(404, {})) // .../anthropic/v1/models
-      .mockResolvedValueOnce(jsonResponse(404, {})) // .../anthropic/models
-      .mockResolvedValueOnce(jsonResponse(200, { data: [{ id: "deepseek-v4-flash" }] })); // .../models
+      .mockResolvedValueOnce(jsonResponse(200, { data: [{ id: "deepseek-v4-flash" }] })); // root /models first
     const models = await catalog.fetchModels(
       makeProvider({ baseUrl: "https://api.deepseek.com/anthropic" }),
     );
     expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
-      "https://api.deepseek.com/anthropic/v1/models",
-      "https://api.deepseek.com/anthropic/models",
       "https://api.deepseek.com/models",
     ]);
     expect(models.map((m) => m.id)).toEqual(["deepseek-v4-flash"]);
@@ -70,14 +66,38 @@ describe("ModelCatalog.fetchModels", () => {
 
   it("modelListUrlCandidates strips /anthropic for root probes", () => {
     expect(modelListUrlCandidates("https://api.deepseek.com/anthropic")).toEqual([
-      "https://api.deepseek.com/anthropic/v1/models",
-      "https://api.deepseek.com/anthropic/models",
       "https://api.deepseek.com/models",
       "https://api.deepseek.com/v1/models",
+      "https://api.deepseek.com/anthropic/v1/models",
+      "https://api.deepseek.com/anthropic/models",
     ]);
     expect(modelListUrlCandidates("https://api.example.com", "https://custom/list")).toEqual([
       "https://custom/list",
     ]);
+  });
+
+  it("modelListUrlCandidates strips zero-width / BOM junk in baseUrl", () => {
+    // 粘贴 Base URL 时偶发 U+200B,会导致 /anthropic 后缀匹配失败、只打到错误路径
+    const dirty = "https://api.deepseek.com/anthropic\u200b";
+    const urls = modelListUrlCandidates(dirty);
+    expect(urls.every((u) => !u.includes("\u200b"))).toBe(true);
+    expect(urls[0]).toBe("https://api.deepseek.com/models");
+    expect(urls).toContain("https://api.deepseek.com/anthropic/v1/models");
+  });
+
+  it("stops on 401 with auth error (does not keep probing as if 404)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { error: "no" }));
+    await expect(
+      catalog.fetchModels(makeProvider({ baseUrl: "https://api.deepseek.com/anthropic" }), { apiKey: "sk-bad" }),
+    ).rejects.toThrow(/API Key|401|认证|鉴权|Authentication/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("all-fail error lists every attempted URL", async () => {
+    mockJson(fetchMock, 404, {});
+    await expect(
+      catalog.fetchModels(makeProvider({ baseUrl: "https://api.deepseek.com/anthropic" })),
+    ).rejects.toThrow(/https:\/\/api\.deepseek\.com\/models/);
   });
 
   it("uses modelListUrl when provided", async () => {

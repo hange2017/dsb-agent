@@ -1,5 +1,6 @@
 import type { ProviderDef } from "./types";
 import { normalizeCapabilities, normalizeCapabilityOverrides, toPersistedCapabilities } from "./capabilities";
+import { sanitizeProviderUrl } from "./modelCatalog";
 
 export interface SettingsReader {
   getJson<T>(key: string): T;
@@ -36,6 +37,9 @@ export function isProviderNameTaken(
 function normalizeProviderDef(raw: ProviderDef): ProviderDef {
   return {
     ...raw,
+    // 统一清除粘贴/历史配置带入的不可见字符(BOM / 零宽空格等),避免拼接 URL 404
+    baseUrl: sanitizeProviderUrl(raw.baseUrl ?? ""),
+    modelListUrl: raw.modelListUrl ? sanitizeProviderUrl(raw.modelListUrl) : undefined,
     defaultCapabilities: toPersistedCapabilities(normalizeCapabilities(raw.defaultCapabilities)),
     capabilityOverrides: normalizeCapabilityOverrides(raw.capabilityOverrides),
   };
@@ -44,6 +48,8 @@ function normalizeProviderDef(raw: ProviderDef): ProviderDef {
 export class ProviderStore {
   /** 同步内存覆盖:VS Code configuration.update 异步落地前,读路径仍返回最新值。 */
   private memoryActiveId: string | undefined;
+  /** 供应商列表内存覆盖(与 memoryActiveId 同理,避免 upsert 后 list() 仍读到旧配置)。 */
+  private memoryProviders: ProviderDef[] | undefined;
 
   constructor(
     private readonly deps: {
@@ -54,6 +60,9 @@ export class ProviderStore {
   ) {}
 
   list(): ProviderDef[] {
+    if (this.memoryProviders) {
+      return this.memoryProviders.map((p) => normalizeProviderDef(p));
+    }
     const raw = this.deps.reader.getJson<ProviderDef[]>(PROVIDERS_KEY);
     if (!Array.isArray(raw)) return [];
     return raw.map((p) => normalizeProviderDef(p));
@@ -84,11 +93,13 @@ export class ProviderStore {
     const idx = list.findIndex((p) => p.id === normalized.id);
     if (idx >= 0) list[idx] = normalized;
     else list.push(normalized);
+    this.memoryProviders = list;
     void Promise.resolve(this.deps.writer.updateSetting(PROVIDERS_KEY, list));
   }
 
   remove(id: string): void {
     const list = this.list().filter((p) => p.id !== id);
+    this.memoryProviders = list;
     void Promise.resolve(this.deps.writer.updateSetting(PROVIDERS_KEY, list));
     const active = this.memoryActiveId ?? this.deps.reader.getJson<string>(ACTIVE_KEY);
     if (active === id) {

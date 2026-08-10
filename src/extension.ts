@@ -15,7 +15,7 @@ import { ContextCapture } from "./context/contextCapture";
 import { ContextStore } from "./context/contextStore";
 import { configureRipgrepPath, pickRipgrepPath } from "./util/ripgrepPath";
 import { ProviderStore, isProviderNameTaken, type SecretStore } from "./providers/providerStore";
-import { ModelCatalog } from "./providers/modelCatalog";
+import { ModelCatalog, sanitizeProviderUrl } from "./providers/modelCatalog";
 import { CapabilityRegistry } from "./providers/capabilityRegistry";
 import { importFromCcSwitch } from "./providers/ccSwitchImport";
 import { AnthropicMessagesClient } from "./agent/provider/anthropicMessagesClient";
@@ -290,6 +290,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 旧扁平配置(baseUrl/model/apiKey)迁移为首个 legacy 供应商
   void migrateLegacyConfig(providerStore, configuration, apiKeyStore);
 
+  // 自愈:清洗历史配置里的不可见字符(BOM / 零宽空格等),避免拼接模型列表 URL 时 404。
+  // ProviderStore.list() 经 normalizeProviderDef 已返回清洗值,直接回写即可幂等落盘。
+  try {
+    const dirty = providerStore.list();
+    if (dirty.length > 0) {
+      const raw = vscode.workspace.getConfiguration().get<unknown[]>("dsbAgent.providers");
+      const DIRTY_RE = /[\u200B-\u200D\uFEFF\u00A0]|\/+$/;
+      const needsWrite =
+        Array.isArray(raw) &&
+        raw.some((r) => {
+          if (typeof r !== "object" || r === null) return false;
+          const rec = r as { baseUrl?: unknown; modelListUrl?: unknown };
+          return (
+            (typeof rec.baseUrl === "string" && DIRTY_RE.test(rec.baseUrl)) ||
+            (typeof rec.modelListUrl === "string" && DIRTY_RE.test(rec.modelListUrl))
+          );
+        });
+      if (needsWrite) {
+        for (const p of dirty) providerStore.upsert(p);
+      }
+    }
+  } catch {
+    // 自愈失败不阻塞启动
+  }
+
   // 项目作用域:同一 git 仓库(含不同 worktree 目录)归一到同一个 projectKey,
   // 会话/记忆按项目隔离。git 读取失败回退到工作区路径 slug(fail-open)。
   const projectScope = new ProjectScope(realGit, () =>
@@ -474,7 +499,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             const def: ProviderDef = {
               id: `p_${Math.random().toString(36).slice(2, 10)}`,
               name: input.name.trim(),
-              baseUrl: input.baseUrl,
+              baseUrl: input.baseUrl.trim().replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "").replace(/\/+$/, ""),
+              ...(input.modelListUrl?.trim()
+                ? { modelListUrl: input.modelListUrl.trim().replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "") }
+                : {}),
               defaultCapabilities: { supportsVision: false, supportsThinking: true },
               modes: ["agent", "plan", "ask"],
               protocol: "anthropic", // 扩展仅支持 Anthropic 兼容协议
@@ -594,6 +622,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               },
               existing: providerStore.list(),
             });
+            // import 直接写 settings;把导入项灌入 store 内存,避免 list() 仍读旧快照
+            for (const def of r.imported) {
+              providerStore.upsert(def);
+            }
             syncChatProviderUi();
             return { imported: r.imported.length };
           },

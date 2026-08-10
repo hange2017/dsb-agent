@@ -50,6 +50,22 @@ describe("ProviderStore", () => {
     expect(ps.list().map((p) => p.id)).toEqual(["p1"]);
   });
 
+  it("sanitizes invisible chars in baseUrl/modelListUrl on read and upsert", () => {
+    d.store.set("dsbAgent.providers", [
+      makeDef("p1", "A", "https://api.deepseek.com/anthropic\u200b"),
+      { ...makeDef("p2", "B", "https://b.example.com"), modelListUrl: "https://b.example.com/v1/models\uFEFF" },
+    ]);
+    const list = ps.list();
+    expect(list[0].baseUrl).toBe("https://api.deepseek.com/anthropic");
+    expect(list[1].modelListUrl).toBe("https://b.example.com/v1/models");
+
+    ps.upsert({ ...makeDef("p3", "C", "https://c.example.com\u200B"), modelListUrl: "https://c.example.com/models\u00A0" });
+    const saved = d.store.get("dsbAgent.providers") as ProviderDef[];
+    const p3 = saved.find((p) => p.id === "p3");
+    expect(p3?.baseUrl).toBe("https://c.example.com");
+    expect(p3?.modelListUrl).toBe("https://c.example.com/models");
+  });
+
   it("returns active provider, falling back to first", () => {
     expect(ps.getActive()?.id).toBe("p1");
     d.store.delete("dsbAgent.activeProviderId");
@@ -86,6 +102,31 @@ describe("ProviderStore", () => {
     release();
     await pending;
     expect(d.store.get("dsbAgent.activeProviderId")).toBe("p2");
+  });
+
+  it("list/getActive see upsert before delayed writer finishes (VS Code configuration.update 竞态)", async () => {
+    d = makeDeps({ "dsbAgent.providers": [] });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const writer: SettingsWriter = {
+      updateSetting: async (key, value) => {
+        await gate;
+        if (value === undefined) d.store.delete(key);
+        else d.store.set(key, value);
+      },
+    };
+    ps = new ProviderStore({ reader: d.reader, writer, secret: d.secret });
+    ps.upsert(makeDef("p_new", "新建", "https://api.deepseek.com/anthropic"));
+    const pending = ps.setActive("p_new");
+    // 设置面板/Agent 在 writer 落地前就会读 list/getActive — 必须立刻可见
+    expect(ps.list().map((p) => p.id)).toEqual(["p_new"]);
+    expect(ps.getActive()?.id).toBe("p_new");
+    expect(ps.getActive()?.baseUrl).toBe("https://api.deepseek.com/anthropic");
+    release();
+    await pending;
+    expect(d.store.get("dsbAgent.activeProviderId")).toBe("p_new");
   });
 
   it("isProviderNameTaken is case-insensitive and can exclude id", () => {
