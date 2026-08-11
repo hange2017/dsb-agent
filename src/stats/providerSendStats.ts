@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ProviderMessage, ProviderToolResultContent } from "../agent/provider/types";
 import { isCompactedBlock, isThinkingBlock } from "../agent/contextCompactor";
 
@@ -66,6 +67,13 @@ export interface ProviderSendPart {
   role: "user" | "assistant";
   kind: ProviderSendPartKind;
   tokens: number;
+  /** 该部分内容指纹(sha1 前 16 hex,只记指纹不记内容):用于对比相邻两轮定位缓存前缀断裂点。 */
+  hash: string;
+}
+
+/** 内容指纹:sha1 前 16 hex。相邻轮同 index 指纹相同 = 该段前缀未变(命中),不同 = 前缀断裂(未命中)。 */
+export function contentHash(text: string): string {
+  return createHash("sha1").update(text).digest("hex").slice(0, 16);
 }
 
 /** CJK(中/日/韩)字符范围。 */
@@ -165,15 +173,15 @@ export function estimateProviderSendTokens(system: string, messages: ProviderMes
         if (isCompactedBlock(msg.content)) {
           const t = estimateTokens(msg.content);
           compactedBlockTokens += t;
-          messageBreakdown.push({ index: i, role: "user", kind: "compacted", tokens: t });
+          messageBreakdown.push({ index: i, role: "user", kind: "compacted", tokens: t, hash: contentHash(msg.content) });
         } else if (isThinkingBlock(msg.content)) {
           const t = estimateTokens(msg.content);
           thinkingBlockTokens += t;
-          messageBreakdown.push({ index: i, role: "user", kind: "thinking_block", tokens: t });
+          messageBreakdown.push({ index: i, role: "user", kind: "thinking_block", tokens: t, hash: contentHash(msg.content) });
         } else {
           const t = estimateTokens(msg.content);
           countUserText(t);
-          messageBreakdown.push({ index: i, role: "user", kind: "user_text", tokens: t });
+          messageBreakdown.push({ index: i, role: "user", kind: "user_text", tokens: t, hash: contentHash(msg.content) });
           tailMessageCount++;
         }
       } else {
@@ -182,17 +190,17 @@ export function estimateProviderSendTokens(system: string, messages: ProviderMes
           if (b.type === "image") {
             const t = estimateImageTokens(b.source.data);
             imageTokens += t;
-            messageBreakdown.push({ index: i, role: "user", kind: "image", tokens: t });
+            messageBreakdown.push({ index: i, role: "user", kind: "image", tokens: t, hash: contentHash(b.source.data) });
             isTail = true;
           } else if (b.type === "tool_result") {
             const t = estimateTokens(toolResultText(b.content));
             toolResultTokens += t;
-            messageBreakdown.push({ index: i, role: "user", kind: "tool_result", tokens: t });
+            messageBreakdown.push({ index: i, role: "user", kind: "tool_result", tokens: t, hash: contentHash(toolResultText(b.content)) });
             isTail = true;
           } else if (b.type === "text") {
             const t = estimateTokens(b.text);
             countUserText(t);
-            messageBreakdown.push({ index: i, role: "user", kind: "user_text", tokens: t });
+            messageBreakdown.push({ index: i, role: "user", kind: "user_text", tokens: t, hash: contentHash(b.text) });
             isTail = true;
           }
         }
@@ -203,15 +211,15 @@ export function estimateProviderSendTokens(system: string, messages: ProviderMes
         if (b.type === "text") {
           const t = estimateTokens(b.text);
           assistantTextTokens += t;
-          messageBreakdown.push({ index: i, role: "assistant", kind: "text", tokens: t });
+          messageBreakdown.push({ index: i, role: "assistant", kind: "text", tokens: t, hash: contentHash(b.text) });
         } else if (b.type === "thinking") {
           const t = estimateTokens(b.thinking);
           assistantThinkingTokens += t;
-          messageBreakdown.push({ index: i, role: "assistant", kind: "assistant_thinking", tokens: t });
+          messageBreakdown.push({ index: i, role: "assistant", kind: "assistant_thinking", tokens: t, hash: contentHash(b.thinking) });
         } else if (b.type === "tool_use") {
           const t = estimateTokens(JSON.stringify(b.input ?? ""));
           toolUseTokens += t;
-          messageBreakdown.push({ index: i, role: "assistant", kind: "tool_use", tokens: t });
+          messageBreakdown.push({ index: i, role: "assistant", kind: "tool_use", tokens: t, hash: contentHash(JSON.stringify(b.input ?? "")) });
         }
       }
       tailMessageCount++;

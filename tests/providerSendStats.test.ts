@@ -210,12 +210,25 @@ describe("messageBreakdown per-part detail", () => {
       role: "user",
       kind: "compacted",
       tokens: b.compactedBlockTokens,
+      hash: expect.stringMatching(/^[0-9a-f]{16}$/),
     });
-    expect(b.messageBreakdown[1]).toEqual({ index: 1, role: "user", kind: "user_text", tokens: estimateTokens("普通问题") });
+    expect(b.messageBreakdown[1]).toEqual({
+      index: 1,
+      role: "user",
+      kind: "user_text",
+      tokens: estimateTokens("普通问题"),
+      hash: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
     const assistantParts = b.messageBreakdown.slice(2, 5);
     expect(assistantParts.map((p) => p.kind)).toEqual(["assistant_thinking", "text", "tool_use"]);
     expect(assistantParts.every((p) => p.index === 2 && p.role === "assistant")).toBe(true);
-    expect(b.messageBreakdown[5]).toEqual({ index: 3, role: "user", kind: "tool_result", tokens: b.toolResultTokens });
+    expect(b.messageBreakdown[5]).toEqual({
+      index: 3,
+      role: "user",
+      kind: "tool_result",
+      tokens: b.toolResultTokens,
+      hash: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
   });
 
   it("sum of breakdown tokens equals messagesTokens", () => {
@@ -243,6 +256,34 @@ describe("messageBreakdown per-part detail", () => {
     ]);
     expect(b.messageBreakdown.map((p) => p.kind)).toEqual(["thinking_block", "user_text"]);
     expect(b.messageBreakdown[0].tokens).toBe(b.thinkingBlockTokens);
+  });
+
+  it("hashes every part: same content same hash, different content different hash", () => {
+    const mk = (): ProviderMessage[] => [
+      { role: "user", content: "[compacted]\n## 需求\n- [r1] x" },
+      { role: "user", content: "第一个问题" },
+      { role: "assistant", content: [{ type: "text", text: "第一个回答" }] },
+      { role: "user", content: "第二个问题" },
+    ];
+    const b1 = estimateProviderSendTokens("sys", mk());
+    const b2 = estimateProviderSendTokens("sys", mk());
+    expect(b1.messageBreakdown.length).toBe(b2.messageBreakdown.length);
+    // 每部分都有 16 hex 指纹
+    for (const part of b1.messageBreakdown) {
+      expect(part.hash).toMatch(/^[0-9a-f]{16}$/);
+    }
+    // 相同输入 → 指纹完全相同
+    for (let i = 0; i < b1.messageBreakdown.length; i++) {
+      expect(b1.messageBreakdown[i].hash).toBe(b2.messageBreakdown[i].hash);
+    }
+    // 修改某条 tail 消息 → 该条指纹变化,其余不变
+    const changed = mk();
+    changed[3] = { role: "user", content: "第二个问题(改过)" };
+    const b3 = estimateProviderSendTokens("sys", changed);
+    expect(b3.messageBreakdown[3].hash).not.toBe(b1.messageBreakdown[3].hash);
+    expect(b3.messageBreakdown[0].hash).toBe(b1.messageBreakdown[0].hash); // compacted 未变
+    expect(b3.messageBreakdown[1].hash).toBe(b1.messageBreakdown[1].hash); // user_text 未变
+    expect(b3.messageBreakdown[2].hash).toBe(b1.messageBreakdown[2].hash); // assistant 未变
   });
 });
 

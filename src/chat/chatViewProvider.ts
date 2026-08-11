@@ -298,6 +298,8 @@ export class ChatViewProvider {
           // 父会话与子代理共享同一 executor(及同一 store)。子代理工厂尚未赋值时闭包
           // 只读,不会执行快照,故在此处构造注入是安全的。
           const checkpoints = new CheckpointStore(workspaceRoot, sessionId);
+          // 本会话 provider_send 轮次计数(供前缀命中分析按会话精确配对相邻轮)
+          const sendSeqBySession = new Map<string, number>();
           // mcp 注册表在 executor 构造时订阅 onTools(含对已连接工具的重放),MCP 工具并入 allToolDefs()
           // 子代理模板(项目/用户/插件 .dsb/agents)按名注入 executor(第 10 个位置参数),
           // Agent 工具的 `agent` 参数据此解析角色;未命中返回 undefined → executor 报 Unknown agent。
@@ -370,11 +372,17 @@ export class ChatViewProvider {
             thinkingDisabled: !this.configuration.thinkingEnabled(),
             // 发送前打点:记录每次 provider.round 的消息组成 token(只记数字不记内容)
             onProviderSend: (breakdown) => {
-              this.statsStore?.record("provider_send", breakdown as unknown as Record<string, unknown>);
+              const sendSeq = (sendSeqBySession.get(sessionId) ?? 0) + 1;
+              sendSeqBySession.set(sessionId, sendSeq);
+              this.statsStore?.record("provider_send", {
+                ...(breakdown as unknown as Record<string, unknown>),
+                sessionId,
+                sendSeq,
+              });
             },
             // 发送后打点:记录模型返回的真实 usage(含缓存命中 token),供命中率统计
             onProviderRound: (usage) => {
-              this.statsStore?.record("provider_round", usage);
+              this.statsStore?.record("provider_round", { ...usage, sessionId });
             },
             // 压缩打点:记录每次压缩的位置 × 原因 × before/after tokens(只记数字不记内容)
             onCompaction: (ev) => {
