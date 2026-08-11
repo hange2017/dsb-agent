@@ -168,6 +168,43 @@ targetPctInput.addEventListener("change", () => {
   saveBtn.disabled = false;
 });
 thinkingCompactChk.addEventListener("change", () => {
+  // 思考编排关闭 → thinking 占比归零,份额按比例分给 compacted/tail;
+  // 重新打开 → 恢复默认三段(45/20/35)。
+  if (!thinkingCompactChk.checked) {
+    // 记录关闭前 thinking 份额,便于重新打开时恢复
+    const savedThinking = pct.thinking;
+    (thinkingCompactChk as HTMLInputElement & { dataset: Record<string, string> }).dataset.savedThinking = String(savedThinking);
+    const two = pct.compacted + pct.tail;
+    if (two > 0) {
+      const scale = 100 / two;
+      pct.compacted = Math.round(pct.compacted * scale);
+      pct.tail = 100 - pct.compacted;
+      pct.thinking = 0;
+    } else {
+      pct.compacted = 56;
+      pct.tail = 44;
+      pct.thinking = 0;
+    }
+  } else {
+    const saved = Number((thinkingCompactChk as HTMLInputElement & { dataset: Record<string, string> }).dataset.savedThinking);
+    const restore = Number.isFinite(saved) && saved > 0 && saved <= 100 ? saved : 20;
+    const two = pct.compacted + pct.tail;
+    if (two > 0) {
+      const scale = (100 - restore) / two;
+      pct.compacted = Math.round(pct.compacted * scale);
+      pct.tail = 100 - pct.compacted - restore;
+      if (pct.tail < 0) {
+        pct.compacted = 100 - restore;
+        pct.tail = 0;
+      }
+      pct.thinking = restore;
+    } else {
+      pct.compacted = Math.round((100 - restore) * 0.5625);
+      pct.tail = 100 - pct.compacted - restore;
+      pct.thinking = restore;
+    }
+  }
+  render();
   saveBtn.disabled = false;
 });
 saveBtn.addEventListener("click", postSave);
@@ -211,6 +248,20 @@ window.addEventListener("message", (ev) => {
         thinking: Math.round(cfg.split.thinking * 100),
         tail: Math.round(cfg.split.tail * 100),
       };
+      // 思考编排关闭:thinking 占比强制显示 0%,份额按比例并入 compacted/tail
+      // (与 host 端 normalizeConfig 的 applyThinkingToSplit 保持一致,保证所见即所得)。
+      if (!thinkingCompactChk.checked && pct.thinking > 0) {
+        const two = pct.compacted + pct.tail;
+        if (two > 0) {
+          const scale = 100 / two;
+          pct.compacted = Math.round(pct.compacted * scale);
+          pct.tail = 100 - pct.compacted;
+        } else {
+          pct.compacted = 56;
+          pct.tail = 44;
+        }
+        pct.thinking = 0;
+      }
       // 归一化显示(整数化可能总和 ≠ 100,用 tail 兜底)
       const sum = pct.compacted + pct.thinking + pct.tail;
       if (sum !== 100 && sum > 0) {

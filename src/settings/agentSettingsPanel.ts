@@ -82,17 +82,29 @@ export interface AgentSettingsServices {
   updateBudget(config: AgentBudgetConfig): void | Promise<void>;
 }
 
-/** 归一化比例:非法/全 0 回退默认 45/20/35。 */
+/** 归一化比例:非法/全 0 回退默认 45/20/35;thinking 可为 0(两段配置合法)。 */
 export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetSplit {
   const def: BudgetSplit = { compacted: 0.45, thinking: 0.2, tail: 0.35 };
   if (!split || typeof split !== "object") return { ...def };
   const c = Number(split.compacted);
   const t = Number(split.thinking);
   const l = Number(split.tail);
-  if (![c, t, l].every((n) => Number.isFinite(n) && n > 0)) return { ...def };
+  if (![c, t, l].every((n) => Number.isFinite(n) && n >= 0)) return { ...def };
+  // compacted/tail 必须为正(压缩块与 tail 始终要保留份额);thinking 允许 0。
+  if (!(c > 0 && l > 0)) return { ...def };
   const sum = c + t + l;
   if (sum <= 0) return { ...def };
   return { compacted: c / sum, thinking: t / sum, tail: l / sum };
+}
+
+/** 思考编排关闭时,把 thinking 份额按比例并入 compacted/tail 两段(thinking=0);开启时原样返回。 */
+export function applyThinkingToSplit(split: BudgetSplit, compact: boolean): BudgetSplit {
+  if (compact) return split;
+  const two = split.compacted + split.tail;
+  if (!(two > 0)) return { compacted: 0.5625, thinking: 0, tail: 0.4375 };
+  const compacted = split.compacted / two;
+  const tail = split.tail / two;
+  return { compacted: Math.round(compacted * 1e6) / 1e6, thinking: 0, tail: Math.round(tail * 1e6) / 1e6 };
 }
 
 /** 归一化思考数据链路开关:非法/缺失回退 false(参数界面默认关闭 thinking 链路)。 */
@@ -111,7 +123,9 @@ export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): Ag
     thinking: { compact: false },
   };
   if (!cfg || typeof cfg !== "object") {
-    return { ...def, split: { ...def.split }, thinking: { ...def.thinking } };
+    const thinking = { ...def.thinking };
+    const split = applyThinkingToSplit({ ...def.split }, thinking.compact);
+    return { ...def, split, thinking };
   }
   const windowTokens = Number(cfg.windowTokens);
   const budget = Number(cfg.budget);
@@ -121,13 +135,16 @@ export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): Ag
   if (!(Number.isFinite(targetPct) && targetPct > 0 && targetPct < 1 && targetPct < triggerPct)) {
     targetPct = def.targetPct;
   }
+  const thinking = normalizeThinkingConfig(cfg.thinking);
   return {
     windowTokens: Number.isFinite(windowTokens) && windowTokens >= 0 ? Math.floor(windowTokens) : def.windowTokens,
     budget: Number.isFinite(budget) && budget >= 0 ? Math.floor(budget) : def.budget,
-    split: normalizeSplit(cfg.split),
+    // 思考编排关闭时 split 本身归一两段:thinking=0,份额按比例并入 compacted/tail。
+    // 归一化后的值随配置写入 agent 参数,保证 agent 拿到的 split 与面板显示一致。
+    split: applyThinkingToSplit(normalizeSplit(cfg.split), thinking.compact),
     triggerPct,
     targetPct,
-    thinking: normalizeThinkingConfig(cfg.thinking),
+    thinking,
   };
 }
 
@@ -225,4 +242,9 @@ function fallbackHtml(): string {
 }
 
 /** 供测试直接调用的消息处理(不依赖 webview 实例)。 */
-export { handleMessage, normalizeSplit as _normalizeSplit, normalizeConfig as _normalizeConfig };
+export {
+  handleMessage,
+  normalizeSplit as _normalizeSplit,
+  normalizeConfig as _normalizeConfig,
+  applyThinkingToSplit as _applyThinkingToSplit,
+};

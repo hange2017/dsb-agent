@@ -82,6 +82,20 @@ describe("Configuration", () => {
     });
     expect(cfg.budgetSplit()).toEqual({ compacted: 0.5, thinking: 0.25, tail: 0.25 });
   });
+  it("budgetSplit accepts two-short config (thinking=0) without falling back", () => {
+    // 思考编排关闭时写回的两段配置:compacted/tail 为正,thinking=0 → 原样返回,不回退默认三段。
+    const two = new Configuration({
+      getString: () => "",
+      getJson: <T>(_k: string) => ({ compacted: 0.5625, thinking: 0, tail: 0.4375 }) as T,
+    });
+    expect(two.budgetSplit()).toEqual({ compacted: 0.5625, thinking: 0, tail: 0.4375 });
+    // 两段未归一化(和为 80)→ 按和归一化,thinking 仍为 0
+    const twoRaw = new Configuration({
+      getString: () => "",
+      getJson: <T>(_k: string) => ({ compacted: 60, thinking: 0, tail: 20 }) as T,
+    });
+    expect(twoRaw.budgetSplit()).toEqual({ compacted: 0.75, thinking: 0, tail: 0.25 });
+  });
   it("budgetSplit falls back on invalid values", () => {
     // 缺项
     expect(

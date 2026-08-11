@@ -16,7 +16,8 @@ import { handleMessage } from "../src/settings/agentSettingsPanel";
 const defaultConfig = () => ({
   windowTokens: 1000000,
   budget: 150000,
-  split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
+  // 默认思考编排关闭 → split 归一化为两段(thinking 份额按 45:35 并入 compacted/tail)
+  split: { compacted: 0.5625, thinking: 0, tail: 0.4375 },
   triggerPct: 0.75,
   targetPct: 0.5,
   thinking: { compact: false as const },
@@ -82,6 +83,7 @@ describe("normalizeConfig", () => {
       split: { compacted: 50, thinking: 20, tail: 30 },
       triggerPct: 0.8,
       targetPct: 0.4,
+      thinking: { compact: true as const },
     });
     expect(out).toEqual({
       windowTokens: 128000,
@@ -89,8 +91,24 @@ describe("normalizeConfig", () => {
       split: { compacted: 0.5, thinking: 0.2, tail: 0.3 },
       triggerPct: 0.8,
       targetPct: 0.4,
+      thinking: { compact: true as const },
+    });
+  });
+
+  it("collapses thinking into two shorts when thinking is off (config-layer normalization)", () => {
+    // 关闭思考编排:split 本身归一化为两段(thinking=0,份额按原比例并入 compacted/tail)
+    const off = normalizeConfig({
+      split: { compacted: 50, thinking: 20, tail: 30 },
       thinking: { compact: false as const },
     });
+    expect(off.split).toEqual({ compacted: 0.625, thinking: 0, tail: 0.375 });
+    expect(off.thinking).toEqual({ compact: false });
+    // 开启思考编排:三段原样保留
+    const on = normalizeConfig({
+      split: { compacted: 50, thinking: 20, tail: 30 },
+      thinking: { compact: true as const },
+    });
+    expect(on.split).toEqual({ compacted: 0.5, thinking: 0.2, tail: 0.3 });
   });
 
   it("falls back invalid window/budget and clamps negatives to 0", () => {
@@ -103,7 +121,8 @@ describe("normalizeConfig", () => {
     });
     expect(out.windowTokens).toBe(1000000);
     expect(out.budget).toBe(150000);
-    expect(out.split).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
+    // 默认思考编排关闭 → 默认三段 45/20/35 归一化为两段 56.25/0/43.75
+    expect(out.split).toEqual({ compacted: 0.5625, thinking: 0, tail: 0.4375 });
   });
 
   it("rejects triggerPct out of (0,1] and targetPct >= trigger", () => {
@@ -124,6 +143,24 @@ describe("normalizeConfig", () => {
     // 空对象/undefined → 默认关闭
     expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ compact: false });
     expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ compact: false });
+  });
+
+  it("collapses split to two shorts when thinking compaction is off, keeps three when on", () => {
+    // 关闭:三段 {0.45,0.2,0.35} → 两段 {0.5625,0,0.4375}(thinking 份额按 45:35 并入)
+    expect(
+      normalizeConfig({ split: { compacted: 0.45, thinking: 0.2, tail: 0.35 }, thinking: { compact: false } } as never)
+        .split,
+    ).toEqual({ compacted: 0.5625, thinking: 0, tail: 0.4375 });
+    // 关闭 + 自定义三段:thinking 份额并入后保持原比例缩放
+    expect(
+      normalizeConfig({ split: { compacted: 60, thinking: 20, tail: 20 }, thinking: { compact: false } } as never)
+        .split,
+    ).toEqual({ compacted: 0.75, thinking: 0, tail: 0.25 }); // 60/(60+20)=0.75, 20/80=0.25
+    // 开启:三段原样保留(仅比例归一化)
+    expect(
+      normalizeConfig({ split: { compacted: 60, thinking: 20, tail: 20 }, thinking: { compact: true } } as never)
+        .split,
+    ).toEqual({ compacted: 0.6, thinking: 0.2, tail: 0.2 });
   });
 });
 

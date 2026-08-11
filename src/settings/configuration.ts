@@ -78,7 +78,8 @@ export class Configuration {
   /** 默认预算比例(压缩块/thinking/tail)。 */
   static readonly kDefaultBudgetSplit = { compacted: 0.45, thinking: 0.2, tail: 0.35 };
 
-  /** 历史预算三块比例;非法(缺项/非数/非正/和≤0)回退默认并归一化。 */
+  /** 历史预算三块比例;非法(缺项/非数/负数/和≤0)回退默认并归一化。
+   *  thinking 允许 0(思考编排关闭时写回的两段配置:compacted/tail 为正)。 */
   budgetSplit(): { compacted: number; thinking: number; tail: number } {
     const def = Configuration.kDefaultBudgetSplit;
     if (!this.reader.getJson) return { ...def };
@@ -89,7 +90,9 @@ export class Configuration {
     const c = Number(v.compacted);
     const t = Number(v.thinking);
     const l = Number(v.tail);
-    if (![c, t, l].every((n) => Number.isFinite(n) && n > 0)) return { ...def };
+    if (![c, t, l].every((n) => Number.isFinite(n) && n >= 0)) return { ...def };
+    // compacted/tail 必须为正;thinking 允许 0(两段配置)。
+    if (!(c > 0 && l > 0)) return { ...def };
     const sum = c + t + l;
     if (sum <= 0) return { ...def };
     return { compacted: c / sum, thinking: t / sum, tail: l / sum };
