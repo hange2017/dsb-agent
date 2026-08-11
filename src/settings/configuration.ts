@@ -63,9 +63,9 @@ export class Configuration {
     const v = Number(this.reader.getString("dsbAgent.compaction.triggerRatio"));
     return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.75;
   }
-  /** thinking 独立压缩块开关;缺省 true(仅 "false" 关闭,其余值视为开)。 */
+  /** thinking 独立压缩块开关;缺省 false(仅 "true" 视为开启,其余值关闭)——参数界面默认关闭 thinking 链路。 */
   compactionThinkingEnabled(): boolean {
-    return this.reader.getString("dsbAgent.compaction.thinking") !== "false";
+    return this.reader.getString("dsbAgent.compaction.thinking") === "true";
   }
   /** 历史信息 token 总预算;缺省 150000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
   historyTokenBudget(): number {

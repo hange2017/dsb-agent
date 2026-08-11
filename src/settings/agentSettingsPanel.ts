@@ -95,9 +95,9 @@ export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetS
   return { compacted: c / sum, thinking: t / sum, tail: l / sum };
 }
 
-/** 归一化思考数据链路开关:非法/缺失回退 true(处理侧默认开启 thinking 编排)。 */
+/** 归一化思考数据链路开关:非法/缺失回退 false(参数界面默认关闭 thinking 链路)。 */
 export function normalizeThinkingConfig(t: Partial<AgentThinkingConfig> | undefined): AgentThinkingConfig {
-  return { compact: t ? t.compact !== false : true };
+  return { compact: t ? t.compact === true : false };
 }
 
 /** 归一化 5 项配置:非法项回退默认;targetPct 须满足 0 < target < trigger ≤ 1。 */
@@ -108,7 +108,7 @@ export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): Ag
     split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     triggerPct: 0.75,
     targetPct: 0.5,
-    thinking: { compact: true },
+    thinking: { compact: false },
   };
   if (!cfg || typeof cfg !== "object") {
     return { ...def, split: { ...def.split }, thinking: { ...def.thinking } };

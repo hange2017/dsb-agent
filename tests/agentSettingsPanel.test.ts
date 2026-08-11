@@ -19,7 +19,7 @@ const defaultConfig = () => ({
   split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
   triggerPct: 0.75,
   targetPct: 0.5,
-  thinking: { compact: true as const },
+  thinking: { compact: false as const },
 });
 
 /** 假面板:记录 postMessage,返回可 resolve 的 Thenable。 */
@@ -89,7 +89,7 @@ describe("normalizeConfig", () => {
       split: { compacted: 0.5, thinking: 0.2, tail: 0.3 },
       triggerPct: 0.8,
       targetPct: 0.4,
-      thinking: { compact: true as const },
+      thinking: { compact: false as const },
     });
   });
 
@@ -119,11 +119,11 @@ describe("normalizeConfig", () => {
   it("normalizes thinking: keeps valid compact, defaults missing", () => {
     // 显式 compact=false → 保留
     expect(normalizeConfig({ thinking: { compact: false } } as never).thinking).toEqual({ compact: false });
-    // 缺省 → true
-    expect(normalizeConfig({ thinking: {} } as never).thinking).toEqual({ compact: true });
-    // 空对象/undefined → 默认
-    expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ compact: true });
-    expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ compact: true });
+    // 缺省 → false(默认关闭 thinking 链路)
+    expect(normalizeConfig({ thinking: {} } as never).thinking).toEqual({ compact: false });
+    // 空对象/undefined → 默认关闭
+    expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ compact: false });
+    expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ compact: false });
   });
 });
 

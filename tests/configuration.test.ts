@@ -48,12 +48,12 @@ describe("Configuration", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerRatio" ? "abc" : "") });
     expect(junk.compactionTriggerRatio()).toBe(0.75);
   });
-  it("compactionThinkingEnabled defaults to true and accepts false", () => {
-    expect(new Configuration({ getString: () => "" }).compactionThinkingEnabled()).toBe(true);
-    const off = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "false" : "") });
-    expect(off.compactionThinkingEnabled()).toBe(false);
+  it("compactionThinkingEnabled defaults to false and accepts true", () => {
+    expect(new Configuration({ getString: () => "" }).compactionThinkingEnabled()).toBe(false);
+    const on = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "true" : "") });
+    expect(on.compactionThinkingEnabled()).toBe(true);
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "yes" : "") });
-    expect(junk.compactionThinkingEnabled()).toBe(true);
+    expect(junk.compactionThinkingEnabled()).toBe(false);
   });
   it("historyTokenBudget defaults to 150000 and accepts 0 (disabled)", () => {
     expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(150000);
