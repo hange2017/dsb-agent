@@ -533,6 +533,27 @@ describe("ContextManager thinking toggle", () => {
     const again = await cm.compact(thinkingMessages());
     expect((again[1].content as string)).toContain("[thinking]");
   });
+
+  it("thinking off normalizes budget to two shorts (compacted+tail), default split {0.45,0.2,0.35}->{0.5625,0,0.4375}", () => {
+    const summarize = thinkingSummarize();
+    const cm = new ContextManager({ windowTokens: 1_000_000, triggerRatio: 0.9, historyTokenBudget: 20000, summarize });
+    const budgetOf = (): { tailTokens: number; compactedTokens: number; thinkingTokens: number } =>
+      (cm as unknown as { budgetInfo: () => { tailTokens: number; compactedTokens: number; thinkingTokens: number } }).budgetInfo();
+    // thinking 开启:三段分配(默认 split)
+    cm.setThinkingEnabled(true);
+    const on = budgetOf();
+    expect(on.thinkingTokens).toBeGreaterThan(0);
+    expect(on.compactedTokens).toBe(9000); // 20000*0.45/1.0
+    expect(on.tailTokens).toBe(7000);      // 20000*0.35/1.0
+    // thinking 关闭:thinking 份额并入 compacted/tail 两段,归一化到原两段比例
+    cm.setThinkingEnabled(false);
+    const off = budgetOf();
+    expect(off.thinkingTokens).toBe(0);
+    expect(off.compactedTokens).toBe(Math.floor(20000 * 0.5625)); // =11250
+    expect(off.tailTokens).toBe(Math.floor(20000 * 0.4375));      // =8750
+    // 两段归一化后总额应覆盖全部预算(不再有 thinking 单独占用)
+    expect(off.compactedTokens + off.tailTokens).toBeGreaterThan(on.compactedTokens + on.tailTokens);
+  });
 });
 
 describe("ContextManager thinking smoke", () => {

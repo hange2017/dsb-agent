@@ -573,6 +573,18 @@ export class ContextManager {
     const split = this.opts.budgetSplit ?? { compacted: 0.45, thinking: 0.2, tail: 0.35 };
     const s = split.compacted + split.thinking + split.tail;
     if (!(s > 0)) return null;
+    // thinking 独立压缩关闭时,把 thinking 份额按比例并入 compacted/tail 两段(两段归一化)。
+    // 默认 {0.45,0.2,0.35} → compacted 0.5625 / tail 0.4375;自定义 split 按实际值等比缩放。
+    const thinkingOn = this.thinkingEnabled;
+    if (!thinkingOn) {
+      const twoSum = split.compacted + split.tail;
+      if (!(twoSum > 0)) return null;
+      return {
+        tailTokens: Math.max(1, Math.floor((total * split.tail) / twoSum)),
+        compactedTokens: Math.max(1, Math.floor((total * split.compacted) / twoSum)),
+        thinkingTokens: 0,
+      };
+    }
     return {
       tailTokens: Math.max(1, Math.floor((total * split.tail) / s)),
       compactedTokens: Math.max(1, Math.floor((total * split.compacted) / s)),
