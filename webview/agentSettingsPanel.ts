@@ -23,12 +23,18 @@ export interface BudgetSplitView {
   tail: number;
 }
 
+export interface AgentThinkingConfigView {
+  enabled: boolean;
+  level: "low" | "medium" | "high" | "";
+}
+
 export interface AgentBudgetConfigView {
   windowTokens: number;
   budget: number;
   split: BudgetSplitView;
   triggerPct: number;
   targetPct: number;
+  thinking: AgentThinkingConfigView;
 }
 
 type HostMessage =
@@ -62,6 +68,8 @@ const targetPctInput = document.getElementById("targetPctInput") as HTMLInputEle
 const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement;
 const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLElement;
+const thinkingEnabledChk = document.getElementById("thinkingEnabledChk") as HTMLInputElement;
+const thinkingLevelSel = document.getElementById("thinkingLevelSel") as HTMLSelectElement;
 
 // 三个滑块当前值(整数百分比)
 let pct = { compacted: 45, thinking: 20, tail: 35 };
@@ -133,6 +141,10 @@ function currentConfig(): AgentBudgetConfigView {
     split: currentSplit(),
     triggerPct: (Math.max(1, Math.min(100, Number(triggerPctInput.value) || 75)) / 100),
     targetPct: (Math.max(1, Math.min(100, Number(targetPctInput.value) || 50)) / 100),
+    thinking: {
+      enabled: thinkingEnabledChk.checked,
+      level: (thinkingLevelSel.value as "" | "low" | "medium" | "high") || "",
+    },
   };
 }
 
@@ -155,6 +167,12 @@ triggerPctInput.addEventListener("change", () => {
   saveBtn.disabled = false;
 });
 targetPctInput.addEventListener("change", () => {
+  saveBtn.disabled = false;
+});
+thinkingEnabledChk.addEventListener("change", () => {
+  saveBtn.disabled = false;
+});
+thinkingLevelSel.addEventListener("change", () => {
   saveBtn.disabled = false;
 });
 saveBtn.addEventListener("click", postSave);
@@ -192,6 +210,8 @@ window.addEventListener("message", (ev) => {
       budgetInput.value = String(cfg.budget);
       triggerPctInput.value = String(Math.round(cfg.triggerPct * 100));
       targetPctInput.value = String(Math.round(cfg.targetPct * 100));
+      thinkingEnabledChk.checked = cfg.thinking?.enabled ?? true;
+      thinkingLevelSel.value = cfg.thinking?.level || "";
       pct = {
         compacted: Math.round(cfg.split.compacted * 100),
         thinking: Math.round(cfg.split.thinking * 100),
