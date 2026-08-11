@@ -31,6 +31,7 @@
   "commands.dsbAgent.agentSettings.title": "DSBAgent: Agent Settings",
   "configuration.dsbAgent.compaction.historyTokenBudget.description": "Total token budget for history sent to the model (compacted + thinking + tail); 0 disables budget and falls back to legacy behavior.",
   "configuration.dsbAgent.compaction.budgetSplit.description": "Budget split ratios for compacted block / thinking block / tail (sum = 1).",
+  "configuration.dsbAgent.compaction.thinking.description": "Processing-side thinking switch: when disabled, the model can still reason (requests carry a thinking budget), but produced thinking is stripped from history/compaction (not retained). Model-side thinking.enabled stays independent."
   "configuration.dsbAgent.contextWindowTokens.description": "Max input length (context window) sent to the model; 0 follows the model capability (default). Overrides the window used for compaction trigger and output budget when > 0.",
   "configuration.dsbAgent.thinking.enabled.description": "Master thinking switch: when disabled, requests carry thinking.disabled, historical thinking is stripped, and thinking plays no part in the whole pipeline (logic retained, can be re-enabled anytime).",
   "configuration.dsbAgent.compaction.triggerPct.description": "Pipeline trigger ratio: compaction fires when a block reaches rated tokens × this ratio (default 0.75).",

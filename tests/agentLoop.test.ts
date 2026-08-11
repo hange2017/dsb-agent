@@ -987,6 +987,54 @@ describe("AgentSession thinking compaction wiring", () => {
     const result = await wrapped.round([], { system: "s", tools: [] }, () => {});
     expect(result.blocks[0]).toEqual({ type: "text", text: "ok" });
   });
+
+  it("thinkingProcessEnabled=false decouples processing from model-side request budget", async () => {
+    const seen: Array<{ thinkingDisabled?: boolean; thinkingBudgetTokens?: number }> = [];
+    const allMessages: ProviderMessage[][] = [];
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 4096 },
+      async round(messages, opts) {
+        seen.push({ thinkingDisabled: opts.thinkingDisabled, thinkingBudgetTokens: opts.thinkingBudgetTokens });
+        allMessages.push(messages.map((m) => ({ ...m })));
+        // 第一轮:产 thinking + tool_use(模型侧重开,产生 thinking);处理侧关会剥离 thinking
+        if (seen.length === 1) {
+          return {
+            blocks: [
+              { type: "thinking", thinking: "内部推理…" },
+              { type: "tool_use", id: "t1", name: "Read", input: { path: "/tmp/a" } },
+            ],
+            toolUses: [{ id: "t1", name: "Read", input: { path: "/tmp/a" } }],
+            usage: { inputTokens: 1000, outputTokens: 10 },
+          };
+        }
+        // 后续轮:收敛为纯文本,终止循环
+        return { blocks: [{ type: "text", text: "done" }], toolUses: [], usage: { inputTokens: 1000, outputTokens: 5 } };
+      },
+    };
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({ Read: () => ({ ok: true, content: "x" }) }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      thinkingDisabled: false,   // 模型侧重开
+      thinkingProcessEnabled: false, // 处理侧关
+      initialHistory: [],
+    });
+    await session.send("g", () => {});
+    // 请求仍带 thinking 预算(模型侧重开不受处理侧影响)
+    for (const c of seen) {
+      expect(c.thinkingBudgetTokens).toBe(4096);
+      expect(c.thinkingDisabled).toBeUndefined(); // 模型侧重开:不强制 thinkingDisabled
+    }
+    // 历史里第一条 assistant 消息不含 thinking(处理侧剥离)
+    const assistantMsgs = allMessages.flatMap((m) => m).filter((m) => m.role === "assistant" && Array.isArray(m.content));
+    for (const a of assistantMsgs) {
+      for (const b of a.content as Array<{ type: string }>) {
+        expect(b.type).not.toBe("thinking");
+      }
+    }
+  });
 });
 
 describe("AgentSession summarize budget", () => {

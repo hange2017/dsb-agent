@@ -145,6 +145,8 @@ export class AgentSession {
       provider: ProviderClient;
       /** 功能级 thinking 总开关:false 时整条链路(请求/响应/历史/压缩/QA)不出现 thinking;缺省 true。 */
       thinkingDisabled?: boolean;
+      /** 处理侧 thinking 开关:false 时「模型可先思考(请求仍带预算),但流程不处理 thinking」——产出的 thinking 剥离(不进历史/压缩/脉络),缺省 true。 */
+      thinkingProcessEnabled?: boolean;
       tools: ToolExecutor;
       permissions: PermissionManager;
       workspaceRoot: string;
@@ -520,8 +522,11 @@ export class AgentSession {
         if (this.contextManager.needsCompaction(this.messages)) {
           try {
             // plan/ask 模式关闭 thinking 压缩(省一次 LLM 调用,thinking 剥离丢弃)
+            // 处理侧关:即使模型产出了 thinking,也不进入压缩流程(剥离丢弃)
             this.contextManager.setThinkingEnabled?.(
-              !this.deps.thinkingDisabled && thinkingEnabledForMode(mode),
+              this.deps.thinkingProcessEnabled !== false &&
+                !this.deps.thinkingDisabled &&
+                thinkingEnabledForMode(mode),
             );
             const compacted = await this.contextManager.compact(this.messages);
             this.messages = sanitizeOutbound(provider.capabilities, compacted);
@@ -630,7 +635,14 @@ export class AgentSession {
         const toolUses = assistantBlocks
           .filter((b): b is Extract<ProviderBlock, { type: "tool_use" }> => b.type === "tool_use")
           .map((b) => toolUseById.get(b.id) ?? { id: b.id, name: b.name, input: b.input });
-        this.messages.push({ role: "assistant", content: assistantBlocks });
+        // 处理侧关闭(thinkingProcessEnabled=false)时:即使模型侧仍产 thinking(请求带预算),
+        // 产出的 thinking 也剥离丢弃——「模型先思考再回答,但流程不处理 thinking」。
+        // 剥离点选在 push 前,保证历史/压缩/脉络永不出现 thinking。
+        const persistBlocks =
+          this.deps.thinkingProcessEnabled === false
+            ? assistantBlocks.filter((b) => b.type !== "thinking")
+            : assistantBlocks;
+        this.messages.push({ role: "assistant", content: persistBlocks });
 
         if (toolUses.length === 0) {
           terminal = { type: "done" };
