@@ -1260,6 +1260,46 @@ describe("AgentSession toolResult tail trimming", () => {
     expect(text.startsWith("[tool-result-trimmed]")).toBe(false);
     expect(text).toBe(bigFile);
   });
+
+  it("P1: writes trim-class tool result as final form at write time (not send-pre), keeping prefix stable", async () => {
+    // 第一轮 provider 触发 Bash 工具,本地执行产生超大输出;agentLoop 将 tool_result
+    // push 前(写前定型)就按 planToolResultTrim 裁剪,使该块自首次进入消息即字节恒定。
+    const { provider, calls } = fakeProvider([
+      { result: { blocks: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "run" } }], toolUses: [{ id: "t1", name: "Bash", input: { command: "run" } }] } },
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const tools = fakeTools({ Bash: () => ({ ok: true, content: bigBashOutput() }) }).tools;
+    const session = new AgentSession({
+      provider,
+      tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+    });
+    const events: string[] = [];
+    await session.send("跑命令", (ev) => events.push(ev.type));
+    expect(events).toContain("done");
+
+    // 第二轮 round 发送的 tool_result 应已是定型的精简形态(写前定型,而非发送前二次替换)。
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const round2 = calls[1]!.messages;
+    const resultMsg = round2.find((m) => m.role === "user" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_result"));
+    expect(resultMsg).toBeDefined();
+    const text = (resultMsg!.content as any[])[0].content[0].text as string;
+    expect(text.startsWith("[tool-result-trimmed]")).toBe(true);
+    expect(text).toContain("exit=0");
+    expect(text.length).toBeLessThan(bigBashOutput().length * 0.6);
+
+    // 持久 history 中该 tool_result 已在 push 时定型(messages 已含定型态),
+    // 证明不是等到发送前 trimConsumedToolResults 才替换。
+    // 再跑一轮:形态应保持不变(已在消息中定型,无二次「原始→精简」转变)。
+    await session.send("继续", () => {});
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    const round3 = calls[2]!.messages;
+    const resultMsg3 = round3.find((m) => m.role === "user" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_result"));
+    const text3 = (resultMsg3!.content as any[])[0].content[0].text as string;
+    expect(text3).toBe(text);
+  });
 });
 
 describe("AgentSession toolUse tail trimming", () => {

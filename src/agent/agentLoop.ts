@@ -782,6 +782,19 @@ export class AgentSession {
           }
 
           assertToolResultsComplete(toolResultBlocks);
+          // P1 写前定型:把 trim 类工具结果在写入 messages 之前就定成最终形态,
+          // 使该块自首次进入前缀起字节恒定(tool_use + tool_result 后续轮不再二次变化),
+          // 避免「原始 → 精简」两次形态导致的缓存前缀断裂。summarize 类需异步 LLM,
+          // 保留原文,由发送前的 trimConsumedToolResults 兜底汇总。
+          for (let i = 0; i < toolResultBlocks.length; i++) {
+            const block = toolResultBlocks[i];
+            if (!block) continue;
+            const text = toolResultText(block.content);
+            const trimPlan = planToolResultTrim(toolUses[i]?.name ?? "", text);
+            if (trimPlan.action === "trim" && trimPlan.trimmed !== undefined) {
+              block.content = [{ type: "text", text: `${TRIMMED_MARKER}\n${trimPlan.trimmed}` }];
+            }
+          }
         } catch (err) {
           // 工具轮内意外异常(权限网关/执行/落盘等)必须回滚到 preSend:保证 finally 里 persistNow
           // 落盘的快照不含孤儿 tool_use(Anthropic 兼容 API 会因 tool_use 无 tool_result 而 400)。
