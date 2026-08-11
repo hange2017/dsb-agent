@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AgentSession, clampHistoryTokenBudget } from "../src/agent/agentLoop";
+import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages, withThinkingDisabled } from "../src/agent/agentLoop";
 import { CompactionStats } from "../src/agent/compactionStats";
 import { PermissionManager } from "../src/agent/permission";
 import { PermissionRules } from "../src/agent/permissionRules";
@@ -10,6 +10,7 @@ import { ContextManager } from "../src/agent/contextManager";
 import { ContextStore } from "../src/context/contextStore";
 import type { ProviderClient, ProviderMessage, ProviderRoundResult, ProviderStreamEvent } from "../src/agent/provider/types";
 import type { ToolDef, ToolExecContext, ToolExecResult } from "../src/agent/tools/types";
+import { TodoManager } from "../src/agent/tools/todoTool";
 import { HookRunner } from "../src/hooks/hookRunner";
 
 function fakeProvider(
@@ -917,12 +918,15 @@ describe("AgentSession thinking compaction wiring", () => {
   });
 
   it("thinkingDisabled wraps provider so requests carry no thinking budget and history thinking is stripped", async () => {
-    const seenCaps: Array<{ supportsThinking: boolean; thinkingBudgetTokens?: number }> = [];
+    const seen: Array<{ thinkingBudgetTokens?: number; thinkingDisabled?: boolean }> = [];
     const seenSystems: string[] = [];
     const provider: ProviderClient = {
       capabilities: { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 4096 },
       async round(messages, opts) {
-        seenCaps.push({ supportsThinking: this.capabilities.supportsThinking, thinkingBudgetTokens: this.capabilities.thinkingBudgetTokens });
+        seen.push({
+          thinkingBudgetTokens: opts.thinkingBudgetTokens,
+          thinkingDisabled: opts.thinkingDisabled,
+        });
         seenSystems.push(opts.system);
         if (seenSystems.length === 1) {
           return {
@@ -944,12 +948,44 @@ describe("AgentSession thinking compaction wiring", () => {
       initialHistory: thinkingHistory,
     });
     await session.send("g", () => {});
-    // 包装后的 provider:supportsThinking=false、thinkingBudgetTokens 被摘除 → prepareRound 不分配 thinking 预算
-    expect(seenCaps.length).toBeGreaterThan(0);
-    for (const c of seenCaps) {
-      expect(c.supportsThinking).toBe(false);
+    // wrapper:capabilities.supportsThinking=false → prepareRound 不分配 thinking 预算;
+    // 且 opts.thinkingDisabled=true 传给底层 client(class 实例自身 caps 不变)
+    expect(seen.length).toBeGreaterThan(0);
+    for (const c of seen) {
       expect(c.thinkingBudgetTokens).toBeUndefined();
+      expect(c.thinkingDisabled).toBe(true);
     }
+  });
+
+  it("withThinkingDisabled keeps round when provider is a class instance (spread 会丢掉原型方法)", async () => {
+    // 复现:FallbackClient/AnthropicMessagesClient 的 round 在原型上,{...provider} 后 round 变 undefined
+    class ClassProvider implements ProviderClient {
+      capabilities = { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 2048 };
+      async round(
+        _messages: ProviderMessage[],
+        _opts: {
+          system: string;
+          tools: ToolDef[];
+          signal?: AbortSignal;
+          maxTokens?: number;
+          thinkingBudgetTokens?: number;
+          thinkingDisabled?: boolean;
+          lastInputTokens?: number;
+        },
+        _onEvent: (ev: ProviderStreamEvent) => void,
+      ): Promise<ProviderRoundResult> {
+        return {
+          blocks: [{ type: "text" as const, text: "ok" }],
+          toolUses: [],
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      }
+    }
+    const wrapped = withThinkingDisabled(new ClassProvider());
+    expect(typeof wrapped.round).toBe("function");
+    expect(wrapped.capabilities.supportsThinking).toBe(false);
+    const result = await wrapped.round([], { system: "s", tools: [] }, () => {});
+    expect(result.blocks[0]).toEqual({ type: "text", text: "ok" });
   });
 });
 
@@ -1452,3 +1488,78 @@ describe("clampHistoryTokenBudget", () => {
     expect(rounds.filter((r) => r.phase === "compact").length).toBe(0);
   });
 });
+
+describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定性)", () => {
+  it("injectTodoIntoMessages: 尾部为 user 时合并入最后一条 content", () => {
+    const base: ProviderMessage[] = [
+      { role: "assistant", content: [{ type: "text", text: "hi" }] },
+      { role: "user", content: "see" },
+    ];
+    const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] a (t1)");
+    expect(out).toHaveLength(2);
+    const last = out[out.length - 1];
+    expect(last.role).toBe("user");
+    expect(last.content).toBe("## 任务清单\n- [ ] a (t1)\n\nsee");
+    // 不修改入参
+    expect(base[1].content).toBe("see");
+  });
+
+  it("injectTodoIntoMessages: 尾部为 assistant 时追加独立 user 消息", () => {
+    const base: ProviderMessage[] = [
+      { role: "user", content: "q" },
+      { role: "assistant", content: [{ type: "text", text: "a" }] },
+    ];
+    const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] b (t2)");
+    expect(out).toHaveLength(3);
+    const last = out[out.length - 1];
+    expect(last).toEqual({ role: "user", content: "## 任务清单\n- [ ] b (t2)" });
+  });
+
+  it("injectTodoIntoMessages: 尾部为 block 数组 user 时按 text block 前置", () => {
+    const base: ProviderMessage[] = [
+      { role: "user", content: [{ type: "text", text: "see" }] },
+    ];
+    const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] c (t3)");
+    const last = out[out.length - 1];
+    expect(last.role).toBe("user");
+    expect(last.content).toEqual([
+      { type: "text", text: "## 任务清单\n- [ ] c (t3)" },
+      { type: "text", text: "see" },
+    ]);
+  });
+
+  it("injectTodoIntoMessages: 空块或空消息时原样返回/新增", () => {
+    expect(injectTodoIntoMessages([{ role: "user", content: "hi" }], "")).toEqual([
+      { role: "user", content: "hi" },
+    ]);
+    const seeded = injectTodoIntoMessages([], "## 任务清单\n- [ ] d (t4)");
+    expect(seeded).toEqual([{ role: "user", content: "## 任务清单\n- [ ] d (t4)" }]);
+  });
+
+  it("系统发送时 system 不再含 todo,且尾部 user 消息注入最新清单", async () => {
+    const { provider, calls } = fakeProvider([
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const todo = new TodoManager();
+    todo.add("第一步");
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s:p",
+      todo,
+    });
+    await session.send("hello", () => {});
+    const sent = calls[0].messages;
+    // system 不注入 todo(由 fakeProvider 直接透传 system 给断言前我们先验证 messages)
+    // 尾部 user 消息被注入了最新清单
+    const last = sent[sent.length - 1];
+    expect(last.role).toBe("user");
+    expect(last.content).toBe("## 任务清单\n- [ ] 第一步 (t1)\n\nhello");
+    // 清单内容保持在尾部消息内,之前的历史 messages 不含 任务清单 文本
+    const head = sent.slice(0, -1);
+    expect(JSON.stringify(head)).not.toContain("任务清单");
+  });
+});
+

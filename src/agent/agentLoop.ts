@@ -33,6 +33,7 @@ import { findConsumedThinking, planThinkingTrim } from "./thinkingPolicy";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
+import type { ModelCapabilities } from "../providers/types";
 import { prepareRound, sanitizeOutbound, assertToolResultsComplete } from "./capabilityGate";
 import { mapParallelBatches, runWithConcurrency } from "./tools/parallelSafe";
 
@@ -71,16 +72,50 @@ export function clampHistoryTokenBudget(budget: number | undefined, windowTokens
 const FALLBACK_SUMMARY = "已省略前文对话。";
 
 /**
+ * 把最新任务清单(todo)注入到请求包尾部,作为独立 user 消息(或合并进尾部 user 消息)。
+ * 目的:让 todo 从 system 移出,变化点落在消息尾部——todo 之前的全部前缀
+ * (base system + 工具定义 + 历史消息)跨轮稳定,仍可被缓存前缀单元命中。
+ * - 尾部已是 user 时合并进去,避免产生连续 user 消息;否则追加独立 user 消息。
+ * - 不修改入参数组,返回新数组;todo 本身不进持久历史。
+ */
+export function injectTodoIntoMessages(messages: ProviderMessage[], todoBlock: string): ProviderMessage[] {
+  if (todoBlock.length === 0) return messages;
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user") {
+    return [...messages, { role: "user", content: todoBlock }];
+  }
+  const merged = messages.slice(0, -1);
+  const content = last.content;
+  if (typeof content === "string") {
+    merged.push({ role: "user", content: `${todoBlock}\n\n${content}` });
+  } else {
+    merged.push({ role: "user", content: [{ type: "text" as const, text: todoBlock }, ...content] });
+  }
+  return merged;
+}
+
+
+/**
  * 功能级 thinking 总开关包装:把 provider 能力声明为不支持 thinking。
  * 关闭后整条链路自动收敛(无需改各调用点):
  * - round 请求:client 见 supportsThinking=false → 发 thinking.disabled;
  * - 历史消息:sanitizeOutbound 见 supportsThinking=false → 剥掉所有 thinking 块;
  * - prepareRound:不再分配 thinkingBudgetTokens(经 withThinkingDisabled 包装后为 undefined)。
+ *
+ * 注意:不能用 `{ ...provider }`——class 实例(FallbackClient/AnthropicMessagesClient)
+ * 的 round 在原型上,展开后会变成 undefined → `provider.round is not a function`。
  */
 export function withThinkingDisabled(provider: ProviderClient): ProviderClient {
-  const caps = { ...provider.capabilities };
+  const caps: ModelCapabilities = { ...provider.capabilities, supportsThinking: false };
   delete (caps as { thinkingBudgetTokens?: number }).thinkingBudgetTokens;
-  return { ...provider, capabilities: { ...caps, supportsThinking: false } };
+  return {
+    get capabilities() {
+      return caps;
+    },
+    // 强制 thinkingDisabled:底层 class client 读的是自身 capabilities,不能靠展开覆盖
+    round: (messages, opts, onEvent) =>
+      provider.round(messages, { ...opts, thinkingDisabled: true }, onEvent),
+  };
 }
 
 // 兼容旧测试/调用方:stripThinkingBlocks 现定义在 capabilityGate。
@@ -512,11 +547,15 @@ export class AgentSession {
           this.trimConsumedToolUses();
           this.trimConsumedThinking();
           await this.trimConsumedToolResults();
-          // 每轮把任务清单拼到 system prompt 末尾,base systemPrompt 保持原样
-          const roundSystem = `${systemPrompt}\n\n${this.todo.toPromptBlock()}${modeSeg ? `\n\n${modeSeg}` : ""}`;
+          // 每轮把任务清单注入到请求包尾部,base system + 历史消息保持稳定前缀。
+          // 仅当清单非空才注入:空清单(稳定常量)不进消息,避免尾部消息无谓膨胀。
+          const todoItems = this.todo.list();
+          const todoBlock = todoItems.length > 0 ? this.todo.toPromptBlock() : null;
+          const requestMessages = todoBlock ? injectTodoIntoMessages(this.messages, todoBlock) : this.messages;
+          const roundSystem = `${systemPrompt}${modeSeg ? `\n\n${modeSeg}` : ""}`;
           const prepared = prepareRound({
             caps: provider.capabilities,
-            messages: this.messages,
+            messages: requestMessages,
             lastInputTokens: this.contextManager.getLastInputTokens?.() ?? 0,
             windowTokensOverride: this.deps.windowTokensOverride,
           });
@@ -529,8 +568,8 @@ export class AgentSession {
           const lastInputTokens = this.contextManager.getLastInputTokens?.() ?? 0;
           // 发送前打点:记录这一包消息的 token 组成(只记数字不记内容),供历史占比统计
           roundStart = Date.now();
-          this.deps.onProviderSend?.(estimateProviderSendTokens(roundSystem, this.messages));
-          result = await provider.round(this.messages, {
+          this.deps.onProviderSend?.(estimateProviderSendTokens(roundSystem, requestMessages));
+          result = await provider.round(requestMessages, {
             system: roundSystem,
             tools: tools.allToolDefs().filter((d) => isToolAllowed(mode, d.name)),
             signal,
