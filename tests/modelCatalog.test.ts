@@ -262,6 +262,19 @@ describe("resolveCapabilities priority", () => {
     expect(resolveCapabilities(provider, "unknown-model")).toMatchObject({ supportsVision: false, supportsThinking: true });
   });
 
+  it("defaults thinkingLevel to medium when thinking supported but no level/budget given", () => {
+    // 供应商默认支持思考、未显式给强度/预算 → resolveCapabilities 兜底 medium。
+    expect(resolveCapabilities(provider, "unknown-model")).toMatchObject({
+      supportsThinking: true,
+      thinkingLevel: "medium",
+    });
+    // 显式给的 thinkingLevel 不被覆盖;不支持思考也不兜底。
+    const withLevel = makeProvider({ defaultCapabilities: { supportsVision: false, supportsThinking: true, thinkingLevel: "low" } });
+    expect(resolveCapabilities(withLevel, "unknown-model").thinkingLevel).toBe("low");
+    const noThinking = makeProvider({ defaultCapabilities: { supportsVision: false, supportsThinking: false } });
+    expect(resolveCapabilities(noThinking, "unknown-model").thinkingLevel).toBeUndefined();
+  });
+
   it("remote beats profile/builtin but loses to override", () => {
     expect(
       resolveCapabilities(provider, "unknown-model", undefined, { remote: { supportsVision: true } }),

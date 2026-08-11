@@ -282,5 +282,10 @@ export function resolveCapabilities(
   if (thinkingLevel !== undefined) out.thinkingLevel = thinkingLevel;
   if (maxParallelTools !== undefined) out.maxParallelTools = maxParallelTools;
   if (toolParallelMode !== undefined) out.toolParallelMode = toolParallelMode;
+  // 供应商默认思考能力:支持思考且未显式给强度/预算时,兜底 medium(中等强度)。
+  // 保证供应商设置界面思考强度下拉默认显示 medium,且 effectiveThinkingBudgetTokens 有理性默认。
+  if (out.supportsThinking === true && out.thinkingLevel === undefined && out.thinkingBudgetTokens === undefined) {
+    out.thinkingLevel = "medium";
+  }
   return out;
 }
