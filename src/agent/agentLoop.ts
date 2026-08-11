@@ -34,7 +34,7 @@ import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
 import type { ModelCapabilities } from "../providers/types";
-import { prepareRound, sanitizeOutbound, assertToolResultsComplete } from "./capabilityGate";
+import { prepareRound, sanitizeOutbound, assertToolResultsComplete, repairToolUseResultPairs } from "./capabilityGate";
 import { mapParallelBatches, runWithConcurrency } from "./tools/parallelSafe";
 
 export type AgentLoopEvent =
@@ -75,13 +75,18 @@ const FALLBACK_SUMMARY = "已省略前文对话。";
  * 把最新任务清单(todo)注入到请求包尾部,作为独立 user 消息(或合并进尾部 user 消息)。
  * 目的:让 todo 从 system 移出,变化点落在消息尾部——todo 之前的全部前缀
  * (base system + 工具定义 + 历史消息)跨轮稳定,仍可被缓存前缀单元命中。
- * - 尾部已是 user 时合并进去,避免产生连续 user 消息;否则追加独立 user 消息。
+ * - 尾部已是普通 user 时合并进去,避免产生连续 user 消息;否则追加独立 user 消息。
+ * - 绝不能并入 tool_result 消息:API 要求 tool_use 后紧跟的 user 只能含 tool_result。
  * - 不修改入参数组,返回新数组;todo 本身不进持久历史。
  */
 export function injectTodoIntoMessages(messages: ProviderMessage[], todoBlock: string): ProviderMessage[] {
   if (todoBlock.length === 0) return messages;
   const last = messages[messages.length - 1];
   if (!last || last.role !== "user") {
+    return [...messages, { role: "user", content: todoBlock }];
+  }
+  // tool_result 消息必须保持纯净(仅 tool_result 块),否则 DeepSeek/Anthropic 报 400
+  if (typeof last.content !== "string" && last.content.some((b) => b.type === "tool_result")) {
     return [...messages, { role: "user", content: todoBlock }];
   }
   const merged = messages.slice(0, -1);
@@ -209,7 +214,8 @@ export class AgentSession {
     // prepareRound 不注入 thinkingBudgetTokens、contextManager 关闭 thinking 收集——整条链路无 thinking 参与。
     this.effectiveProvider =
       this.deps.thinkingDisabled === true ? withThinkingDisabled(this.deps.provider) : this.deps.provider;
-    this.messages.push(...(this.deps.initialHistory ?? []));
+    // 加载历史时先修复孤儿 tool_use,避免旧会话一发消息就 400
+    this.messages.push(...repairToolUseResultPairs(this.deps.initialHistory ?? []));
     // 未注入 contextManager 时自建:用本会话 provider 单发一条"总结前文"请求,
     // 失败时返回兜底摘要,保证压缩不会让主循环崩溃。ContextManager 本体保持纯逻辑。
     const windowTokens =

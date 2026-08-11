@@ -56,9 +56,88 @@ export function stripImageBlocks(messages: ProviderMessage[]): ProviderMessage[]
   });
 }
 
-/** 按能力清洗即将发给模型的历史(幂等)。 */
+const REPAIRED_TOOL_RESULT =
+  "ERROR: tool_result missing (repaired locally). The original tool call did not complete or was dropped from history.";
+
+function syntheticToolResult(toolUseId: string): ProviderUserBlock {
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId,
+    content: [{ type: "text", text: REPAIRED_TOOL_RESULT }],
+  };
+}
+
+function toolUseIdsInAssistant(msg: ProviderMessage): string[] {
+  if (msg.role !== "assistant") return [];
+  return msg.content.filter((b): b is Extract<ProviderBlock, { type: "tool_use" }> => b.type === "tool_use").map((b) => b.id);
+}
+
+function toolResultIdsInUser(msg: ProviderMessage | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (!msg || msg.role !== "user" || typeof msg.content === "string") return ids;
+  for (const b of msg.content) {
+    if (b.type === "tool_result") ids.add(b.tool_use_id);
+  }
+  return ids;
+}
+
+function isToolResultUserMessage(msg: ProviderMessage | undefined): boolean {
+  if (!msg || msg.role !== "user" || typeof msg.content === "string") return false;
+  return msg.content.some((b) => b.type === "tool_result");
+}
+
+/**
+ * 修复历史中孤儿 / 被污染的 tool_use 配对。
+ * Anthropic 兼容 API 要求:assistant 的每个 tool_use,紧随其后的 user 消息必须
+ * **只含**对应的 tool_result 块(不能夹 text/todo),否则 400。
+ *
+ * 场景:中断落盘、旧会话损坏、injectTodo 误并入 tool_result 消息。
+ * 策略:缺 id 补合成 ERROR;混有非 tool_result 内容时拆成「纯 results → 其余」。
+ */
+export function repairToolUseResultPairs(messages: ProviderMessage[]): ProviderMessage[] {
+  const out: ProviderMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    out.push(msg);
+    const useIds = toolUseIdsInAssistant(msg);
+    if (useIds.length === 0) continue;
+
+    const next = messages[i + 1];
+    const present = toolResultIdsInUser(next);
+    const missing = useIds.filter((id) => !present.has(id));
+
+    if (isToolResultUserMessage(next)) {
+      const blocks = next.content as ProviderUserBlock[];
+      const resultBlocks = blocks.filter((b) => b.type === "tool_result");
+      const otherBlocks = blocks.filter((b) => b.type !== "tool_result");
+      const needsSplit = otherBlocks.length > 0;
+      const needsFill = missing.length > 0;
+      if (!needsSplit && !needsFill) {
+        continue; // 纯净完整配对
+      }
+      const pureResults = [...resultBlocks, ...missing.map(syntheticToolResult)];
+      out.push({ role: "user", content: pureResults });
+      if (needsSplit) {
+        // 把误并入的 text/todo 挪到 tool_result 之后
+        if (otherBlocks.length === 1 && otherBlocks[0].type === "text") {
+          out.push({ role: "user", content: otherBlocks[0].text });
+        } else {
+          out.push({ role: "user", content: otherBlocks });
+        }
+      }
+      i += 1; // 已消费原 next
+      continue;
+    }
+
+    // 下一条缺失 / 是普通 user 文本 / 是另一条 assistant → 中间插入合成结果
+    out.push({ role: "user", content: useIds.map(syntheticToolResult) });
+  }
+  return out;
+}
+
+/** 按能力清洗即将发给模型的历史(幂等);并修复 tool_use/tool_result 配对。 */
 export function sanitizeOutbound(caps: ModelCapabilities, messages: ProviderMessage[]): ProviderMessage[] {
-  let out = messages;
+  let out = repairToolUseResultPairs(messages);
   if (caps.supportsThinking === false) out = stripThinkingBlocks(out);
   if (caps.supportsVision === false) out = stripImageBlocks(out);
   return out;

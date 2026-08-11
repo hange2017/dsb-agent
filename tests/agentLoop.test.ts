@@ -1568,6 +1568,25 @@ describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定�
     ]);
   });
 
+  it("injectTodoIntoMessages: 绝不并入 tool_result 消息(否则 tool_use 后紧跟非纯 tool_result → API 400)", () => {
+    // 复现 messages.N: tool_use without tool_result immediately after
+    const base: ProviderMessage[] = [
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "call_00_Brz", name: "Read", input: { path: "a.ts" } }],
+      },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "call_00_Brz", content: [{ type: "text", text: "ok" }] }],
+      },
+    ];
+    const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] x (t9)");
+    expect(out).toHaveLength(3);
+    // tool_result 消息保持纯净
+    expect(out[1]).toEqual(base[1]);
+    expect(out[2]).toEqual({ role: "user", content: "## 任务清单\n- [ ] x (t9)" });
+  });
+
   it("injectTodoIntoMessages: 空块或空消息时原样返回/新增", () => {
     expect(injectTodoIntoMessages([{ role: "user", content: "hi" }], "")).toEqual([
       { role: "user", content: "hi" },
