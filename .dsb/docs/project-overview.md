@@ -87,6 +87,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 - `stats/statsStore.ts`:事件日志(`~/.dsb/stats/<projectKey>/events-YYYY-MM-DD.jsonl`,按项目隔离,保留 30 天)。
 - `stats/providerSendStats.ts`:provider_send 消息组成统计(compactedBlock / tool_result / thinking / system 等占比)。
 - `stats/compactionEvents.ts`:压缩事件;`stats/activityStats.ts`:活动统计 + 每日总结提醒。
+- **压缩质量抽查(`compaction_qa` 事件)**:压缩后对 `[r{n}]` 键值提问验证信息保真(seq / answerable / qaMs / qaIn·qaOutputTokens + 该轮 in/outTokens)。落盘为 `compaction_qa` 事件(聚合时单列扣减,不混入真实使用成本)。**可开关**:`dsbAgent.stats.compactionQa`(默认 true);关闭时完全不触发抽查(不额外 provider 请求、不落盘)。
 
 ### 10. 其它
 - `src/i18n/strings.ts`:界面文案(中文);`src/notifications/notifier.ts`:通知;`src/util/ripgrepPath.ts`:内置 rg 路径解析。
@@ -108,7 +109,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 | 数据 | 位置 |
 |------|------|
 | 会话上下文 | `<globalStorage>/context/<projectKey>/`(`<sessionId>.context.json` + `.index.json`,冷存储归档) |
-| 事件统计 | `~/.dsb/stats/<projectKey>/events-*.jsonl`(provider_send / compaction / message_sent 等) |
+| 事件统计 | `~/.dsb/stats/<projectKey>/events-*.jsonl`(provider_send / compaction / compaction_qa / message_sent 等) |
 | 密钥 | VS Code SecretStorage |
 | 会话文件 | `<globalStorage>/sessions/` 等 |
 
