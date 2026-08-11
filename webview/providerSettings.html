@@ -69,6 +69,16 @@
   }
   .model-cap { display: flex; gap: 12px; align-items: center; flex: none; }
   .model-cap label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  /* 思考强度下拉:避免沿用全局 select 的按钮蓝色背景,改用输入框配色,保证收起态可读 */
+  .model-cap select {
+    background: var(--vscode-input-background, var(--vscode-editor-background));
+    color: var(--vscode-input-foreground, var(--fg));
+    border: 1px solid var(--border);
+  }
+  .model-cap select option {
+    background: var(--vscode-dropdown-background, var(--vscode-input-background));
+    color: var(--vscode-dropdown-foreground, var(--fg));
+  }
   .empty { opacity: 0.6; font-size: 12px; padding: 8px 0; }
   .hidden { display: none !important; }
   .popover {
