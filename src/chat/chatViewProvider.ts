@@ -331,6 +331,24 @@ export class ChatViewProvider {
           // skillList 来自 controller 装配的 SkillIndex(与 /skill 命令同一份索引);
           // dreamHint:SessionStart 检查「记忆条数 ≥ 5 且距上次整合 ≥ 7 天」,达标才注入提示
           const locale = this.controller?.locale ?? this.defaultLocale;
+          // A5 压缩质量抽查回调:可开关控制是否真正执行抽查(发送 provider 请求)。
+          // 关闭时不传回调 → agentLoop 的 runCompactionQa 不触发(省一次 provider 轮 + 不落盘)。
+          const onCompactionQa = this.configuration.compactionQaEnabled()
+            ? (ev: {
+                sessionId: string;
+                seq: number;
+                answerable: boolean;
+                qaMs: number;
+                qaInputTokens: number;
+                qaOutputTokens: number;
+                inTokens: number;
+                outTokens: number;
+              }) => {
+                // 统计详细级别 basic:仅不落盘(保留统计开关 full 控制)
+                if (this.configuration.statsDetailLevel() === "basic") return;
+                this.statsStore?.record("compaction_qa", ev);
+              }
+            : undefined;
           const session = new AgentSession({
             provider,
             tools,
@@ -393,11 +411,7 @@ export class ChatViewProvider {
                 this.configuration.statsDetailLevel() === "basic" ? { ...ev, llmDetail: undefined } : ev;
               this.statsStore?.record("compaction", payload as unknown as Record<string, unknown>);
             },
-            // A5 压缩质量抽查:独立 compaction_qa 事件(聚合时单列扣减,不混入真实使用成本)
-            onCompactionQa: (ev) => {
-              if (this.configuration.statsDetailLevel() === "basic") return;
-              this.statsStore?.record("compaction_qa", ev);
-            },
+            onCompactionQa,
           });
           return session;
         },

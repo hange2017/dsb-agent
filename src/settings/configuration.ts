@@ -132,4 +132,9 @@ export class Configuration {
     const v = this.reader.getString("dsbAgent.stats.detailLevel");
     return v === "basic" ? "basic" : "full";
   }
+
+  /** 压缩质量抽查(compaction_qa)开关:false 时完全关闭抽查(不触发 provider 请求、不落盘事件);缺省 true。 */
+  compactionQaEnabled(): boolean {
+    return this.reader.getString("dsbAgent.stats.compactionQa") !== "false";
+  }
 }

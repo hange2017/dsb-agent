@@ -231,6 +231,11 @@
           ],
           "default": "full",
           "description": "%configuration.dsbAgent.stats.detailLevel.description%"
+        },
+        "dsbAgent.stats.compactionQa": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.dsbAgent.stats.compactionQa.description%"
         }
       }
     }

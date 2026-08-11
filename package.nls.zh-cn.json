@@ -37,5 +37,6 @@
   "configuration.dsbAgent.compaction.triggerPct.description": "流水线触发比例:某块 token 达到额定×该比例时触发压缩(默认 0.75)。",
   "configuration.dsbAgent.compaction.targetPct.description": "压缩后目标比例:触发后收缩到额定×该比例(滞回,默认 0.5,须小于 triggerPct)。",
   "configuration.dsbAgent.stats.enabled.description": "启用本地使用统计(关闭后不再记录任何统计事件)。",
-  "configuration.dsbAgent.stats.detailLevel.description": "统计详细级别:basic 仅基础轮次统计,full 含压缩逐位置明细与压缩质量抽查。"
+  "configuration.dsbAgent.stats.detailLevel.description": "统计详细级别:basic 仅基础轮次统计,full 含压缩逐位置明细与压缩质量抽查。",
+  "configuration.dsbAgent.stats.compactionQa.description": "压缩质量抽查(compaction_qa)开关:关闭后完全禁用抽查(不额外发起 provider 请求、不记录事件)。"
 }

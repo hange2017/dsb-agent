@@ -171,4 +171,12 @@ describe("Configuration context window & trigger/target pct", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.stats.detailLevel" ? "verbose" : "") });
     expect(junk.statsDetailLevel()).toBe("full");
   });
+
+  it("compactionQaEnabled defaults to true and honors false", () => {
+    expect(new Configuration({ getString: () => "" }).compactionQaEnabled()).toBe(true);
+    const off = new Configuration({ getString: (k) => (k === "dsbAgent.stats.compactionQa" ? "false" : "") });
+    expect(off.compactionQaEnabled()).toBe(false);
+    const junk = new Configuration({ getString: (k) => (k === "dsbAgent.stats.compactionQa" ? "yes" : "") });
+    expect(junk.compactionQaEnabled()).toBe(true);
+  });
 });
