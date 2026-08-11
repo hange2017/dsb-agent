@@ -289,6 +289,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   const modelCatalog = new ModelCatalog();
   const capabilityRegistry = new CapabilityRegistry();
+  // 注入全局思考强度兜底(Agent 设置面板 / dsbAgent.thinking.level),处理器构建时也会同步
+  capabilityRegistry.setGlobalThinkingLevel(configuration.thinkingLevel());
   // 旧扁平配置(baseUrl/model/apiKey)迁移为首个 legacy 供应商
   void migrateLegacyConfig(providerStore, configuration, apiKeyStore);
 
@@ -844,6 +846,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             split: configuration.budgetSplit(),
             triggerPct: configuration.compactionTriggerPct(),
             targetPct: configuration.compactionTargetPct(),
+            thinking: {
+              enabled: configuration.thinkingEnabled(),
+              level: configuration.thinkingLevel() ?? "",
+            },
           }),
           updateBudget: async (config) => {
             // await 写配置完成,确保保存后回读能拿到新值(异步写未落盘会导致界面刷回旧值)
@@ -855,6 +861,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               split: configuration.budgetSplit(),
               triggerPct: configuration.compactionTriggerPct(),
               targetPct: configuration.compactionTargetPct(),
+              thinking: {
+                enabled: configuration.thinkingEnabled(),
+                level: configuration.thinkingLevel() ?? "",
+              },
             };
             await cfg.update(
               "dsbAgent.contextWindowTokens",
@@ -873,6 +883,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             );
             await cfg.update("dsbAgent.compaction.triggerPct", config.triggerPct, vscode.ConfigurationTarget.Global);
             await cfg.update("dsbAgent.compaction.targetPct", config.targetPct, vscode.ConfigurationTarget.Global);
+            // 思考模式:enabled(总开关) + level(兜底强度)写全局配置
+            await cfg.update(
+              "dsbAgent.thinking.enabled",
+              config.thinking.enabled,
+              vscode.ConfigurationTarget.Global,
+            );
+            await cfg.update(
+              "dsbAgent.thinking.level",
+              config.thinking.level || null,
+              vscode.ConfigurationTarget.Global,
+            );
+            // 同步运行时兜底强度,使新一轮请求立即生效
+            capabilityRegistry.setGlobalThinkingLevel(config.thinking.level || undefined);
             // 参数修改留痕:记录修改前后完整快照 + 变更项,便于按参数分组统计各统计量(时间由 StatsStore 自动加 t)
             const after = {
               windowTokens: config.windowTokens,
@@ -880,6 +903,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
               split: config.split,
               triggerPct: config.triggerPct,
               targetPct: config.targetPct,
+              thinking: { enabled: config.thinking.enabled, level: config.thinking.level },
             };
             statsStore?.record("settings_change", buildSettingsChangeData(before, after));
           },

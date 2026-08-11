@@ -21,6 +21,13 @@ export interface BudgetSplit {
   tail: number;
 }
 
+/** 思考模式配置(全局):镜像 dsbAgent.thinking.enabled + dsbAgent.thinking.level。
+ *  level 为 "" 表示未设置(跟随模型级)。 */
+export interface AgentThinkingConfig {
+  enabled: boolean;
+  level: "low" | "medium" | "high" | "";
+}
+
 /** 上下文预算配置(参数面板 5 项)。 */
 export interface AgentBudgetConfig {
   /** 给大模型的输入最大长度(窗口);0 = 跟随模型能力。 */
@@ -33,6 +40,8 @@ export interface AgentBudgetConfig {
   triggerPct: number;
   /** 压缩后目标比例(滞回);缺省 0.5,须 < triggerPct。 */
   targetPct: number;
+  /** 全局思考模式(enabled 总开关 + level 兜底强度)。 */
+  thinking: AgentThinkingConfig;
 }
 
 /** host → webview 消息。 */
@@ -87,6 +96,13 @@ export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetS
   return { compacted: c / sum, thinking: t / sum, tail: l / sum };
 }
 
+/** 归一化思考模式配置:非法 level 回退 ""(跟随模型),非法 enabled 回退 true。 */
+export function normalizeThinkingConfig(t: Partial<AgentThinkingConfig> | undefined): AgentThinkingConfig {
+  const level = t && ["low", "medium", "high"].includes(t.level as string) ? (t.level as AgentThinkingConfig["level"]) : "";
+  const enabled = t ? t.enabled !== false : true;
+  return { enabled, level };
+}
+
 /** 归一化 5 项配置:非法项回退默认;targetPct 须满足 0 < target < trigger ≤ 1。 */
 export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): AgentBudgetConfig {
   const def: AgentBudgetConfig = {
@@ -95,9 +111,10 @@ export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): Ag
     split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     triggerPct: 0.75,
     targetPct: 0.5,
+    thinking: { enabled: true, level: "" },
   };
   if (!cfg || typeof cfg !== "object") {
-    return { ...def, split: { ...def.split } };
+    return { ...def, split: { ...def.split }, thinking: { ...def.thinking } };
   }
   const windowTokens = Number(cfg.windowTokens);
   const budget = Number(cfg.budget);
@@ -113,6 +130,7 @@ export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): Ag
     split: normalizeSplit(cfg.split),
     triggerPct,
     targetPct,
+    thinking: normalizeThinkingConfig(cfg.thinking),
   };
 }
 
