@@ -60,6 +60,8 @@ export interface ProviderClient {
       maxTokens?: number;
       /** 覆盖 capabilities.thinkingBudgetTokens;正整数时发 enabled+budget。 */
       thinkingBudgetTokens?: number;
+      /** 显式禁用 thinking(即使模型声称支持);client 应发 thinking.disabled 且不读 thinking 流。 */
+      thinkingDisabled?: boolean;
       /** Fallback 按子 client 重算动态预算用;缺省 0。 */
       lastInputTokens?: number;
     },

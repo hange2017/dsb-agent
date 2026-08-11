@@ -366,6 +366,8 @@ export class ChatViewProvider {
             targetPct: this.configuration.compactionTargetPct(),
             // 每会话独立统计:thinking 压缩频率(对话轮次 + 压缩次数,滑动窗口 100)
             stats: new CompactionStats(),
+            // 全链路 thinking 总开关:false 时请求不带 thinking 预算、响应 thinking 不保留(代码逻辑保留可重开)
+            thinkingDisabled: !this.configuration.thinkingEnabled(),
             // 发送前打点:记录每次 provider.round 的消息组成 token(只记数字不记内容)
             onProviderSend: (breakdown) => {
               this.statsStore?.record("provider_send", breakdown as unknown as Record<string, unknown>);

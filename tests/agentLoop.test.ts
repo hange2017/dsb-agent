@@ -915,6 +915,42 @@ describe("AgentSession thinking compaction wiring", () => {
     expect(stats.snapshot().windowCompactions).toBe(before + 1);
     expect(stats.snapshot().totalConversations).toBe(1);
   });
+
+  it("thinkingDisabled wraps provider so requests carry no thinking budget and history thinking is stripped", async () => {
+    const seenCaps: Array<{ supportsThinking: boolean; thinkingBudgetTokens?: number }> = [];
+    const seenSystems: string[] = [];
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 4096 },
+      async round(messages, opts) {
+        seenCaps.push({ supportsThinking: this.capabilities.supportsThinking, thinkingBudgetTokens: this.capabilities.thinkingBudgetTokens });
+        seenSystems.push(opts.system);
+        if (seenSystems.length === 1) {
+          return {
+            blocks: [{ type: "tool_use", id: "t1", name: "Read", input: { path: "/tmp/a" } }],
+            toolUses: [{ id: "t1", name: "Read", input: { path: "/tmp/a" } }],
+            usage: { inputTokens: 200000, outputTokens: 10 },
+          };
+        }
+        return { blocks: [{ type: "text", text: "S" }], toolUses: [] };
+      },
+    };
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({ Read: () => ({ ok: true, content: "x" }) }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      thinkingDisabled: true,
+      initialHistory: thinkingHistory,
+    });
+    await session.send("g", () => {});
+    // 包装后的 provider:supportsThinking=false、thinkingBudgetTokens 被摘除 → prepareRound 不分配 thinking 预算
+    expect(seenCaps.length).toBeGreaterThan(0);
+    for (const c of seenCaps) {
+      expect(c.supportsThinking).toBe(false);
+      expect(c.thinkingBudgetTokens).toBeUndefined();
+    }
+  });
 });
 
 describe("AgentSession summarize budget", () => {

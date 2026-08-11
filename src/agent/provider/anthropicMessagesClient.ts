@@ -116,6 +116,8 @@ export class AnthropicMessagesClient implements ProviderClient {
       signal?: AbortSignal;
       maxTokens?: number;
       thinkingBudgetTokens?: number;
+      /** 功能级 thinking 关闭:true 时等价于 capabilities.supportsThinking=false。 */
+      thinkingDisabled?: boolean;
     },
     onEvent: (ev: ProviderStreamEvent) => void,
   ): Promise<ProviderRoundResult> {
@@ -129,8 +131,8 @@ export class AnthropicMessagesClient implements ProviderClient {
       tools: opts.tools,
       messages: outbound,
     };
-    // 能力开关:模型不支持思考时显式关闭 thinking(避免 API 默认开启产生额外开销/不可渲染块)
-    if (this.capabilities.supportsThinking === false) {
+    // 能力开关:模型不支持思考或调用方显式禁用时,显式关闭 thinking(避免 API 默认开启产生额外开销/不可渲染块)
+    if (this.capabilities.supportsThinking === false || opts.thinkingDisabled === true) {
       body["thinking"] = { type: "disabled" };
     } else {
       const budget = positiveInt(opts.thinkingBudgetTokens ?? this.capabilities.thinkingBudgetTokens);

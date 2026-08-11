@@ -32,6 +32,7 @@
   "configuration.dsbAgent.compaction.historyTokenBudget.description": "Total token budget for history sent to the model (compacted + thinking + tail); 0 disables budget and falls back to legacy behavior.",
   "configuration.dsbAgent.compaction.budgetSplit.description": "Budget split ratios for compacted block / thinking block / tail (sum = 1).",
   "configuration.dsbAgent.contextWindowTokens.description": "Max input length (context window) sent to the model; 0 follows the model capability (default). Overrides the window used for compaction trigger and output budget when > 0.",
+  "configuration.dsbAgent.thinking.enabled.description": "Master thinking switch: when disabled, requests carry thinking.disabled, historical thinking is stripped, and thinking plays no part in the whole pipeline (logic retained, can be re-enabled anytime).",
   "configuration.dsbAgent.compaction.triggerPct.description": "Pipeline trigger ratio: compaction fires when a block reaches rated tokens × this ratio (default 0.75).",
   "configuration.dsbAgent.compaction.targetPct.description": "Post-compaction target ratio: blocks shrink to rated tokens × this ratio (hysteresis, default 0.5, must be < triggerPct).",
   "configuration.dsbAgent.stats.enabled.description": "Enable local usage statistics (when disabled, no statistics events are recorded).",

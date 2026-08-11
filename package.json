@@ -194,6 +194,11 @@
           "minimum": 0,
           "description": "%configuration.dsbAgent.contextWindowTokens.description%"
         },
+        "dsbAgent.thinking.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.dsbAgent.thinking.enabled.description%"
+        },
         "dsbAgent.compaction.triggerPct": {
           "type": "number",
           "default": 0.75,

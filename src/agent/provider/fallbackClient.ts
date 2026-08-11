@@ -29,6 +29,7 @@ export class FallbackClient implements ProviderClient {
       signal?: AbortSignal;
       maxTokens?: number;
       thinkingBudgetTokens?: number;
+      thinkingDisabled?: boolean;
       lastInputTokens?: number;
     },
     onEvent: (ev: ProviderStreamEvent) => void,
@@ -59,11 +60,13 @@ export class FallbackClient implements ProviderClient {
           signal?: AbortSignal;
           maxTokens: number;
           thinkingBudgetTokens?: number;
+          thinkingDisabled?: boolean;
         } = {
           system: opts.system,
           tools: opts.tools,
           signal: opts.signal,
           maxTokens: prepared.maxTokens,
+          thinkingDisabled: opts.thinkingDisabled,
         };
         if (prepared.thinkingBudgetTokens !== undefined) {
           childOpts.thinkingBudgetTokens = prepared.thinkingBudgetTokens;

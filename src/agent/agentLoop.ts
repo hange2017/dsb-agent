@@ -70,6 +70,19 @@ export function clampHistoryTokenBudget(budget: number | undefined, windowTokens
 /** 摘要请求失败时的兜底文本:压缩永远不阻断主循环。 */
 const FALLBACK_SUMMARY = "已省略前文对话。";
 
+/**
+ * 功能级 thinking 总开关包装:把 provider 能力声明为不支持 thinking。
+ * 关闭后整条链路自动收敛(无需改各调用点):
+ * - round 请求:client 见 supportsThinking=false → 发 thinking.disabled;
+ * - 历史消息:sanitizeOutbound 见 supportsThinking=false → 剥掉所有 thinking 块;
+ * - prepareRound:不再分配 thinkingBudgetTokens(经 withThinkingDisabled 包装后为 undefined)。
+ */
+export function withThinkingDisabled(provider: ProviderClient): ProviderClient {
+  const caps = { ...provider.capabilities };
+  delete (caps as { thinkingBudgetTokens?: number }).thinkingBudgetTokens;
+  return { ...provider, capabilities: { ...caps, supportsThinking: false } };
+}
+
 // 兼容旧测试/调用方:stripThinkingBlocks 现定义在 capabilityGate。
 export { stripThinkingBlocks } from "./capabilityGate";
 
@@ -84,10 +97,14 @@ export class AgentSession {
   private readonly hooks?: HookRunner;
   /** 最近一次 send 的事件通道:thinking 压缩/对话轮次统计变化时推送 compaction_stats。 */
   private currentOnEvent: ((ev: AgentLoopEvent) => void) | undefined;
+  /** 实际使用的 provider:thinkingDisabled 时包装为无 thinking 能力,其余原样。 */
+  private readonly effectiveProvider: ProviderClient;
 
   constructor(
     private readonly deps: {
       provider: ProviderClient;
+      /** 功能级 thinking 总开关:false 时整条链路(请求/响应/历史/压缩/QA)不出现 thinking;缺省 true。 */
+      thinkingDisabled?: boolean;
       tools: ToolExecutor;
       permissions: PermissionManager;
       workspaceRoot: string;
@@ -152,13 +169,18 @@ export class AgentSession {
     },
   ) {
     this.todo = this.deps.todo ?? new TodoManager();
+    // thinkingDisabled 总开关:包装 provider 为无 thinking 能力(supportsThinking=false)。
+    // 由此 round 请求显式 thinking.disabled、sanitizeOutbound 剥历史 thinking、
+    // prepareRound 不注入 thinkingBudgetTokens、contextManager 关闭 thinking 收集——整条链路无 thinking 参与。
+    this.effectiveProvider =
+      this.deps.thinkingDisabled === true ? withThinkingDisabled(this.deps.provider) : this.deps.provider;
     this.messages.push(...(this.deps.initialHistory ?? []));
     // 未注入 contextManager 时自建:用本会话 provider 单发一条"总结前文"请求,
     // 失败时返回兜底摘要,保证压缩不会让主循环崩溃。ContextManager 本体保持纯逻辑。
     const windowTokens =
       this.deps.windowTokensOverride && this.deps.windowTokensOverride > 0
         ? this.deps.windowTokensOverride
-        : effectiveContextWindowTokens(this.deps.provider.capabilities);
+        : effectiveContextWindowTokens(this.effectiveProvider.capabilities);
     this.contextManager = this.deps.contextManager ?? new ContextManager({
       windowTokens,
       triggerRatio: this.deps.triggerRatio ?? DEFAULT_TRIGGER_RATIO,
@@ -192,7 +214,7 @@ export class AgentSession {
   async compactNow(): Promise<void> {
     const compacted = await this.contextManager.compact(this.messages);
     // Compact 输出再过能力清洗,避免尾部历史 image/thinking 在后续 round/fallback 翻车。
-    this.messages = sanitizeOutbound(this.deps.provider.capabilities, compacted);
+    this.messages = sanitizeOutbound(this.effectiveProvider.capabilities, compacted);
     this.persistNow();
   }
 
@@ -236,7 +258,7 @@ export class AgentSession {
     if (!block || typeof block.content !== "string") return;
     const qaStart = Date.now();
     try {
-      const result = await this.deps.provider.round(
+      const result = await this.effectiveProvider.round(
         [{ role: "user", content: block.content }],
         {
           system: `压缩质量抽查:下面是历史对话的压缩摘要块。请回答:[r${seq}] 对应的原始内容是什么?只回 1-2 句简要结论;不确定就回 UNKNOWN。`,
@@ -281,12 +303,12 @@ export class AgentSession {
     try {
       const message: ProviderMessage = { role: "user", content: text };
       const prepared = prepareRound({
-        caps: this.deps.provider.capabilities,
+        caps: this.effectiveProvider.capabilities,
         messages: [message],
         lastInputTokens: this.contextManager.getLastInputTokens?.() ?? 0,
       });
       const roundStart = Date.now();
-      const result = await this.deps.provider.round(
+      const result = await this.effectiveProvider.round(
         [message],
         {
           system:
@@ -411,7 +433,8 @@ export class AgentSession {
     onEvent: (ev: AgentLoopEvent) => void,
     opts?: { rawText?: string; images?: SdkImagePayload[]; mode?: AgentMode },
   ): Promise<void> {
-    const { provider, tools, permissions, workspaceRoot, systemPrompt } = this.deps;
+    const { tools, permissions, workspaceRoot, systemPrompt } = this.deps;
+    const provider = this.effectiveProvider;
     const maxRounds = this.deps.maxRounds ?? DEFAULT_MAX_ROUNDS;
 
     // 无 vision 时忽略 opts.images,避免把 image blocks 发给不支持多模态的模型。
@@ -456,7 +479,9 @@ export class AgentSession {
         if (this.contextManager.needsCompaction(this.messages)) {
           try {
             // plan/ask 模式关闭 thinking 压缩(省一次 LLM 调用,thinking 剥离丢弃)
-            this.contextManager.setThinkingEnabled?.(thinkingEnabledForMode(mode));
+            this.contextManager.setThinkingEnabled?.(
+              !this.deps.thinkingDisabled && thinkingEnabledForMode(mode),
+            );
             const compacted = await this.contextManager.compact(this.messages);
             this.messages = sanitizeOutbound(provider.capabilities, compacted);
             this.persistNow(); // compact 后立刻同步持久化,避免「JSONL 全量、内存已摘要」分叉

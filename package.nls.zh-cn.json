@@ -32,6 +32,7 @@
   "configuration.dsbAgent.compaction.historyTokenBudget.description": "发送给模型的历史信息总 token 预算(压缩块 + thinking + tail);0 关闭预算,回退现状行为。",
   "configuration.dsbAgent.compaction.budgetSplit.description": "压缩块 / thinking 块 / tail 的预算比例(合计应为 1)。",
   "configuration.dsbAgent.contextWindowTokens.description": "发送给模型的输入最大长度(上下文窗口);0 跟随模型能力(默认)。大于 0 时覆盖压缩触发与输出预算所用的窗口。",
+  "configuration.dsbAgent.thinking.enabled.description": "thinking 总开关:关闭后请求不带 thinking 预算、响应 thinking 不保留不压缩不重建,整条链路无 thinking 参与(代码逻辑保留,可随时重新打开)。",
   "configuration.dsbAgent.compaction.triggerPct.description": "流水线触发比例:某块 token 达到额定×该比例时触发压缩(默认 0.75)。",
   "configuration.dsbAgent.compaction.targetPct.description": "压缩后目标比例:触发后收缩到额定×该比例(滞回,默认 0.5,须小于 triggerPct)。",
   "configuration.dsbAgent.stats.enabled.description": "启用本地使用统计(关闭后不再记录任何统计事件)。",
