@@ -9,7 +9,7 @@ import {
   parseCompactedBlock,
   mergeCompactedTracks,
   estimateBlockChars,
-  collapseOldestExplanations,
+  collapseTailExplanations,
   truncateParts,
   THINKING_COMPACTION_RULES,
   buildThinkingBlock,
@@ -444,13 +444,13 @@ export class ContextManager {
       return parts;
     }
     let current = parts;
-    // 阶段 1:解释轨最旧一半再摘要(低预算)
+    // 阶段 1:解释轨「尾部(该次新增)一半」再摘要 —— 只动块尾,旧稳定行不重写,前缀字节稳定。
     if (current.explanations.length > 0) {
-      const { keep, oldestText, oldestSeq } = collapseOldestExplanations(current.explanations);
-      if (oldestText && oldestSeq > 0) {
+      const { keep, tailText, tailSeq } = collapseTailExplanations(current.explanations);
+      if (tailText && tailSeq > 0) {
         const budget = Math.max(100, Math.floor((this.opts.maxCompactTextTokens ?? 800) / 4));
-        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget }, "resummarize");
-        const line = `- [r${oldestSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
+        const summary = await this.trackedSummarize(tailText, { maxTokens: budget }, "resummarize");
+        const line = `- [r${tailSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
         current = { ...current, explanations: [...keep, line] };
         if (estimateBlockChars(current) <= maxChars) {
           return current;
@@ -603,18 +603,18 @@ export class ContextManager {
 
   /**
    * 预算模式压缩块收缩:目标与硬上限都是 budgetTokens(token 口径),无 4× 扩容。
-   * 三段式:① 最旧解释段再摘要 → ② 截断超长行 → ③ 按 seq 最旧截断轨道行(兜底)。
+   * 三段式:① 尾部解释段再摘要 → ② 截断超长行 → ③ 按 seq 尾部截断轨道行(只删尾部,稳定段前缀字节不变)。
    */
   private async ensureBlockFitsTokens(parts: CompactBlockParts, budgetTokens: number): Promise<CompactBlockParts> {
     if (this.blockTokens(parts) <= budgetTokens) return parts;
     let current = parts;
-    // 阶段 1:解释轨最旧一半再摘要(低预算)
+    // 阶段 1:解释轨「尾部(该次新增)一半」再摘要 —— 只动块尾,旧稳定行不重写,前缀字节稳定。
     if (current.explanations.length > 0) {
-      const { keep, oldestText, oldestSeq } = collapseOldestExplanations(current.explanations);
-      if (oldestText && oldestSeq > 0) {
+      const { keep, tailText, tailSeq } = collapseTailExplanations(current.explanations);
+      if (tailText && tailSeq > 0) {
         const budget = Math.max(100, Math.floor((this.opts.maxCompactTextTokens ?? 800) / 4));
-        const summary = await this.trackedSummarize(oldestText, { maxTokens: budget }, "resummarize");
-        const line = `- [r${oldestSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
+        const summary = await this.trackedSummarize(tailText, { maxTokens: budget }, "resummarize");
+        const line = `- [r${tailSeq}] 再摘要:${summary.replace(/\s+/g, " ").trim()}`;
         current = { ...current, explanations: [...keep, line] };
         if (this.blockTokens(current) <= budgetTokens) return current;
       }
@@ -622,11 +622,11 @@ export class ContextManager {
     // 阶段 2:截断超长行
     const truncated = truncateParts(current, 240);
     if (this.blockTokens(truncated) <= budgetTokens) return truncated;
-    // 阶段 3:按 seq 最旧截断轨道行(保留需求/结论原文优先,先删履历/最旧行)
+    // 阶段 3:按 seq 尾部(最新)截断轨道行(保留旧稳定段,先删尾部行)
     return this.trimTracksToBudget(truncated, budgetTokens);
   }
 
-  /** 按 seq 最旧优先删除轨道行,直到压缩块 token ≤ 预算(尽力而为,不保证必达)。 */
+  /** 按 seq 最新(尾部)优先删除轨道行,直到压缩块 token ≤ 预算。只删尾部,稳定段前缀字节不变。 */
   private trimTracksToBudget(parts: CompactBlockParts, budgetTokens: number): CompactBlockParts {
     let current = parts;
     let guard = 0;
@@ -637,7 +637,7 @@ export class ContextManager {
         for (const line of current[track]) all.push({ track, line, seq: rSeq(line) });
       }
       if (all.length === 0) break;
-      all.sort((a, b) => a.seq - b.seq);
+      all.sort((a, b) => b.seq - a.seq); // 删尾部:优先删最新 seq,稳定段(旧行)字节不变
       const victim = all[0];
       current = {
         ...current,

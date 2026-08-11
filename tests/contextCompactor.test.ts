@@ -132,10 +132,11 @@ describe("buildCompactedBlock / isCompactedBlock", () => {
     expect(block).toContain("## 工具履历");
     expect(isCompactedBlock(block)).toBe(true);
   });
-  it("omits empty tracks", () => {
+  it("always emits section titles even for empty tracks (缓存前缀稳定)", () => {
     const block = buildCompactedBlock({ demands: [], conclusions: [], explanations: [], ledger: ["- [r2] Bash: npm test"] });
-    expect(block).not.toContain("## 需求");
-    expect(block).not.toContain("## 结论");
+    expect(block).toContain("## 需求");
+    expect(block).toContain("## 结论");
+    expect(block).toContain("## 说明");
     expect(block).toContain("## 工具履历");
   });
   it("rejects plain text as compacted block", () => {

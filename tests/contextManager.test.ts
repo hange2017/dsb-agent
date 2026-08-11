@@ -231,8 +231,8 @@ describe("ContextManager", () => {
     ];
     const out = await cm.compact(msgs);
     const content = out[0].content as string;
-    // 收缩后块长度受控
-    expect(content.length).toBeLessThanOrEqual(2000);
+    // 收缩后块长度受控(re-summarize 只压新增尾部、保留旧行 → 首次压缩走 hardMax 扩容, 仍 ≤8K)
+    expect(content.length).toBeLessThanOrEqual(8000);
     // 需求/结论原文保留
     expect(content).toContain("需求:精简输出");
     expect(content).toContain("开场结论");
@@ -897,11 +897,13 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
     const block = second[0].content as string;
     expect(block).toContain("[compacted]");
     expect(estimateTokens(block)).toBeLessThanOrEqual(Math.floor(400 * 0.45 * 0.5));
-    // 增量合并:新段行 seq 推进(第二轮 fresh 行号 ≥ 7);预算内滚动剔除最旧(旧 r1 行已删)
-    expect(block).toContain("- [r13]");
-    expect(block).not.toContain("- [r1]");
+    // 增量合并 + 只删尾部:预算内滚动剔除增量段最新行(r7..r14 中新 seq 被裁),
+    // 最旧稳定行 r1 保留(前缀字节稳定);极低预算下块可被削到只剩 r1。
+    expect(block).toContain("- [r1]");
+    expect(block).not.toContain("- [r13]");
     const maxSeq = Math.max(...[...block.matchAll(/\[r(\d+)\]/g)].map((m) => Number(m[1])), 0);
-    expect(maxSeq).toBeGreaterThanOrEqual(13);
+    // 块内任意行号都来自首轮的稳定段(r1..r6),绝不含本轮新增尾部 r7+
+    expect(maxSeq).toBeLessThanOrEqual(6);
   });
 });
 

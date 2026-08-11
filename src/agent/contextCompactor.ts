@@ -329,10 +329,11 @@ export function mergeCompactedTracks(prev: CompactBlockParts, next: CompactBlock
   };
 }
 
-function track(title: string, lines: string[]): string[] {
-  if (lines.length === 0) {
-    return [];
-  }
+function track(title: string, lines: string[], includeEmptyTitle = true): string[] {
+  // 标题恒输出:即使某轨为空也保留标题行,避免「由空变非空」时在块中部插入标题行
+  // 导致其后所有行号后移(缓存前缀断裂)。空轨仅含标题,parseCompactedBlock 仍能正确判空。
+  // includeEmptyTitle=false 时(thinking 块)保持旧行为:空轨不输出标题。
+  if (lines.length === 0 && !includeEmptyTitle) return [];
   return [`## ${title}`, ...lines];
 }
 
@@ -453,6 +454,31 @@ export function collapseOldestExplanations(
   };
 }
 
+/**
+ * 把「最新一半」解释行(即尾部/该次新增部分)合并为纯文本,供再次 summarize。
+ * 返回 keep 为最旧一半(稳定段,原样保留);拼接时旧行位置不变,仅块尾被压缩,
+ * 跨压缩轮次前缀字节稳定(只增尾部/只删尾部)。适用于增量压缩场景。
+ */
+export function collapseTailExplanations(
+  lines: string[],
+): { keep: string[]; tailText: string; tailSeq: number } {
+  const { oldest, newest } = splitByAge(lines);
+  if (newest.length === 0) {
+    // 解释轨只有最旧一段(无区分度,如首次压缩或整组同 seq):视整组即「尾部」
+    // (该次新增),压缩全部以让块可收敛;此时无历史稳定行可保,不破坏前缀稳定。
+    const strip = (line: string): string => line.replace(/^-\s*\[r\d+\]\s*/, "");
+    const tailSeq = oldest.length > 0 ? lineSeq(oldest[0]) : 0;
+    return { keep: [], tailText: oldest.map(strip).join("\n\n"), tailSeq };
+  }
+  const strip = (line: string): string => line.replace(/^-\s*\[r\d+\]\s*/, "");
+  const tailSeq = lineSeq(newest[0]);
+  return {
+    keep: oldest,
+    tailText: newest.map(strip).join("\n\n"),
+    tailSeq,
+  };
+}
+
 /** 超长行截断至 maxLine(逐行,不合并)。 */
 export function truncateLongLines(lines: string[], maxLine = 240): string[] {
   return lines.map((l) => (l.length > maxLine ? l.slice(0, maxLine) + "…" : l));
@@ -509,9 +535,9 @@ interface ThinkingEntry {
 export function buildThinkingBlock(parts: ThinkingBlockParts): string {
   const sections = [
     "[thinking]",
-    ...track("正确", parts.correct),
-    ...track("错误", parts.wrong),
-    ...track("中性", parts.neutral),
+    ...track("正确", parts.correct, false),
+    ...track("错误", parts.wrong, false),
+    ...track("中性", parts.neutral, false),
   ];
   return sections.join("\n");
 }
