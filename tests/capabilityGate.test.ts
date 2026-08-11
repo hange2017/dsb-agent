@@ -68,6 +68,24 @@ describe("prepareRound", () => {
     expect(out.toolParallelMode).toBe("serial");
     expect(out.maxTokens).toBeLessThan(8192);
   });
+
+  it("derives thinkingBudgetTokens from thinkingLevel when not explicit", () => {
+    const out = prepareRound({
+      caps: { supportsVision: true, supportsThinking: true, thinkingLevel: "high" },
+      messages: [{ role: "user", content: "a" }],
+      lastInputTokens: 100,
+    });
+    expect(out.thinkingBudgetTokens).toBe(16384);
+  });
+
+  it("explicit thinkingBudgetTokens wins over thinkingLevel", () => {
+    const out = prepareRound({
+      caps: { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 2048, thinkingLevel: "low" },
+      messages: [{ role: "user", content: "a" }],
+      lastInputTokens: 100,
+    });
+    expect(out.thinkingBudgetTokens).toBe(2048);
+  });
 });
 
 describe("sanitizeOutbound", () => {

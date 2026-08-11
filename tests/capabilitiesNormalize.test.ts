@@ -3,6 +3,7 @@ import {
   normalizeCapabilities,
   normalizeCapabilityOverrides,
   toPersistedCapabilities,
+  effectiveThinkingBudgetTokens,
 } from "../src/providers/capabilities";
 
 describe("normalizeCapabilities", () => {
@@ -93,5 +94,41 @@ describe("toPersistedCapabilities", () => {
       supportsThinking: true,
       thinkingBudgetTokens: 4096,
     });
+  });
+});
+
+describe("thinkingLevel", () => {
+  it("normalizes thinkingLevel and keeps it in caps", () => {
+    expect(normalizeCapabilities({ supportsVision: false, supportsThinking: true, thinkingLevel: "high" })).toEqual({
+      supportsVision: false,
+      supportsThinking: true,
+      thinkingLevel: "high",
+    });
+    expect(normalizeCapabilities({ supportsVision: false, thinkingLevel: "bogus" }).thinkingLevel).toBeUndefined();
+  });
+
+  it("persists thinkingLevel via toPersistedCapabilities", () => {
+    expect(
+      toPersistedCapabilities({ supportsVision: false, supportsThinking: true, thinkingLevel: "medium" }),
+    ).toEqual({ supportsVision: false, supportsThinking: true, thinkingLevel: "medium" });
+  });
+
+  it("effectiveThinkingBudgetTokens prefers explicit budget over level", () => {
+    // 显式 budget 优先
+    expect(
+      effectiveThinkingBudgetTokens({ supportsVision: false, supportsThinking: true, thinkingBudgetTokens: 2048, thinkingLevel: "high" }),
+    ).toBe(2048);
+    // level 派生
+    expect(
+      effectiveThinkingBudgetTokens({ supportsVision: false, supportsThinking: true, thinkingLevel: "low" }),
+    ).toBe(1024);
+    expect(
+      effectiveThinkingBudgetTokens({ supportsVision: false, supportsThinking: true, thinkingLevel: "medium" }),
+    ).toBe(4096);
+    expect(
+      effectiveThinkingBudgetTokens({ supportsVision: false, supportsThinking: true, thinkingLevel: "high" }),
+    ).toBe(16384);
+    // 都不是 → undefined
+    expect(effectiveThinkingBudgetTokens({ supportsVision: false, supportsThinking: true })).toBeUndefined();
   });
 });

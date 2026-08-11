@@ -277,6 +277,9 @@ export function resolveCapabilities(
   if (contextWindowTokens !== undefined) out.contextWindowTokens = contextWindowTokens;
   if (maxOutputTokens !== undefined) out.maxOutputTokens = maxOutputTokens;
   if (thinkingBudgetTokens !== undefined) out.thinkingBudgetTokens = thinkingBudgetTokens;
+  const thinkingLevel =
+    override.thinkingLevel ?? remote.thinkingLevel ?? fromProfile.thinkingLevel ?? defaults.thinkingLevel;
+  if (thinkingLevel !== undefined) out.thinkingLevel = thinkingLevel;
   if (maxParallelTools !== undefined) out.maxParallelTools = maxParallelTools;
   if (toolParallelMode !== undefined) out.toolParallelMode = toolParallelMode;
   return out;

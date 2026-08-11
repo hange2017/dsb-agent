@@ -12,10 +12,12 @@ import * as vscode from "vscode";
  *                 set_active / set_api_key / refresh_models / set_capability / import_ccswitch
  */
 
-/** 供应商级能力(与 src/providers/types.ts 的 Capabilities 对齐,本地定义避免依赖)。 */
+/** 供应商级能力(与 src/providers/types.ts 能力对齐,本地定义避免依赖)。 */
 export interface ProviderCapabilities {
   supportsVision: boolean;
   supportsThinking: boolean;
+  /** 可选思考强度预设(low/medium/high);supportsThinking 时经 effectiveThinkingBudgetTokens 派生预算。 */
+  thinkingLevel?: "low" | "medium" | "high";
 }
 
 /** 面板渲染用的供应商视图。 */
@@ -108,7 +110,7 @@ export type ProviderPanelMessage =
   | { type: "set_active"; id: string }
   | { type: "set_api_key"; id: string; apiKey: string }
   | { type: "refresh_models"; providerId?: string }
-  | { type: "set_capability"; providerId: string; modelId: string; supportsVision?: boolean; supportsThinking?: boolean; vision?: boolean; thinking?: boolean }
+  | { type: "set_capability"; providerId: string; modelId: string; supportsVision?: boolean; supportsThinking?: boolean; thinkingLevel?: "low" | "medium" | "high"; vision?: boolean; thinking?: boolean }
   | { type: "import_ccswitch" }
   | { type: "test_connection"; providerId: string }
   | { type: "prompt_api_key"; id: string }
@@ -228,6 +230,7 @@ async function handleMessage(
         else if (raw.vision !== undefined) patch.supportsVision = raw.vision;
         if (raw.supportsThinking !== undefined) patch.supportsThinking = raw.supportsThinking;
         else if (raw.thinking !== undefined) patch.supportsThinking = raw.thinking;
+        if (raw.thinkingLevel !== undefined) patch.thinkingLevel = raw.thinkingLevel;
         await services.setCapabilityOverride(raw.providerId, raw.modelId, patch);
         await postState(panel, services);
         break;

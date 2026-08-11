@@ -34,6 +34,11 @@ export interface ModelCapabilities {
   maxOutputTokens?: number;
   /** 正整数;supportsThinking 时 client 发 enabled+budget_tokens。 */
   thinkingBudgetTokens?: number;
+  /**
+   * 思考强度预置("low"/"medium"/"high")。不同模型/baseUrl 支持情况不同,按模型能力动态设定。
+   * 与 thinkingBudgetTokens 二选一:显式给出 thinkingBudgetTokens 时以其为准;
+   * 否则由 effectiveThinkingBudgetTokens 按 level 派生预算。normalize 时两者都可保留。 */
+  thinkingLevel?: "low" | "medium" | "high";
   /** 同轮只读批最大并发;缺省 8;<=1 强制串行。 */
   maxParallelTools?: number;
   /** 工具并行策略;缺省 read_safe。 */

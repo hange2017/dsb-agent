@@ -21,6 +21,8 @@ import { DEFAULT_COMPAT_BASE_URL } from "../src/settings/providerChoices";
 export interface ProviderCapabilities {
   supportsVision: boolean;
   supportsThinking: boolean;
+  /** 可选思考强度预设(low/medium/high);supportsThinking 时派生思考预算。 */
+  thinkingLevel?: "low" | "medium" | "high";
 }
 
 export interface ProviderView {
@@ -69,7 +71,7 @@ type WebviewMessage =
   | { type: "set_active"; id: string }
   | { type: "set_api_key"; id: string; apiKey: string }
   | { type: "refresh_models"; providerId?: string }
-  | { type: "set_capability"; providerId: string; modelId: string; supportsVision?: boolean; supportsThinking?: boolean }
+  | { type: "set_capability"; providerId: string; modelId: string; supportsVision?: boolean; supportsThinking?: boolean; thinkingLevel?: "low" | "medium" | "high" }
   | { type: "import_ccswitch" }
   | { type: "test_connection"; providerId: string }
   | { type: "prompt_api_key"; id: string }
@@ -151,6 +153,28 @@ function checkbox(
   lab.append(box, document.createTextNode(label));
   return lab;
 }
+
+/** 下拉选择(思考强度用):label 文本 + select;动态更新选项与选中值。 */
+function select(
+  label: string,
+  current: string | undefined,
+  options: Array<{ value: string; text: string }>,
+  onChange: (value: string | undefined) => void,
+): HTMLLabelElement {
+  const sel = el("select");
+  sel.append(el("option", undefined, t("跟随模型预算(不预设)", locale)));
+  for (const opt of options) {
+    const o = el("option", undefined, opt.text);
+    o.value = opt.value;
+    sel.append(o);
+  }
+  sel.value = current ?? "";
+  sel.addEventListener("change", () => onChange(sel.value === "" ? undefined : sel.value));
+  const lab = el("label");
+  lab.append(document.createTextNode(label), sel);
+  return lab;
+}
+
 
 // ---- 点击位置弹窗(popover)----
 // 「配置 API Key」「编辑」在按钮点击位置弹出小窗直接输入保存,避免跳转/打断整体性。
@@ -368,13 +392,27 @@ function renderModels(models: ModelView[], activeProviderId?: string): void {
     row.append(el("span", "model-id", m.id));
     row.append(el("span", "model-src", m.source));
     const caps = el("div", "model-cap");
+    const thinkingCaps = m.capabilities;
+    const extras: HTMLElement[] = [];
+    if (thinkingCaps.supportsThinking) {
+      extras.push(
+        select(t("思考强度", locale), thinkingCaps.thinkingLevel, [
+          { value: "low", text: t("低", locale) },
+          { value: "medium", text: t("中", locale) },
+          { value: "high", text: t("高", locale) },
+        ], (next) => {
+          post({ type: "set_capability", providerId: activeProviderId, modelId: m.id, thinkingLevel: next });
+        }),
+      );
+    }
     caps.append(
-      checkbox("vision", m.capabilities.supportsVision, undefined, (next) => {
+      checkbox("vision", thinkingCaps.supportsVision, undefined, (next) => {
         post({ type: "set_capability", providerId: activeProviderId, modelId: m.id, supportsVision: next });
       }),
-      checkbox("thinking", m.capabilities.supportsThinking, undefined, (next) => {
+      checkbox("thinking", thinkingCaps.supportsThinking, undefined, (next) => {
         post({ type: "set_capability", providerId: activeProviderId, modelId: m.id, supportsThinking: next });
       }),
+      ...extras,
     );
     row.append(caps);
     modelList.append(row);

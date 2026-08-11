@@ -323,6 +323,11 @@ export const en: Record<string, string> = {
   "暂无供应商,请在上方新建。": "No providers yet. Create one above.",
   "请先创建并选择供应商。": "Create and select a provider first.",
   "暂无模型(远程拉取失败时回退内置预设)。点击「刷新模型」重试。": "No models (falls back to built-in presets on fetch failure). Click \"Refresh models\" to retry.",
+  "思考强度": "Thinking level",
+  "跟随模型预算(不预设)": "Follow model budget (no preset)",
+  "低": "Low",
+  "中": "Medium",
+  "高": "High",
 };
 
 /** 语言标签映射(设置面板下拉用)。 */

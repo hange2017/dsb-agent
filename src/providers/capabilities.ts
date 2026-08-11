@@ -5,6 +5,20 @@ export const kDefaultMaxOutputTokens = 8192;
 export const kDefaultMaxParallelTools = 8;
 export const kDefaultToolParallelMode = "read_safe" as const;
 
+/** 思考强度预置等级(与 thinkingBudgetTokens 二选一)。 */
+export type ThinkingLevel = "low" | "medium" | "high";
+
+/** level → 默认思考预算(tokens)。用于未显式给 thinkingBudgetTokens 时派生。 */
+export const kThinkingLevelBudget: Record<ThinkingLevel, number> = {
+  low: 1024,
+  medium: 4096,
+  high: 16384,
+};
+
+function normalizeThinkingLevel(v: unknown): ThinkingLevel | undefined {
+  return v === "low" || v === "medium" || v === "high" ? v : undefined;
+}
+
 const kDefaultCapabilities: ModelCapabilities = {
   supportsVision: false,
   supportsThinking: true,
@@ -42,12 +56,14 @@ export function normalizeCapabilities(raw: unknown): ModelCapabilities {
   const contextWindowTokens = positiveInt(o.contextWindowTokens);
   const maxOutputTokens = positiveInt(o.maxOutputTokens);
   const thinkingBudgetTokens = positiveInt(o.thinkingBudgetTokens);
+  const thinkingLevel = normalizeThinkingLevel(o.thinkingLevel);
   const maxParallelTools = positiveInt(o.maxParallelTools);
   const mode = toolParallelMode(o.toolParallelMode);
   const out: ModelCapabilities = { supportsVision, supportsThinking };
   if (contextWindowTokens !== undefined) out.contextWindowTokens = contextWindowTokens;
   if (maxOutputTokens !== undefined) out.maxOutputTokens = maxOutputTokens;
   if (thinkingBudgetTokens !== undefined) out.thinkingBudgetTokens = thinkingBudgetTokens;
+  if (thinkingLevel !== undefined) out.thinkingLevel = thinkingLevel;
   if (maxParallelTools !== undefined) out.maxParallelTools = maxParallelTools;
   if (mode !== undefined) out.toolParallelMode = mode;
   return out;
@@ -70,11 +86,13 @@ export function normalizeCapabilityOverrides(
     const contextWindowTokens = positiveInt(o.contextWindowTokens);
     const maxOutputTokens = positiveInt(o.maxOutputTokens);
     const thinkingBudgetTokens = positiveInt(o.thinkingBudgetTokens);
+    const thinkingLevel = normalizeThinkingLevel(o.thinkingLevel);
     const maxParallelTools = positiveInt(o.maxParallelTools);
     const mode = toolParallelMode(o.toolParallelMode);
     if (contextWindowTokens !== undefined) next.contextWindowTokens = contextWindowTokens;
     if (maxOutputTokens !== undefined) next.maxOutputTokens = maxOutputTokens;
     if (thinkingBudgetTokens !== undefined) next.thinkingBudgetTokens = thinkingBudgetTokens;
+    if (thinkingLevel !== undefined) next.thinkingLevel = thinkingLevel;
     if (maxParallelTools !== undefined) next.maxParallelTools = maxParallelTools;
     if (mode !== undefined) next.toolParallelMode = mode;
     if (Object.keys(next).length > 0) out[modelId] = next;
@@ -91,6 +109,7 @@ export function toPersistedCapabilities(caps: ModelCapabilities): ModelCapabilit
   if (caps.contextWindowTokens !== undefined) out.contextWindowTokens = caps.contextWindowTokens;
   if (caps.maxOutputTokens !== undefined) out.maxOutputTokens = caps.maxOutputTokens;
   if (caps.thinkingBudgetTokens !== undefined) out.thinkingBudgetTokens = caps.thinkingBudgetTokens;
+  if (caps.thinkingLevel !== undefined) out.thinkingLevel = caps.thinkingLevel;
   if (caps.maxParallelTools !== undefined) out.maxParallelTools = caps.maxParallelTools;
   if (caps.toolParallelMode !== undefined) out.toolParallelMode = caps.toolParallelMode;
   return out;
@@ -107,7 +126,9 @@ export function effectiveMaxOutputTokens(caps: ModelCapabilities): number {
 
 /** 正整数 thinking budget;缺省或非法时 undefined。 */
 export function effectiveThinkingBudgetTokens(caps: ModelCapabilities): number | undefined {
-  return positiveInt(caps.thinkingBudgetTokens);
+  const explicit = positiveInt(caps.thinkingBudgetTokens);
+  if (explicit !== undefined) return explicit;
+  return caps.thinkingLevel !== undefined ? kThinkingLevelBudget[caps.thinkingLevel] : undefined;
 }
 
 export function effectiveMaxParallelTools(caps: ModelCapabilities): number {
