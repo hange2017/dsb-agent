@@ -34,6 +34,7 @@
   "configuration.dsbAgent.compaction.thinking.description": "Processing-side thinking switch: when disabled, the model can still reason (requests carry a thinking budget), but produced thinking is stripped from history/compaction (not retained). Model-side thinking.enabled stays independent.",
   "configuration.dsbAgent.contextWindowTokens.description": "Max input length (context window) sent to the model; 0 follows the model capability (default). Overrides the window used for compaction trigger and output budget when > 0.",
   "configuration.dsbAgent.thinking.enabled.description": "Master thinking switch: when disabled, requests carry thinking.disabled, historical thinking is stripped, and thinking plays no part in the whole pipeline (logic retained, can be re-enabled anytime).",
+  "configuration.dsbAgent.thinking.level.description": "Global thinking intensity (low/medium/high) injected as the default level for models that have no model-level thinking level configured. Empty (unset) follows the model setting.",
   "configuration.dsbAgent.compaction.triggerPct.description": "Pipeline trigger ratio: compaction fires when a block reaches rated tokens × this ratio (default 0.75).",
   "configuration.dsbAgent.compaction.targetPct.description": "Post-compaction target ratio: blocks shrink to rated tokens × this ratio (hysteresis, default 0.5, must be < triggerPct).",
   "configuration.dsbAgent.stats.enabled.description": "Enable local usage statistics (when disabled, no statistics events are recorded).",
