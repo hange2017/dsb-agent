@@ -194,31 +194,6 @@
           "minimum": 0,
           "description": "%configuration.dsbAgent.contextWindowTokens.description%"
         },
-        "dsbAgent.thinking.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "%configuration.dsbAgent.thinking.enabled.description%"
-        },
-        "dsbAgent.thinking.level": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null,
-          "enum": [
-            null,
-            "low",
-            "medium",
-            "high"
-          ],
-          "enumDescriptions": [
-            "%configuration.dsbAgent.thinking.level.followModel%",
-            "%configuration.dsbAgent.thinking.level.low%",
-            "%configuration.dsbAgent.thinking.level.medium%",
-            "%configuration.dsbAgent.thinking.level.high%"
-          ],
-          "description": "%configuration.dsbAgent.thinking.level.description%"
-        },
         "dsbAgent.compaction.thinking": {
           "type": "boolean",
           "default": true,

@@ -100,29 +100,6 @@ export function injectTodoIntoMessages(messages: ProviderMessage[], todoBlock: s
 }
 
 
-/**
- * 功能级 thinking 总开关包装:把 provider 能力声明为不支持 thinking。
- * 关闭后整条链路自动收敛(无需改各调用点):
- * - round 请求:client 见 supportsThinking=false → 发 thinking.disabled;
- * - 历史消息:sanitizeOutbound 见 supportsThinking=false → 剥掉所有 thinking 块;
- * - prepareRound:不再分配 thinkingBudgetTokens(经 withThinkingDisabled 包装后为 undefined)。
- *
- * 注意:不能用 `{ ...provider }`——class 实例(FallbackClient/AnthropicMessagesClient)
- * 的 round 在原型上,展开后会变成 undefined → `provider.round is not a function`。
- */
-export function withThinkingDisabled(provider: ProviderClient): ProviderClient {
-  const caps: ModelCapabilities = { ...provider.capabilities, supportsThinking: false };
-  delete (caps as { thinkingBudgetTokens?: number }).thinkingBudgetTokens;
-  return {
-    get capabilities() {
-      return caps;
-    },
-    // 强制 thinkingDisabled:底层 class client 读的是自身 capabilities,不能靠展开覆盖
-    round: (messages, opts, onEvent) =>
-      provider.round(messages, { ...opts, thinkingDisabled: true }, onEvent),
-  };
-}
-
 // 兼容旧测试/调用方:stripThinkingBlocks 现定义在 capabilityGate。
 export { stripThinkingBlocks } from "./capabilityGate";
 
@@ -137,14 +114,12 @@ export class AgentSession {
   private readonly hooks?: HookRunner;
   /** 最近一次 send 的事件通道:thinking 压缩/对话轮次统计变化时推送 compaction_stats。 */
   private currentOnEvent: ((ev: AgentLoopEvent) => void) | undefined;
-  /** 实际使用的 provider:thinkingDisabled 时包装为无 thinking 能力,其余原样。 */
+  /** 实际使用的 provider(原样,无总开关包装)。 */
   private readonly effectiveProvider: ProviderClient;
 
   constructor(
     private readonly deps: {
       provider: ProviderClient;
-      /** 功能级 thinking 总开关:false 时整条链路(请求/响应/历史/压缩/QA)不出现 thinking;缺省 true。 */
-      thinkingDisabled?: boolean;
       /** 处理侧 thinking 开关:false 时「模型可先思考(请求仍带预算),但流程不处理 thinking」——产出的 thinking 剥离(不进历史/压缩/脉络),缺省 true。 */
       thinkingProcessEnabled?: boolean;
       tools: ToolExecutor;
@@ -211,11 +186,8 @@ export class AgentSession {
     },
   ) {
     this.todo = this.deps.todo ?? new TodoManager();
-    // thinkingDisabled 总开关:包装 provider 为无 thinking 能力(supportsThinking=false)。
-    // 由此 round 请求显式 thinking.disabled、sanitizeOutbound 剥历史 thinking、
-    // prepareRound 不注入 thinkingBudgetTokens、contextManager 关闭 thinking 收集——整条链路无 thinking 参与。
-    this.effectiveProvider =
-      this.deps.thinkingDisabled === true ? withThinkingDisabled(this.deps.provider) : this.deps.provider;
+    // 实际使用注入的 provider(思考能力由 provider.capabilities 决定)。
+    this.effectiveProvider = this.deps.provider;
     // 加载历史时先修复孤儿 tool_use,避免旧会话一发消息就 400
     this.messages.push(...repairToolUseResultPairs(this.deps.initialHistory ?? []));
     // 未注入 contextManager 时自建:用本会话 provider 单发一条"总结前文"请求,
@@ -525,7 +497,6 @@ export class AgentSession {
             // 处理侧关:即使模型产出了 thinking,也不进入压缩流程(剥离丢弃)
             this.contextManager.setThinkingEnabled?.(
               this.deps.thinkingProcessEnabled !== false &&
-                !this.deps.thinkingDisabled &&
                 thinkingEnabledForMode(mode),
             );
             const compacted = await this.contextManager.compact(this.messages);

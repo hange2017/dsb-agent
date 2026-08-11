@@ -24,8 +24,8 @@ export interface BudgetSplitView {
 }
 
 export interface AgentThinkingConfigView {
-  enabled: boolean;
-  level: "low" | "medium" | "high" | "";
+  /** 参数面板唯一 thinking 开关:处理侧是否开启 thinking 编排(镜像 dsbAgent.compaction.thinking)。 */
+  compact: boolean;
 }
 
 export interface AgentBudgetConfigView {
@@ -68,8 +68,7 @@ const targetPctInput = document.getElementById("targetPctInput") as HTMLInputEle
 const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement;
 const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLElement;
-const thinkingEnabledChk = document.getElementById("thinkingEnabledChk") as HTMLInputElement;
-const thinkingLevelSel = document.getElementById("thinkingLevelSel") as HTMLSelectElement;
+const thinkingCompactChk = document.getElementById("thinkingCompactChk") as HTMLInputElement;
 
 // 三个滑块当前值(整数百分比)
 let pct = { compacted: 45, thinking: 20, tail: 35 };
@@ -142,8 +141,7 @@ function currentConfig(): AgentBudgetConfigView {
     triggerPct: (Math.max(1, Math.min(100, Number(triggerPctInput.value) || 75)) / 100),
     targetPct: (Math.max(1, Math.min(100, Number(targetPctInput.value) || 50)) / 100),
     thinking: {
-      enabled: thinkingEnabledChk.checked,
-      level: (thinkingLevelSel.value as "" | "low" | "medium" | "high") || "",
+      compact: thinkingCompactChk.checked,
     },
   };
 }
@@ -169,10 +167,7 @@ triggerPctInput.addEventListener("change", () => {
 targetPctInput.addEventListener("change", () => {
   saveBtn.disabled = false;
 });
-thinkingEnabledChk.addEventListener("change", () => {
-  saveBtn.disabled = false;
-});
-thinkingLevelSel.addEventListener("change", () => {
+thinkingCompactChk.addEventListener("change", () => {
   saveBtn.disabled = false;
 });
 saveBtn.addEventListener("click", postSave);
@@ -210,8 +205,7 @@ window.addEventListener("message", (ev) => {
       budgetInput.value = String(cfg.budget);
       triggerPctInput.value = String(Math.round(cfg.triggerPct * 100));
       targetPctInput.value = String(Math.round(cfg.targetPct * 100));
-      thinkingEnabledChk.checked = cfg.thinking?.enabled ?? true;
-      thinkingLevelSel.value = cfg.thinking?.level || "";
+      thinkingCompactChk.checked = cfg.thinking?.compact ?? true;
       pct = {
         compacted: Math.round(cfg.split.compacted * 100),
         thinking: Math.round(cfg.split.thinking * 100),

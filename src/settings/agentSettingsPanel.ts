@@ -21,11 +21,10 @@ export interface BudgetSplit {
   tail: number;
 }
 
-/** 思考模式配置(全局):镜像 dsbAgent.thinking.enabled + dsbAgent.thinking.level。
- *  level 为 "" 表示未设置(跟随模型级)。 */
+/** 思考数据链路配置(参数面板唯一 thinking 开关):镜像 dsbAgent.compaction.thinking。
+ *  true = 处理侧开启 thinking 编排;模型是否有能力/强度由供应商界面的 supportsThinking 决定,不在此配置。 */
 export interface AgentThinkingConfig {
-  enabled: boolean;
-  level: "low" | "medium" | "high" | "";
+  compact: boolean;
 }
 
 /** 上下文预算配置(参数面板 5 项)。 */
@@ -96,11 +95,9 @@ export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetS
   return { compacted: c / sum, thinking: t / sum, tail: l / sum };
 }
 
-/** 归一化思考模式配置:非法 level 回退 ""(跟随模型),非法 enabled 回退 true。 */
+/** 归一化思考数据链路开关:非法/缺失回退 true(处理侧默认开启 thinking 编排)。 */
 export function normalizeThinkingConfig(t: Partial<AgentThinkingConfig> | undefined): AgentThinkingConfig {
-  const level = t && ["low", "medium", "high"].includes(t.level as string) ? (t.level as AgentThinkingConfig["level"]) : "";
-  const enabled = t ? t.enabled !== false : true;
-  return { enabled, level };
+  return { compact: t ? t.compact !== false : true };
 }
 
 /** 归一化 5 项配置:非法项回退默认;targetPct 须满足 0 < target < trigger ≤ 1。 */
@@ -111,7 +108,7 @@ export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): Ag
     split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     triggerPct: 0.75,
     targetPct: 0.5,
-    thinking: { enabled: true, level: "" },
+    thinking: { compact: true },
   };
   if (!cfg || typeof cfg !== "object") {
     return { ...def, split: { ...def.split }, thinking: { ...def.thinking } };

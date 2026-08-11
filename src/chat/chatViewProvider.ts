@@ -386,8 +386,6 @@ export class ChatViewProvider {
             targetPct: this.configuration.compactionTargetPct(),
             // 每会话独立统计:thinking 压缩频率(对话轮次 + 压缩次数,滑动窗口 100)
             stats: new CompactionStats(),
-            // 全链路 thinking 总开关:false 时请求不带 thinking 预算、响应 thinking 不保留(代码逻辑保留可重开)
-            thinkingDisabled: !this.configuration.thinkingEnabled(),
             // 处理侧 thinking 开关:false 时「模型可先思考(请求仍带预算),但流程不处理 thinking」——剥离产出(不进历史/压缩/脉络)
             thinkingProcessEnabled: this.configuration.compactionThinkingEnabled(),
             // 发送前打点:记录每次 provider.round 的消息组成 token(只记数字不记内容)

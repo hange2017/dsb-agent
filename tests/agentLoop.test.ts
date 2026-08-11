@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages, withThinkingDisabled } from "../src/agent/agentLoop";
+import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages } from "../src/agent/agentLoop";
 import { CompactionStats } from "../src/agent/compactionStats";
 import { PermissionManager } from "../src/agent/permission";
 import { PermissionRules } from "../src/agent/permissionRules";
@@ -917,77 +917,6 @@ describe("AgentSession thinking compaction wiring", () => {
     expect(stats.snapshot().totalConversations).toBe(1);
   });
 
-  it("thinkingDisabled wraps provider so requests carry no thinking budget and history thinking is stripped", async () => {
-    const seen: Array<{ thinkingBudgetTokens?: number; thinkingDisabled?: boolean }> = [];
-    const seenSystems: string[] = [];
-    const provider: ProviderClient = {
-      capabilities: { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 4096 },
-      async round(messages, opts) {
-        seen.push({
-          thinkingBudgetTokens: opts.thinkingBudgetTokens,
-          thinkingDisabled: opts.thinkingDisabled,
-        });
-        seenSystems.push(opts.system);
-        if (seenSystems.length === 1) {
-          return {
-            blocks: [{ type: "tool_use", id: "t1", name: "Read", input: { path: "/tmp/a" } }],
-            toolUses: [{ id: "t1", name: "Read", input: { path: "/tmp/a" } }],
-            usage: { inputTokens: 200000, outputTokens: 10 },
-          };
-        }
-        return { blocks: [{ type: "text", text: "S" }], toolUses: [] };
-      },
-    };
-    const session = new AgentSession({
-      provider,
-      tools: fakeTools({ Read: () => ({ ok: true, content: "x" }) }).tools,
-      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
-      workspaceRoot: "/tmp",
-      systemPrompt: "s",
-      thinkingDisabled: true,
-      initialHistory: thinkingHistory,
-    });
-    await session.send("g", () => {});
-    // wrapper:capabilities.supportsThinking=false → prepareRound 不分配 thinking 预算;
-    // 且 opts.thinkingDisabled=true 传给底层 client(class 实例自身 caps 不变)
-    expect(seen.length).toBeGreaterThan(0);
-    for (const c of seen) {
-      expect(c.thinkingBudgetTokens).toBeUndefined();
-      expect(c.thinkingDisabled).toBe(true);
-    }
-  });
-
-  it("withThinkingDisabled keeps round when provider is a class instance (spread 会丢掉原型方法)", async () => {
-    // 复现:FallbackClient/AnthropicMessagesClient 的 round 在原型上,{...provider} 后 round 变 undefined
-    class ClassProvider implements ProviderClient {
-      capabilities = { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 2048 };
-      async round(
-        _messages: ProviderMessage[],
-        _opts: {
-          system: string;
-          tools: ToolDef[];
-          signal?: AbortSignal;
-          maxTokens?: number;
-          thinkingBudgetTokens?: number;
-          thinkingDisabled?: boolean;
-          lastInputTokens?: number;
-        },
-        _onEvent: (ev: ProviderStreamEvent) => void,
-      ): Promise<ProviderRoundResult> {
-        return {
-          blocks: [{ type: "text" as const, text: "ok" }],
-          toolUses: [],
-          usage: { inputTokens: 0, outputTokens: 0 },
-        };
-      }
-    }
-    const wrapped = withThinkingDisabled(new ClassProvider());
-    expect(typeof wrapped.round).toBe("function");
-    expect(wrapped.capabilities.supportsThinking).toBe(false);
-    const result = await wrapped.round([], { system: "s", tools: [] }, () => {});
-    expect(result.blocks[0]).toEqual({ type: "text", text: "ok" });
-  });
-
   it("thinkingProcessEnabled=false decouples processing from model-side request budget", async () => {
     const seen: Array<{ thinkingDisabled?: boolean; thinkingBudgetTokens?: number }> = [];
     const allMessages: ProviderMessage[][] = [];
@@ -1017,7 +946,6 @@ describe("AgentSession thinking compaction wiring", () => {
       permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
       workspaceRoot: "/tmp",
       systemPrompt: "s",
-      thinkingDisabled: false,   // 模型侧重开
       thinkingProcessEnabled: false, // 处理侧关
       initialHistory: [],
     });

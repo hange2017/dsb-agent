@@ -202,11 +202,9 @@ export const en: Record<string, string> = {
   "压缩后目标": "Target ratio",
   "% (触发后收缩到额定×此比例,滞回)": "% (shrink to rated × this ratio after compaction)",
   "第二层细化(预留):压缩块内四轨 / thinking 分组 / tail 消息优先级 —— 待统计数据支撑后启用。": "Second level (reserved): inner tracks / thinking groups / tail priority — enabled once stats data supports it.",
-  // ---- 思考(thinking)模式 ----
-  "思考模式": "Thinking mode",
-  "强度": "Level",
-  "跟随模型": "Follow model",
-  "全局控制模型推理思考(thinking)模式与强度。": "Globally control the model's thinking mode and level.",
+  // ---- 思考(thinking)编排开关 ----
+  "思考编排": "Thinking orchestration",
+  "处理侧是否编排 thinking(推理脉络);模型是否有能力与强度由供应商设置决定。": "Whether to orchestrate thinking (reasoning trace) at processing time; model capability and intensity are decided by the provider settings.",
   "已保存上下文预算": "Context budget saved",
   "恢复默认参数": "Reset to defaults",
   "确认恢复默认?": "Confirm reset?",

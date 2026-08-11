@@ -67,16 +67,6 @@ export class Configuration {
   compactionThinkingEnabled(): boolean {
     return this.reader.getString("dsbAgent.compaction.thinking") !== "false";
   }
-  /** 全链路 thinking 总开关:false 时请求不带 thinking 预算、响应 thinking 不保留,整条链路无 thinking(代码逻辑保留,可重新打开)。缺省 true。 */
-  thinkingEnabled(): boolean {
-    return this.reader.getString("dsbAgent.thinking.enabled") !== "false";
-  }
-  /** 全局思考强度兜底:仅当模型未配置模型级思考强度/预算时生效;返回 low/medium/high 或 undefined(未设置,跟随模型)。 */
-  thinkingLevel(): "low" | "medium" | "high" | undefined {
-    const v = this.reader.getString("dsbAgent.thinking.level");
-    return v === "low" || v === "medium" || v === "high" ? v : undefined;
-  }
-
   /** 历史信息 token 总预算;缺省 150000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
   historyTokenBudget(): number {
     const raw = this.reader.getString("dsbAgent.compaction.historyTokenBudget");
