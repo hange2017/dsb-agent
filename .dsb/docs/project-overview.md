@@ -70,7 +70,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ### 6. 设置与面板 — `src/settings/` + `src/chat/todoPanel.ts` + `webview/`
 - `configuration.ts`:全部配置项读取;`apiKeyStore.ts`:密钥(SecretStorage);`providerChoices.ts` 供应商选择。
-- 面板:主聊天面板(`webview/index.html` + `main.ts` + `styles.css` + `chips.ts` + `format.ts` + `vim.ts`)、Agent 设置(`agentSettingsPanel`)、上下文浏览(`contextPanel`)、记忆(`memoryPanel`)、供应商设置(`providerSettings`)。
+- 面板:主聊天面板(`webview/index.html` + `main.ts` + `styles.css` + `chips.ts` + `format.ts` + `vim.ts`)、Agent 设置(`agentSettingsPanel`,含上下文预算 5 项 + 思考模式开关/强度)、上下文浏览(`contextPanel`)、记忆(`memoryPanel`)、供应商设置(`providerSettings`)。
 
 ### 7. 项目约定注入 — `src/projectContext/`
 - 首次进入项目自动生成 `.dsb/` 骨架(`ensureWorkspaceDsb.ts`)与框架文档 `project-overview.md`(`projectOverview.ts`,docs/ 下已有框架文档时跳过)。
