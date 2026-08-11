@@ -19,6 +19,7 @@ const defaultConfig = () => ({
   split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
   triggerPct: 0.75,
   targetPct: 0.5,
+  thinking: { enabled: true, level: "" as const },
 });
 
 /** 假面板:记录 postMessage,返回可 resolve 的 Thenable。 */
@@ -88,6 +89,7 @@ describe("normalizeConfig", () => {
       split: { compacted: 0.5, thinking: 0.2, tail: 0.3 },
       triggerPct: 0.8,
       targetPct: 0.4,
+      thinking: { enabled: true, level: "" as const },
     });
   });
 
@@ -112,6 +114,24 @@ describe("normalizeConfig", () => {
     expect(out.triggerPct).toBe(0.6);
     expect(out.targetPct).toBe(0.5);
     expect(normalizeConfig({ triggerPct: 0.6, targetPct: 0 } as never).targetPct).toBe(0.5);
+  });
+
+  it("normalizes thinking: keeps valid enabled/level, falls back invalid level, defaults missing", () => {
+    // 显式 enabled=false + level=medium → 保留
+    expect(normalizeConfig({ thinking: { enabled: false, level: "medium" } } as never).thinking).toEqual({
+      enabled: false,
+      level: "medium",
+    });
+    // 非法 level → 回退 ""(跟随模型)
+    expect(normalizeConfig({ thinking: { enabled: true, level: "turbo" } } as never).thinking.level).toBe("");
+    // 缺省 enabled → true
+    expect(normalizeConfig({ thinking: { level: "high" } } as never).thinking).toEqual({
+      enabled: true,
+      level: "high",
+    });
+    // 空对象/undefined → 默认
+    expect(normalizeConfig({ thinking: {} } as never).thinking).toEqual({ enabled: true, level: "" });
+    expect(normalizeConfig({ thinking: null } as never).thinking).toEqual({ enabled: true, level: "" });
   });
 });
 
@@ -144,6 +164,7 @@ describe("agentSettingsPanel handleMessage", () => {
           split: { compacted: 60, thinking: 20, tail: 20 },
           triggerPct: 0.8,
           targetPct: 0.4,
+          thinking: { enabled: true, level: "" as const },
         },
       },
       panel as never,
@@ -155,6 +176,7 @@ describe("agentSettingsPanel handleMessage", () => {
       split: { compacted: 0.6, thinking: 0.2, tail: 0.2 },
       triggerPct: 0.8,
       targetPct: 0.4,
+      thinking: { enabled: true, level: "" as const },
     });
     // 随后 postState(新预算) + toast
     const types = posted.map((m) => (m as { type: string }).type);
