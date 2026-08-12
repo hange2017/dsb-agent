@@ -4,6 +4,7 @@ import {
   planThinkingTrim,
   THINKING_TAIL_CHARS,
   THINKING_TRIM_MARKER,
+  THINKING_OLD_MARKER,
   THINKING_KEEP_RECENT_COUNT,
 } from "../src/agent/thinkingPolicy";
 import type { ProviderMessage } from "../src/agent/provider/types";
@@ -138,5 +139,19 @@ describe("planThinkingTrim v2: 条数上限(rank)", () => {
 
   it("old thinking with only blank lines keeps as-is", () => {
     expect(planThinkingTrim("  \n\n ", 5).action).toBe("keep");
+  });
+
+  it("P3: already-trimmed text (marker present) is idempotent, never re-trimmed", () => {
+    // 写前定型后的 thinking 已含精简标记:后续兜底(无论 rank 新旧)必须 keep,
+    // 否则「精简 → 再精简」两种字节形态会断裂缓存前缀。
+    const alreadyTrimmed = `${THINKING_TRIM_MARKER}\n所以改用方案 B`;
+    expect(planThinkingTrim(alreadyTrimmed, THINKING_KEEP_RECENT_COUNT + 2).action).toBe("keep");
+    expect(planThinkingTrim(alreadyTrimmed, 0).action).toBe("keep");
+    const alreadyOld = `${THINKING_OLD_MARKER}\n旧结论`;
+    expect(planThinkingTrim(alreadyOld, THINKING_KEEP_RECENT_COUNT + 2).action).toBe("keep");
+    expect(planThinkingTrim(alreadyOld, 0).action).toBe("keep");
+    // 长文本一旦已标记也不会再被截断
+    const bigTrimmed = `${THINKING_TRIM_MARKER}\n` + bigThinking(60);
+    expect(planThinkingTrim(bigTrimmed, 1).action).toBe("keep");
   });
 });

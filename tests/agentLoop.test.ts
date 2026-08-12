@@ -1346,6 +1346,44 @@ describe("AgentSession toolUse tail trimming", () => {
     const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
     expect(block.input).toEqual({ path: "a.ts" });
   });
+
+  it("P3: shapes trim-class tool_use at persist time (first entry), keeping prefix stable", async () => {
+    // 第一轮 provider 返回带大瞬时参数的 Write;落盘前(而非消费后发送前)就定型为最终形态,
+    // 使该块自首次进入前缀起字节恒定,根治「原始 → 精简」两次形态导致的缓存前缀断裂。
+    const { provider, calls } = fakeProvider([
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(500) } }],
+          toolUses: [{ id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(500) } }],
+        },
+      },
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+    });
+    await session.send("写文件", () => {});
+
+    // 第二轮发送的 messages 里 tool_use 已是定型形态(写前定型,非消费后改写)。
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const round2 = calls[1]!.messages;
+    const assistantMsg = round2.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
+    const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
+    expect(block.input.path).toBe("src/foo.ts");
+    expect(block.input.contents).toContain("[瞬时参数已省略");
+
+    // 第三轮形态不变:已定型块不因兜底 trimConsumedToolUses 二次改写。
+    await session.send("继续", () => {});
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    const round3 = calls[2]!.messages;
+    const assistantMsg3 = round3.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
+    const block3 = (assistantMsg3!.content as any[]).find((b) => b.type === "tool_use");
+    expect(block3.input.contents).toBe(block.input.contents);
+  });
 });
 
 describe("AgentSession thinking tail trimming", () => {
@@ -1453,6 +1491,43 @@ describe("AgentSession thinking tail trimming", () => {
     const recent = blocks.filter((t) => !t.startsWith("[thinking-old:"));
     // 其余 10 条:短 thinking(≤150)原样保留
     expect(recent.filter((t) => !t.startsWith("[thinking-trimmed")).length).toBe(10);
+  });
+
+  it("P3: shapes oversized thinking at persist time (first entry), keeping prefix stable", async () => {
+    // 第一轮 provider 返回超阈值 thinking;落盘前即定型(保留尾部结论),首次进入前缀即最终形态,
+    // 发送前 trimConsumedThinking 只做幂等兜底,不产生「原始 → 精简」二次形态。
+    const { provider, calls } = fakeProvider([
+      { result: { blocks: [{ type: "thinking", thinking: bigThinking() }], toolUses: [] } },
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+    });
+    await session.send("x", () => {});
+    expect(calls.length).toBe(1); // 首轮 thinking 无 tool_use → 直接 done
+
+    // 第二轮发送:thinking 已定型(保留尾部结论行 + 截断标记)。
+    await session.send("继续", () => {});
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const round2 = calls[1]!.messages;
+    const assistantMsg = round2.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "thinking"));
+    const block = (assistantMsg!.content as any[]).find((b) => b.type === "thinking");
+    expect(block.thinking).toContain("[thinking-trimmed");
+    expect(block.thinking).toContain("推理第 59 行");
+    expect(block.thinking).not.toContain("推理第 0 行");
+
+    // 第三轮形态不变:幂等兜底不再二次改写(planThinkingTrim 已含标记 → keep)。
+    await session.send("继续", () => {});
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+
+    const round3 = calls[2]!.messages;
+    const assistantMsg3 = round3.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "thinking"));
+    const block3 = (assistantMsg3!.content as any[]).find((b) => b.type === "thinking");
+    expect(block3.thinking).toBe(block.thinking);
   });
 });
 

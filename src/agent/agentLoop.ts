@@ -618,6 +618,23 @@ export class AgentSession {
           this.deps.thinkingProcessEnabled === false
             ? assistantBlocks.filter((b) => b.type !== "thinking")
             : assistantBlocks;
+        // P3 写前定型:trim 类 tool_use 瞬时参数与超阈值 thinking 在首次进入 messages 前
+        // 就定成最终形态(与 P1 tool_result 写前定型同理念),使该块自首次进入前缀起字节恒定;
+        // 发送前 trimConsumedToolUses/trimConsumedThinking 只做幂等兜底(已定型块不再二次改写),
+        // 根治「消费后中部改写 → 前缀断裂」。工具执行用 toolUses(独立对象),不受定型影响。
+        for (const b of persistBlocks) {
+          if (b.type === "tool_use") {
+            const plan = planToolUseTrim(b.name, b.input);
+            if (plan.action === "trim" && plan.trimmedInput !== undefined) {
+              b.input = plan.trimmedInput as Record<string, unknown>;
+            }
+          } else if (b.type === "thinking") {
+            const plan = planThinkingTrim(b.thinking, 0);
+            if (plan.action === "trim" && plan.trimmed !== undefined) {
+              b.thinking = plan.trimmed;
+            }
+          }
+        }
         this.messages.push({ role: "assistant", content: persistBlocks });
 
         if (toolUses.length === 0) {

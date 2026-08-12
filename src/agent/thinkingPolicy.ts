@@ -86,6 +86,11 @@ export function planThinkingTrim(
 ): { action: "keep" | "trim"; trimmed?: string } {
   const text = thinking ?? "";
   if (text.trim() === "") return { action: "keep" };
+  // 幂等保护:已含精简标记的文本视为已定型,禁止二次改写(否则已入前缀的块会再次变化,
+  // 造成「精简 → 再精简」两种字节形态 → 缓存前缀断裂)。
+  if (text.includes(THINKING_TRIM_MARKER) || text.includes(THINKING_OLD_MARKER)) {
+    return { action: "keep" };
+  }
   if (rankFromLatest >= THINKING_KEEP_RECENT_COUNT) {
     const last = lastNonEmptyLine(text);
     if (last === undefined) return { action: "keep" };
