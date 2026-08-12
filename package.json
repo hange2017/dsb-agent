@@ -237,6 +237,8 @@
   },
   "scripts": {
     "compile": "node esbuild.mjs",
+    "benchmark:build": "node benchmark/build.mjs",
+    "benchmark:smoke": "node benchmark/build.mjs && vitest run benchmark/smoke.test.ts",
     "watch": "node esbuild.mjs --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
