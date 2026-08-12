@@ -2,6 +2,21 @@
 
 DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);实现计划与设计说明见 `.dsb/plans/` 与 `.dsb/specs/`。
 
+## [0.2.1] — 2026-08-12
+
+### 修复
+
+- **Windows 兼容**:Glob 结果统一正斜杠相对路径(不再返回 `sub\file.ts` 反斜杠);marketplace 本地路径判断、rules 展示名归一化正斜杠;测试移除 `/tmp` 硬编码。
+
+### 文档
+
+- README 新增「真实编程使用统计数据」(平均每次调用费用置顶,含命中率/费用明细/官方单价口径),并同步英文版。
+- 历史信息总预算设置建议更新为「64K 即可运行,并非越大越好」。
+
+### 内部
+
+- CI 测试矩阵扩展到 Windows/macOS 三平台;vitest 使用 github-actions reporter 输出失败注解。
+
 ## [0.2.0] — 2026-08-12
 
 ### 新增
