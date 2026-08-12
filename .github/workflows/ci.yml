@@ -13,7 +13,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,12 +31,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 打包内置多平台 ripgrep(Linux CI 机器默认只装 linux 包;手动拉取其余平台,
-      # esbuild copyRipgrepBinary 会全部复制进 dist/bin,保证 Windows/macOS 用户有内置 rg)
+      # 拉取多平台 ripgrep 二进制(npm ci 只装当前平台包;手动补全其余平台,
+      # esbuild copyRipgrepBinary 会全部复制进 dist/bin,保证各平台打包产物带全平台 rg)。
+      # Windows runner 默认 shell 是 pwsh,这里显式用 bash(Git Bash)保证跨平台命令一致。
       - name: Fetch multi-platform ripgrep binaries
+        shell: bash
         run: |
           mkdir -p /tmp/rg node_modules/@vscode
-          for pkg in win32-x64 darwin-x64 darwin-arm64; do
+          for pkg in linux-x64 win32-x64 darwin-x64 darwin-arm64; do
             npm pack "@vscode/ripgrep-$pkg"@1.18.0 --pack-destination /tmp/rg >/dev/null 2>&1 || { echo "npm pack failed for $pkg"; exit 1; }
             tar -xzf /tmp/rg/vscode-ripgrep-$pkg-*.tgz -C /tmp/rg
             mkdir -p "node_modules/@vscode/ripgrep-$pkg"
@@ -53,15 +60,38 @@ jobs:
         run: npx vsce package --out dist/dsb-agent-ci.vsix
 
       - name: Verify vsix artifact
+        shell: bash
         run: |
           test -f dist/dsb-agent-ci.vsix
           ls -lh dist/dsb-agent-ci.vsix
-          unzip -l dist/dsb-agent-ci.vsix | grep -E "extension.js|webview/main.js|bin/rg" || true
+          # 跨平台检查 vsix(zip 格式)内关键产物存在(Windows/macOS 无 unzip,用 node 解析中心目录)
+          node -e '
+            const fs = require("fs");
+            const buf = fs.readFileSync("dist/dsb-agent-ci.vsix");
+            const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+            if (eocd < 0) throw new Error("not a zip: EOCD not found");
+            let i = buf.readUInt32LE(eocd + 16);
+            const names = [];
+            while (i < buf.length && buf.readUInt32LE(i) === 0x02014b50) {
+              const nameLen = buf.readUInt16LE(i + 28);
+              const extraLen = buf.readUInt16LE(i + 30);
+              const commentLen = buf.readUInt16LE(i + 32);
+              // 文件名紧跟 CD 条目固定头(46 字节)之后,不是 local header offset 处
+              names.push(buf.slice(i + 46, i + 46 + nameLen).toString());
+              i += 46 + nameLen + extraLen + commentLen;
+            }
+            const hit = (k) => names.some((n) => n.endsWith(k));
+            if (!hit("extension.js")) throw new Error("vsix missing extension.js");
+            if (!hit("webview/main.js")) throw new Error("vsix missing webview/main.js");
+            const rg = names.filter((n) => /bin\/[^/]*(rg|rg\.exe)/.test(n));
+            if (rg.length === 0) throw new Error("vsix missing bin/rg");
+            console.log("vsix OK: files=" + names.length + " rg=" + rg.join(","));
+          '
 
       - name: Upload vsix artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dsb-agent-vsix
+          name: dsb-agent-vsix-${{ matrix.os }}
           path: dist/dsb-agent-ci.vsix
           if-no-files-found: error
           retention-days: 7
@@ -89,7 +119,7 @@ jobs:
       - name: Fetch multi-platform ripgrep binaries
         run: |
           mkdir -p /tmp/rg node_modules/@vscode
-          for pkg in win32-x64 darwin-x64 darwin-arm64; do
+          for pkg in linux-x64 win32-x64 darwin-x64 darwin-arm64; do
             npm pack "@vscode/ripgrep-$pkg"@1.18.0 --pack-destination /tmp/rg >/dev/null 2>&1 || { echo "npm pack failed for $pkg"; exit 1; }
             tar -xzf /tmp/rg/vscode-ripgrep-$pkg-*.tgz -C /tmp/rg
             mkdir -p "node_modules/@vscode/ripgrep-$pkg"
