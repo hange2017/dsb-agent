@@ -2,6 +2,32 @@
 
 DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);实现计划与设计说明见 `.dsb/plans/` 与 `.dsb/specs/`。
 
+## [0.2.0] — 2026-08-12
+
+### 新增
+
+- **Thinking 全链路总开关**(默认开,可整体关闭)与处理侧开关:关闭时 thinking 剥离不进历史/压缩/脉络。
+- **思考强度预设** `thinkingLevel`(`low`/`medium`/`high`)派生预算;全局思考强度兜底注入与供应商默认能力(`supportsThinking` + `thinkingLevel`,缺省 `medium`)。
+- **Agent 设置面板「思考模式」卡片**:开关 + 强度下拉,配置读写并同步全局尾底强度。
+- **Thinking 关闭时预算归一化**:split 配置层归一化为两段(`compacted`+`tail`)并写入 agent 参数。
+- **缓存前缀稳定性 P0~P3**(详见 `.dsb/rules/cache-prefix-stability.md`):
+  - P0:todo 清单移出 system,改由 `TodoWrite` tool_result 尾部传播(前缀稳定段不再被清单状态打断)。
+  - P1:trim 类 tool_result 写入 messages 前定型(push 前定最终字节形态,消除"先原始后精简"两形态)。
+  - P2:压缩块只追加/只删尾部 + 标题恒输出,稳定段前缀字节恒定(re-summarize 只动尾部新增)。
+  - P3:trim 类 tool_use / 超阈值 thinking 写前定型 + `planThinkingTrim` 幂等保护。
+- **统计扩展**:`provider_send` 内容 hash 指纹与会话标识(方案 B,缓存前缀命中分析);压缩自身成本(`llmCalls`/`llmMs`/`selfTokens`)与 `provider_round` phase/roundMs;压缩质量抽查 `compactionQa` 开关;压缩雪崩量化脚本(`scripts/`)。
+
+### 修复
+
+- `capabilityGate` 修复孤儿/缺 id tool_use 配对,禁止 todo 并入 tool_result。
+- 压缩耗时实测统计存档与成本/雪崩综合分析落地(官方单价口径,`未命中×1.0 + 命中×0.02 + 输出×2.0` 元/M)。
+- 统计文档中文化并新增数据校验强制流程(官方对账前置)。
+
+### 内部
+
+- 固化缓存前缀稳定性规则(字节稳定三原则 + 缓存杀手清单 + 验证要求),并标记 P0~P3 实施状态。
+- 统计口径规则(全项目合并)、README 补充快速开始/安装置顶与绿色设置建议(超级权限 + 历史预算 256K)。
+
 ## [0.1.0] — 2026-08-10(首发布)
 
 ### 新增

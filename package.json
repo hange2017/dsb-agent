@@ -2,7 +2,7 @@
   "name": "dsb-agent",
   "displayName": "DSBAgent",
   "description": "基于 Anthropic Messages 兼容 API 的 VS Code 编码 Agent（DSBAgent；可对接任意兼容端点）",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "zhaoNingHan",
   "license": "MIT",
   "engines": {
