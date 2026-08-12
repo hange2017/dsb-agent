@@ -158,6 +158,8 @@ Copyright (c) 2026 ZhaoNingHan
 | [变更记录](CHANGELOG.md) | 版本演进与 commit 索引 |
 | [隐私说明](PRIVACY.md) | 数据流、本地存储、无遥测 |
 | [安全说明](SECURITY.md) | Bash / MCP / 权限门禁与已知限制 |
+| [打榜路线](.dsb/docs/benchmark/benchmark-roadmap.md) | 三个梯队打榜路线与执行阶段（SWE-bench-Live / Terminal-Bench 等） |
+| [打榜执行计划](.dsb/plans/2026-08-12-benchmark-execution-plan.md) | SWE-bench-Live Lite + Terminal-Bench 2.0 落地计划与 wrapper 架构 |
 
 ## 已知限制
 

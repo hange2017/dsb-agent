@@ -113,6 +113,10 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 | 密钥 | VS Code SecretStorage |
 | 会话文件 | `<globalStorage>/sessions/` 等 |
 
+## 打榜相关(Benchmark)
+
+项目正在按 [打榜路线](../docs/benchmark/benchmark-roadmap.md) 推进公开榜单评测,目标是用真实开放数据证明 DSBAgent 的"成本效率"差异化卖点(DeepSeek V4 Flash + ~95% 缓存命中率)。落地计划见 [2026-08-12-benchmark-execution-plan](../plans/2026-08-12-benchmark-execution-plan.md):将 `src/agent/` 引擎(不依赖 vscode,可 headless 运行)包装成 SWE-bench-Live / Terminal-Bench 2.0 的评测接口。
+
 ## 测试与验证
 
 - 单测:`npx vitest run`(100 文件 / 972 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(103 文件 / ~5.5MB)。
