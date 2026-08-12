@@ -51,7 +51,8 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Test
-        run: npm test
+        # github-actions reporter:失败测试以 ::error:: 输出,显示为 check annotation(便于从 API 定位平台差异)
+        run: npx vitest run --reporter=github-actions
 
       - name: Compile (esbuild)
         run: npm run compile
