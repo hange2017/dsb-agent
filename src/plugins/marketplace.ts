@@ -83,7 +83,8 @@ export class MarketplaceManager {
   }
 
   async add(source: string): Promise<MarketplaceEntry> {
-    if (source.startsWith("./") || source.startsWith("/")) {
+    if (source.startsWith("./") || source.startsWith("../") || path.isAbsolute(source)) {
+      // 本地路径:POSIX /abs、Windows C:\abs、UNC \\share 均命中(跨平台)
       return this.addLocal(source);
     }
     if (source.startsWith("npm:")) {
@@ -92,7 +93,8 @@ export class MarketplaceManager {
       await npmFetch(name, dest);
       return { name, path: dest };
     }
-    if (source.includes("/") && !source.startsWith("http")) {
+    if (source.includes("/") && !source.startsWith("http") && !/^[A-Za-z]:[\\/]/.test(source)) {
+      // owner/repo 快捷方式;排除 Windows 盘符路径(如 D:/x),避免误判为 git 仓库
       const name = source.split("/").pop() ?? "github";
       const dest = this.marketDir(name);
       if (!this.opts.git) throw new Error("git not available");

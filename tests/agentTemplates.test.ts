@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { parseAgentMd, loadAgentTemplates } from "../src/agent/agentTemplates";
 
@@ -20,7 +21,7 @@ describe("parseAgentMd", () => {
 
 describe("loadAgentTemplates", () => {
   let root: string;
-  beforeEach(() => { root = fs.mkdtempSync(path.join("/tmp", "dagt-")); });
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "dagt-")); });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it("loads project + user + plugin agents", () => {
