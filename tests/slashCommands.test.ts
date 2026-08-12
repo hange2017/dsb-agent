@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { parseCommandMd, loadCommandDir, SlashCommandIndex } from "../src/chat/slashCommands";
 
@@ -23,7 +24,7 @@ describe("parseCommandMd", () => {
 
 describe("loadCommandDir", () => {
   let root: string;
-  beforeEach(() => { root = fs.mkdtempSync(path.join("/tmp", "dcmd-")); });
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "dcmd-")); });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it("loads .md files in the dir, name from filename", () => {

@@ -34,6 +34,8 @@ function scanRulesDir(dir: string, displayBase: string, source: RuleEntry["sourc
     return [];
   }
   const out: RuleEntry[] = [];
+  // Windows 上 path.relative 返回反斜杠分隔(如 `.dsb\rules`),统一为正斜杠保证展示名跨平台字节一致
+  const base = displayBase.split(path.sep).join("/");
   for (const name of entries.sort((a, b) => a.localeCompare(b))) {
     if (!name.endsWith(".md")) continue;
     let content: string;
@@ -42,7 +44,7 @@ function scanRulesDir(dir: string, displayBase: string, source: RuleEntry["sourc
     } catch {
       continue; // 单个规则文件不可读,跳过
     }
-    out.push({ name: `${displayBase}/${name}`, content, source });
+    out.push({ name: `${base}/${name}`, content, source });
   }
   return out;
 }
