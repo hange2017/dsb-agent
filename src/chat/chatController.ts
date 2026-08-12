@@ -1367,6 +1367,12 @@ export class ChatController {
     this.pendingDocumentCount = 0;
     this.currentChips = [];
     this.todo.replaceAll(this.deps.sessionStore.loadTodos(id));
+    // replaceAll 会同步已完成项内嵌的 - [ ] → - [x];立刻落盘,避免重启后旧脏清单再次误导模型
+    try {
+      this.deps.sessionStore.saveTodos(id, this.todo.list());
+    } catch {
+      // 清单落盘失败不阻断加载
+    }
     this.sessionUiState.setLastSessionId(id);
     this.post({ type: "reset" });
     // 历史重放边界标记:webview 据此进入/退出「缓存模式」,初始只渲染最近 3 轮,

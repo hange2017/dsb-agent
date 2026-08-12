@@ -1505,7 +1505,7 @@ describe("clampHistoryTokenBudget", () => {
   });
 });
 
-describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定性)", () => {
+describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不进 system、绝不追加伪 user)", () => {
   it("injectTodoIntoMessages: 尾部为 user 时合并入最后一条 content", () => {
     const base: ProviderMessage[] = [
       { role: "assistant", content: [{ type: "text", text: "hi" }] },
@@ -1516,19 +1516,16 @@ describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定�
     const last = out[out.length - 1];
     expect(last.role).toBe("user");
     expect(last.content).toBe("## 任务清单\n- [ ] a (t1)\n\nsee");
-    // 不修改入参
     expect(base[1].content).toBe("see");
   });
 
-  it("injectTodoIntoMessages: 尾部为 assistant 时追加独立 user 消息", () => {
+  it("injectTodoIntoMessages: 尾部为 assistant 时不注入,原样返回(绝不追加伪 user)", () => {
     const base: ProviderMessage[] = [
       { role: "user", content: "q" },
       { role: "assistant", content: [{ type: "text", text: "a" }] },
     ];
     const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] b (t2)");
-    expect(out).toHaveLength(3);
-    const last = out[out.length - 1];
-    expect(last).toEqual({ role: "user", content: "## 任务清单\n- [ ] b (t2)" });
+    expect(out).toEqual(base);
   });
 
   it("injectTodoIntoMessages: 尾部为 block 数组 user 时按 text block 前置", () => {
@@ -1536,6 +1533,7 @@ describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定�
       { role: "user", content: [{ type: "text", text: "see" }] },
     ];
     const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] c (t3)");
+    expect(out).toHaveLength(1);
     const last = out[out.length - 1];
     expect(last.role).toBe("user");
     expect(last.content).toEqual([
@@ -1544,8 +1542,7 @@ describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定�
     ]);
   });
 
-  it("injectTodoIntoMessages: 绝不并入 tool_result 消息(否则 tool_use 后紧跟非纯 tool_result → API 400)", () => {
-    // 复现 messages.N: tool_use without tool_result immediately after
+  it("injectTodoIntoMessages: tool_result 后不注入(避免伪用户发言 + API 400)", () => {
     const base: ProviderMessage[] = [
       {
         role: "assistant",
@@ -1557,21 +1554,18 @@ describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定�
       },
     ];
     const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] x (t9)");
-    expect(out).toHaveLength(3);
-    // tool_result 消息保持纯净
+    expect(out).toHaveLength(2);
     expect(out[1]).toEqual(base[1]);
-    expect(out[2]).toEqual({ role: "user", content: "## 任务清单\n- [ ] x (t9)" });
   });
 
-  it("injectTodoIntoMessages: 空块或空消息时原样返回/新增", () => {
+  it("injectTodoIntoMessages: 空块或空消息时原样返回", () => {
     expect(injectTodoIntoMessages([{ role: "user", content: "hi" }], "")).toEqual([
       { role: "user", content: "hi" },
     ]);
-    const seeded = injectTodoIntoMessages([], "## 任务清单\n- [ ] d (t4)");
-    expect(seeded).toEqual([{ role: "user", content: "## 任务清单\n- [ ] d (t4)" }]);
+    expect(injectTodoIntoMessages([], "## 任务清单\n- [ ] d (t4)")).toEqual([]);
   });
 
-  it("系统发送时 system 不再含 todo,且尾部 user 消息注入最新清单", async () => {
+  it("首轮 system 不含 todo,尾部 user 消息注入最新清单", async () => {
     const { provider, calls } = fakeProvider([
       { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
     ]);
@@ -1587,14 +1581,85 @@ describe("todo 移出 system → 注入请求包尾部 (P0: 缓存前缀稳定�
     });
     await session.send("hello", () => {});
     const sent = calls[0].messages;
-    // system 不注入 todo(由 fakeProvider 直接透传 system 给断言前我们先验证 messages)
-    // 尾部 user 消息被注入了最新清单
     const last = sent[sent.length - 1];
     expect(last.role).toBe("user");
     expect(last.content).toBe("## 任务清单\n- [ ] 第一步 (t1)\n\nhello");
-    // 清单内容保持在尾部消息内,之前的历史 messages 不含 任务清单 文本
     const head = sent.slice(0, -1);
     expect(JSON.stringify(head)).not.toContain("任务清单");
+  });
+
+  it("工具轮次:不注入清单,messages 尾部保持纯 tool_result,system 无后缀", async () => {
+    const systems: string[] = [];
+    const messageSnapshots: ProviderMessage[][] = [];
+    let i = 0;
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true },
+      async round(messages, opts): Promise<ProviderRoundResult> {
+        messageSnapshots.push(JSON.parse(JSON.stringify(messages)));
+        systems.push(opts.system ?? "");
+        const script: ProviderRoundResult[] = [
+          {
+            blocks: [
+              { type: "text", text: "先读一下" },
+              { type: "tool_use", id: "c1", name: "Read", input: { path: "a.ts" } },
+            ],
+            toolUses: [{ id: "c1", name: "Read", input: { path: "a.ts" } }],
+          },
+          { blocks: [{ type: "text", text: "done" }], toolUses: [] },
+        ];
+        return script[Math.min(i++, script.length - 1)];
+      },
+    };
+    const todo = new TodoManager();
+    todo.add("修 t5");
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({
+        Read: () => ({ ok: true, content: "ok" }),
+      }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "base-system",
+      todo,
+    });
+    await session.send("请修", () => {});
+    expect(messageSnapshots).toHaveLength(2);
+    expect(JSON.stringify(messageSnapshots[0])).toContain("任务清单");
+    expect(systems[0]).toBe("base-system");
+    const round2 = messageSnapshots[1];
+    const last2 = round2[round2.length - 1];
+    expect(last2.role).toBe("user");
+    expect(JSON.stringify(last2.content)).toContain("tool_result");
+    expect(JSON.stringify(last2.content)).not.toContain("任务清单");
+    // system 无动态后缀:todo 是会话内动态内容,进 system 会打断 tools+messages 前缀(规则 1)
+    expect(systems[1]).toBe("base-system");
+  });
+
+  it("全部完成后不再向请求注入任务清单", async () => {
+    const systems: string[] = [];
+    const messageSnapshots: ProviderMessage[][] = [];
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true },
+      async round(messages, opts): Promise<ProviderRoundResult> {
+        messageSnapshots.push(JSON.parse(JSON.stringify(messages)));
+        systems.push(opts.system ?? "");
+        return { blocks: [{ type: "text", text: "ok" }], toolUses: [] };
+      },
+    };
+    const todo = new TodoManager();
+    const it = todo.add("已做完");
+    todo.update(it.id, true);
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "base-system",
+      todo,
+    });
+    await session.send("继续", () => {});
+    expect(JSON.stringify(messageSnapshots[0])).not.toContain("任务清单");
+    expect(systems[0]).toBe("base-system");
   });
 });
 

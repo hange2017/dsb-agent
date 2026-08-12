@@ -166,6 +166,19 @@ describe("ToolExecutor", () => {
     expect(out.length).toBeLessThanOrEqual(100);
     expect(out).toContain("...[truncated]...");
   });
+
+  it("TodoWrite add/update returns full latest list as tool_result (tail propagation)", async () => {
+    const added = await exec.execute("TodoWrite", { op: "add", content: "第一步" }, { workspaceRoot: tmp });
+    expect(added.ok).toBe(true);
+    expect(added.content).toBe("## 任务清单\n- [ ] 第一步 (t1)");
+    const second = await exec.execute("TodoWrite", { op: "add", content: "第二步" }, { workspaceRoot: tmp });
+    expect(second.content).toBe("## 任务清单\n- [ ] 第一步 (t1)\n- [ ] 第二步 (t2)");
+    const updated = await exec.execute("TodoWrite", { op: "update", id: "t1", done: true }, { workspaceRoot: tmp });
+    expect(updated.ok).toBe(true);
+    expect(updated.content).toBe("## 任务清单\n- [x] 第一步 (t1)\n- [ ] 第二步 (t2)");
+    const listed = await exec.execute("TodoWrite", { op: "list" }, { workspaceRoot: tmp });
+    expect(listed.content).toBe(updated.content);
+  });
 });
 
 describe("Memory tools (executor routes)", () => {

@@ -71,23 +71,28 @@ export function clampHistoryTokenBudget(budget: number | undefined, windowTokens
 /** 摘要请求失败时的兜底文本:压缩永远不阻断主循环。 */
 const FALLBACK_SUMMARY = "已省略前文对话。";
 
+/** todo 注入:能并入普通 user 则改 messages 尾部;否则不注入(绝不进 system、绝不追加伪 user)。 */
+export type TodoInjection = ProviderMessage[];
+
 /**
- * 把最新任务清单(todo)注入到请求包尾部,作为独立 user 消息(或合并进尾部 user 消息)。
- * 目的:让 todo 从 system 移出,变化点落在消息尾部——todo 之前的全部前缀
- * (base system + 工具定义 + 历史消息)跨轮稳定,仍可被缓存前缀单元命中。
- * - 尾部已是普通 user 时合并进去,避免产生连续 user 消息;否则追加独立 user 消息。
- * - 绝不能并入 tool_result 消息:API 要求 tool_use 后紧跟的 user 只能含 tool_result。
- * - 不修改入参数组,返回新数组;todo 本身不进持久历史。
+ * 把最新任务清单(todo)注入到本轮请求。
+ * 目的:变化点尽量落在消息尾部——能并入普通 user 时合并,todo 之前的前缀跨轮稳定可缓存。
+ * - 尾部已是普通 user(非 tool_result)时合并进去(首轮常见路径)。
+ * - 尾部为 assistant / tool_result / 空:不注入,原样返回。绝不追加独立 user 消息
+ *   (模型会把每轮清单当成「用户又发了一句」反复复述;且 tool_result 后的 user 只能含
+ *   tool_result,否则 API 400);绝不挂 system 后缀(todo 是会话内动态内容,system 字节
+ *   变化 = tools + messages 前缀全 miss,违反缓存前缀稳定性规则 1)。
+ *   清单最新状态改由 TodoWrite 的 tool_result(消息尾部)传播。
+ * - 不修改入参数组;todo 本身不进持久历史。
  */
-export function injectTodoIntoMessages(messages: ProviderMessage[], todoBlock: string): ProviderMessage[] {
+export function injectTodoIntoMessages(messages: ProviderMessage[], todoBlock: string): TodoInjection {
   if (todoBlock.length === 0) return messages;
   const last = messages[messages.length - 1];
-  if (!last || last.role !== "user") {
-    return [...messages, { role: "user", content: todoBlock }];
-  }
+  // 尾部为 assistant / 空:不注入
+  if (!last || last.role !== "user") return messages;
   // tool_result 消息必须保持纯净(仅 tool_result 块),否则 DeepSeek/Anthropic 报 400
   if (typeof last.content !== "string" && last.content.some((b) => b.type === "tool_result")) {
-    return [...messages, { role: "user", content: todoBlock }];
+    return messages;
   }
   const merged = messages.slice(0, -1);
   const content = last.content;
@@ -529,10 +534,10 @@ export class AgentSession {
           this.trimConsumedToolUses();
           this.trimConsumedThinking();
           await this.trimConsumedToolResults();
-          // 每轮把任务清单注入到请求包尾部,base system + 历史消息保持稳定前缀。
-          // 仅当清单非空才注入:空清单(稳定常量)不进消息,避免尾部消息无谓膨胀。
-          const todoItems = this.todo.list();
-          const todoBlock = todoItems.length > 0 ? this.todo.toPromptBlock() : null;
+          // 仅有未完成项时注入清单;能并入普通 user 则改消息尾部,否则不注入。
+          // 全完成不注入,避免模型反复 TodoWrite;清单最新状态由 TodoWrite 的
+          // tool_result(消息尾部)传播——绝不进 system(todo 动态内容会打断前缀)。
+          const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : null;
           const requestMessages = todoBlock ? injectTodoIntoMessages(this.messages, todoBlock) : this.messages;
           const roundSystem = `${systemPrompt}${modeSeg ? `\n\n${modeSeg}` : ""}`;
           const prepared = prepareRound({

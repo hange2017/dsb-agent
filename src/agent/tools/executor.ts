@@ -355,8 +355,17 @@ export class ToolExecutor {
         case "TodoWrite": {
           const op = asString(input.op, "op");
           if (op === "list") return { ok: true, content: this.todo.toPromptBlock() };
-          if (op === "add") { const it = this.todo.add(asString(input.content, "content")); return { ok: true, content: `Added todo: ${it.content}` }; }
-          if (op === "update") { const ok = this.todo.update(asString(input.id, "id"), input.done === true); return { ok, content: ok ? "Updated" : "Todo not found" }; }
+          // add/update 后返回「最新完整清单」作为 tool_result:清单状态经由消息尾部
+          // (tool_result)传播给模型,无需再注入 system / 追加伪 user 消息,
+          // 且每条变更后模型都能看到最新状态,避免基于旧快照重复执行。
+          if (op === "add") {
+            this.todo.add(asString(input.content, "content"));
+            return { ok: true, content: this.todo.toPromptBlock() };
+          }
+          if (op === "update") {
+            const ok = this.todo.update(asString(input.id, "id"), input.done === true);
+            return { ok, content: ok ? this.todo.toPromptBlock() : "Todo not found" };
+          }
           if (op === "clear") { this.todo.clear(); return { ok: true, content: "Cleared todos" }; }
           return errorResult(`Unknown op: ${op}`);
         }
