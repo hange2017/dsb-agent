@@ -15,9 +15,26 @@
 >
 > <span style="color: green;">1. **Super permission**: Settings → Super permission, enable it with one click for a smooth ride (tools no longer ask one by one).</span>
 >
-> <span style="color: green;">2. **Agent settings**: History info total budget must be smaller than the window total length; **64K runs fine**, but try **256K or larger** history info total budget for significantly fewer compaction pauses.</span>
+> <span style="color: green;">2. **Agent settings**: History info total budget must be smaller than the window total length; **64K runs fine** — bigger is not necessarily better.</span>
 
 > API Keys are stored in VS Code SecretStorage (never written as plaintext); the built-in provider templates default to a public compatible endpoint, changeable anytime in settings.
+
+## Real-World Usage Statistics
+
+> Window: 2026-08-12 10:00 – 11:49 (local time). Data from the extension's local stats events (privacy-friendly, no message content stored). Pricing: cache-hit input ¥0.02/M, cache-miss input ¥1/M, output ¥2/M.
+
+| Metric | Value |
+|---|---|
+| **Average cost per call** | **¥0.0045** |
+| Median cost per call | ¥0.0022 |
+| Total cost | ¥1.8262 |
+| Total model calls | 407 |
+| Input (cache hit) | 20,369,280 tokens |
+| Input (cache miss) | 1,002,017 tokens |
+| Output | 208,397 tokens |
+| Total usage (input + output) | 21,579,694 tokens |
+| Cache hit rate (input) | 95.31% |
+| Output / cache-miss input | 0.208 |
 
 ## Installation
 
