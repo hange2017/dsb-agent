@@ -85,7 +85,7 @@ export function globWorkspace(root: string, pattern: string, subdir?: string): s
   const matcher = globToRegex(pattern);
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const rel = path.relative(base, path.join(dir, entry.name));
+      const rel = path.relative(base, path.join(dir, entry.name)).split(path.sep).join("/");
       if (entry.isDirectory()) {
         walk(path.join(dir, entry.name));
       } else if (matcher.test(rel)) {
