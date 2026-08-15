@@ -2,7 +2,12 @@
  * tail 内 toolResult 精简策略(纯函数,无 vscode 依赖)。
  *
  * 背景:打点数据显示 toolResult 占 tail 约 36%,其中低密度工具
- * (Bash 日志、Grep 匹配列表、网页正文、子代理执行记录)重复传输成本高。
+ * (网页正文、子代理执行记录)重复传输成本高。
+ *
+ * 2026-08-12 决策:Bash / Grep 输出**永不规则裁剪**(移入 KEEP_TOOLS)。
+ * 理由:命令执行与匹配列表常含模型后续决策所需的完整上下文,裁剪会丢定位信息;
+ * 且「写前定型」后裁剪形与原文形并存会抬升历史占用。保留完整输出后,
+ * 字节形态单一,更利于缓存前缀稳定;超大输出仍受执行层 MAX_TOOL_RESULT_CHARS(100KB)硬截断兜底。
  * 本模块在「已被模型消费过」的 toolResult 进入下一轮发送前,按工具类型
  * 做规则精简或摘要兜底,保证不遗漏错误/定位/结论等关键信息。
  *
@@ -60,7 +65,7 @@ export type ToolResultAction = "keep" | "trim" | "summarize";
 
 /**
  * 工具类别:
- *  - keep:高密度/小输出工具,永不规则精简;
+ *  - keep:高密度/小输出工具,永不规则精简(Bash/Grep 完整输出对后续决策重要,亦归此);
  *  - trim:低密度工具,规则裁剪,trim 后仍超阈值升级摘要;
  *  - summarize:未知工具(MCP/插件),不做规则裁剪,超阈值直接摘要(避免误伤未知格式)。
  */
@@ -68,27 +73,27 @@ export type ToolResultClass = "keep" | "trim" | "summarize";
 
 /** 阈值常量(设计文档第 3.6 节)。 */
 export const TOOL_RESULT_TRIM = {
-  /** 输出 tokens 低于此值 → 原样保留。 */
-  minTokens: 800,
-  /** 输出行数低于此值 → 原样保留。 */
-  minLines: 20,
-  /** trim 后仍超此 tokens → 升级为 LLM 摘要。 */
-  summarizeAfterTrimTokens: 3000,
-  /** 单行超长截断长度。 */
-  maxLine: 160,
-  /** Bash 成功输出:头部上下文行数。 */
-  bashHead: 5,
-  /** Bash 成功输出:尾部结论行数。 */
-  bashTail: 30,
-  /** Grep:每文件最多保留匹配条数。 */
-  grepPerFile: 10,
-  /** Grep:总输出行数上限。 */
-  grepTotal: 200,
-  /** WebFetch:头/尾保留行数。 */
-  webHead: 20,
-  webTail: 20,
-  /** Workflow/Agent:每个阶段标题后保留的行数。 */
-  stageLines: 3,
+  /** 输出 tokens 低于此值 → 原样保留。800 → 4000:日常输出(测试日志/diff/构建输出)完整保留,只有真正超大输出才裁剪。 */
+  minTokens: 4000,
+  /** 输出行数低于此值 → 原样保留。20 → 100。 */
+  minLines: 100,
+  /** trim 后仍超此 tokens → 升级为 LLM 摘要。3000 → 12000:避免裁剪后又被摘要进一步丢信息。 */
+  summarizeAfterTrimTokens: 12000,
+  /** 单行超长截断长度。160 → 240。 */
+  maxLine: 240,
+  /** Bash 成功输出:头部上下文行数。5 → 10。 */
+  bashHead: 10,
+  /** Bash 成功输出:尾部结论行数。30 → 60。 */
+  bashTail: 60,
+  /** Grep:每文件最多保留匹配条数。10 → 20。 */
+  grepPerFile: 20,
+  /** Grep:总输出行数上限。200 → 500。 */
+  grepTotal: 500,
+  /** WebFetch:头/尾保留行数。20 → 40。 */
+  webHead: 40,
+  webTail: 40,
+  /** Workflow/Agent:每个阶段标题后保留的行数。3 → 5。 */
+  stageLines: 5,
 } as const;
 
 /** 规则精简结果标记(模型看到后可重新调用工具获取全文)。 */
@@ -118,7 +123,7 @@ export function withToolResultRecallMarker(body: string, seq: number): string {
 export const TOOL_RESULT_SUMMARIZE_PROMPT =
   "请用不超过 400 tokens 总结该工具执行结果。必须保留:错误信息与 exit code(如有)、文件路径与行号(如有)、结论性内容(输出末尾)。任何错误信息都不得遗漏。";
 
-/** 高密度或小输出工具:永不规则精简。 */
+/** 高密度、小输出或关键定位类工具:永不规则精简。 */
 const KEEP_TOOLS = new Set([
   "Read",
   "Write",
@@ -132,12 +137,14 @@ const KEEP_TOOLS = new Set([
   "MemoryList",
   "MemoryDelete",
   "ContextRecall",
+  // Bash/Grep 完整输出保留:命令执行与匹配定位的细节对后续决策至关重要,
+  // 且执行层已有 MAX_TOOL_RESULT_CHARS(100KB)硬上限兜底,不会无限膨胀。
+  "Bash",
+  "Grep",
 ]);
 
 /** 低密度工具:规则精简,trim 后仍超阈值升级摘要。 */
 const TRIM_TOOLS = new Set([
-  "Bash",
-  "Grep",
   "WebFetch",
   "WebSearch",
   "Workflow",
@@ -162,7 +169,7 @@ function headTail(lines: string[], head: number, tail: number): string {
   if (total <= head + tail + 2) return lines.map((l) => clipLine(l)).join("\n");
   return [
     ...lines.slice(0, head).map((l) => clipLine(l)),
-    `… (省略 ${total - head - tail} 行)`,
+    `… (省略 ${total - head - tail} 行,如需完整输出请重新调用该工具)`,
     ...lines.slice(total - tail).map((l) => clipLine(l)),
   ].join("\n");
 }
