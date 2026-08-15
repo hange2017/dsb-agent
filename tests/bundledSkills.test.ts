@@ -15,11 +15,12 @@ describe("bundled extension skills", () => {
     expect(fs.existsSync(path.join(skillsRoot, "as-documentation-and-adrs", "SKILL.md"))).toBe(true);
   });
 
-  it("is scannable as a skills directory (37 adapted skills)", () => {
+  it("is scannable as a skills directory (37 adapted + 1 original skills)", () => {
     const listed = scanSkillDir(skillsRoot, "extension");
     // _notices has no SKILL.md so excluded
-    expect(listed.length).toBe(37);
+    expect(listed.length).toBe(38);
     expect(listed.some((s) => s.name === "using-dsb-skills")).toBe(true);
+    expect(listed.some((s) => s.name === "context-recall-usage")).toBe(true);
     expect(listed.some((s) => s.name.startsWith("sp-"))).toBe(true);
     expect(listed.some((s) => s.name.startsWith("as-"))).toBe(true);
   });

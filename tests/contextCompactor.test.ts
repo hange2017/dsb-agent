@@ -4,6 +4,7 @@ import {
   summarizeToolUse,
   extractKeyLines,
   buildCompactedBlock,
+  RECALL_HINT_LINE,
   isCompactedBlock,
   parseCompactedBlock,
   mergeCompactedTracks,
@@ -139,6 +140,19 @@ describe("buildCompactedBlock / isCompactedBlock", () => {
     expect(block).toContain("## 说明");
     expect(block).toContain("## 工具履历");
   });
+  it("emits a stable tail hint line guiding ContextRecall usage (P1)", () => {
+    const block = buildCompactedBlock({ demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
+    expect(block.endsWith(RECALL_HINT_LINE)).toBe(true);
+    expect(block).toContain("ContextRecall(seq=n)");
+    // parse 时提示行不并入任何轨(防 merge 膨胀 / 前缀漂移)
+    const parsed = parseCompactedBlock(block);
+    expect(parsed.ledger).not.toContain(RECALL_HINT_LINE);
+    expect(parsed.demands).toEqual(["- [r1] a"]);
+    // 空 parts 也恒输出提示行(字节稳定)
+    const empty = buildCompactedBlock({ demands: [], conclusions: [], explanations: [], ledger: [] });
+    expect(empty).toContain(RECALL_HINT_LINE);
+  });
+
   it("rejects plain text as compacted block", () => {
     expect(isCompactedBlock("普通文本")).toBe(false);
   });

@@ -908,7 +908,7 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
       windowTokens: 1_000_000,
       triggerRatio: 0.75,
       summarize,
-      historyTokenBudget: 400,
+      historyTokenBudget: 430,
     });
     const first = await cm.compact(Array.from({ length: 6 }, () => textMsg(50)));
     expect(first[0].role).toBe("user");
@@ -917,9 +917,10 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
     const second = await cm.compact([...first, ...Array.from({ length: 8 }, () => textMsg(50))]);
     const block = second[0].content as string;
     expect(block).toContain("[compacted]");
-    expect(estimateTokens(block)).toBeLessThanOrEqual(Math.floor(400 * 0.45 * 0.5));
+    expect(estimateTokens(block)).toBeLessThanOrEqual(Math.floor(430 * 0.45 * 0.5));
     // 增量合并 + 只删尾部:预算内滚动剔除增量段最新行(r7..r14 中新 seq 被裁),
     // 最旧稳定行 r1 保留(前缀字节稳定);极低预算下块可被削到只剩 r1。
+    // 注:预算 430(原 400)+30 为压缩块尾部固定 ContextRecall 提示行的开销(P1b 引入)。
     expect(block).toContain("- [r1]");
     expect(block).not.toContain("- [r13]");
     const maxSeq = Math.max(...[...block.matchAll(/\[r(\d+)\]/g)].map((m) => Number(m[1])), 0);

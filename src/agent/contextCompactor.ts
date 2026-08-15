@@ -301,7 +301,7 @@ export function parseCompactedBlock(content: string): CompactBlockParts {
       current = heading[1] === "需求" ? "demands" : heading[1] === "结论" ? "conclusions" : heading[1] === "说明" ? "explanations" : "ledger";
       continue;
     }
-    if (current && line.trim() !== "" && line !== "[compacted]" && line !== "[前文摘要]") {
+    if (current && line.trim() !== "" && line !== "[compacted]" && line !== "[前文摘要]" && line !== RECALL_HINT_LINE) {
       parts[current].push(line);
     }
   }
@@ -337,6 +337,13 @@ function track(title: string, lines: string[], includeEmptyTitle = true): string
   return [`## ${title}`, ...lines];
 }
 
+/**
+ * 压缩块尾部固定提示行(恒输出,字节稳定):引导模型对压缩摘要行主动调用 ContextRecall 回查原文。
+ * 注意:内容固定不变,否则每次压缩重建都会改变块尾字节 → 缓存前缀断裂。
+ * 保持最短纯 ASCII(约 10 tokens):固定开销越小,极低预算下可保留的业务行越多。
+ */
+export const RECALL_HINT_LINE = "(hint: ContextRecall(seq=n) → [r{n}])";
+
 /** 构建合并压缩块(带 [compacted] 标记) */
 export function buildCompactedBlock(parts: CompactBlockParts): string {
   const sections = [
@@ -346,6 +353,7 @@ export function buildCompactedBlock(parts: CompactBlockParts): string {
     ...track("结论", parts.conclusions),
     ...track("说明", parts.explanations),
     ...track("工具履历", parts.ledger),
+    RECALL_HINT_LINE,
   ];
   return sections.join("\n");
 }
