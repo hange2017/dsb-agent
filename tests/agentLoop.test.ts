@@ -1309,7 +1309,7 @@ describe("AgentSession toolUse tail trimming", () => {
     const assistantMsg = sent.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
     const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
     expect(block.input.path).toBe("src/foo.ts");
-    expect(block.input.contents).toContain("[瞬时参数已省略");
+    expect(block.input.contents).toContain("[TRANSIENT-SUMMARY");
     expect(block.id).toBe("t1");
   });
 
@@ -1374,7 +1374,7 @@ describe("AgentSession toolUse tail trimming", () => {
     const assistantMsg = round2.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
     const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
     expect(block.input.path).toBe("src/foo.ts");
-    expect(block.input.contents).toContain("[瞬时参数已省略");
+    expect(block.input.contents).toContain("[TRANSIENT-SUMMARY");
 
     // 第三轮形态不变:已定型块不因兜底 trimConsumedToolUses 二次改写。
     await session.send("继续", () => {});
@@ -1735,6 +1735,71 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     await session.send("继续", () => {});
     expect(JSON.stringify(messageSnapshots[0])).not.toContain("任务清单");
     expect(systems[0]).toBe("base-system");
+  });
+});
+
+describe("AgentSession snapshot-store cut-point archive", () => {
+  function bigThinking(lines: number): string {
+    return Array.from(
+      { length: lines },
+      (_, i) => `推理第 ${i} 行:` + "内容内容内容内容内容内容内容内容",
+    ).join("\n");
+  }
+
+  it("trim → archive → flush → ContextRecall retrieves original thinking", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agloop-snap-"));
+    try {
+      const store = new ContextStore(tmp);
+      const original = bigThinking(60);
+      const { provider } = fakeProvider([
+        { result: { blocks: [{ type: "text", text: "继续" }], toolUses: [] } },
+      ]);
+      const session = new AgentSession({
+        provider,
+        tools: fakeTools({}).tools,
+        permissions: new PermissionManager({
+          gateway: { request: async () => true },
+          rules: new PermissionRules(),
+        }),
+        workspaceRoot: "/tmp",
+        systemPrompt: "s",
+        contextStore: store,
+        sessionId: "snap1",
+        initialHistory: [
+          { role: "user", content: "问1" },
+          {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: original },
+              { type: "text", text: "答1" },
+            ],
+          },
+          { role: "user", content: "问2" },
+          { role: "assistant", content: [{ type: "text", text: "答2" }] },
+        ],
+      });
+
+      await session.send("问3", () => {});
+
+      const archived = store.load("snap1").filter((c) => c.type === "thinking");
+      expect(archived.length).toBeGreaterThanOrEqual(1);
+      expect(archived.some((c) => c.content === original)).toBe(true);
+      const seq = archived.find((c) => c.content === original)!.seq;
+
+      const recalled = store.get("snap1", [seq]);
+      expect(recalled).toHaveLength(1);
+      expect(recalled[0].content).toBe(original);
+
+      const hist = session.getMessages();
+      const thinkingMsg = hist.find(
+        (m) =>
+          m.role === "assistant" &&
+          m.content.some((b) => b.type === "thinking" && (b as { thinking: string }).thinking.includes(`[r${seq}]`)),
+      );
+      expect(thinkingMsg).toBeDefined();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

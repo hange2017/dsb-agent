@@ -6,6 +6,8 @@ import {
   THINKING_TRIM_MARKER,
   THINKING_OLD_MARKER,
   THINKING_KEEP_RECENT_COUNT,
+  buildThinkingArchiveChunk,
+  withRecallMarker,
 } from "../src/agent/thinkingPolicy";
 import type { ProviderMessage } from "../src/agent/provider/types";
 
@@ -153,5 +155,21 @@ describe("planThinkingTrim v2: 条数上限(rank)", () => {
     // 长文本一旦已标记也不会再被截断
     const bigTrimmed = `${THINKING_TRIM_MARKER}\n` + bigThinking(60);
     expect(planThinkingTrim(bigTrimmed, 1).action).toBe("keep");
+    // 冷存储回查标记同样幂等
+    expect(planThinkingTrim(`${THINKING_TRIM_MARKER}\n结论\n[r12]`, 0).action).toBe("keep");
+  });
+});
+
+describe("thinking archive helpers", () => {
+  it("buildThinkingArchiveChunk packs original text", () => {
+    const c = buildThinkingArchiveChunk("推理原文很长");
+    expect(c.type).toBe("thinking");
+    expect(c.content).toBe("推理原文很长");
+    expect(c.summary.length).toBeGreaterThan(0);
+  });
+
+  it("withRecallMarker appends [r{seq}] once", () => {
+    expect(withRecallMarker("tail", 7)).toBe("tail\n[r7]");
+    expect(withRecallMarker("tail\n[r7]", 7)).toBe("tail\n[r7]");
   });
 });

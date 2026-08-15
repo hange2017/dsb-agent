@@ -67,7 +67,7 @@ export const CORE_TOOLS: ToolDef[] = [
   },
   {
     name: "Grep",
-    description: "用 ripgrep 搜索文件内容。",
+    description: "用 ripgrep 搜索文件内容(rg 不可用时自动降级为纯 Node 行扫描)。",
     input_schema: {
       type: "object",
       properties: {

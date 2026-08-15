@@ -13,6 +13,7 @@
 
 import { estimateTokens } from "../stats/providerSendStats";
 import type { ProviderMessage, ProviderToolResultContent } from "./provider/types";
+import { makeSummary, type ColdChunk } from "../context/contextStore";
 
 /** 把 tool_result 的 content(string 或 text block 数组)转成纯文本。 */
 export function toolResultText(content: ProviderToolResultContent): string {
@@ -94,6 +95,24 @@ export const TOOL_RESULT_TRIM = {
 export const TRIMMED_MARKER = "[tool-result-trimmed]";
 /** LLM 摘要结果标记。 */
 export const SUMMARIZED_MARKER = "[tool-result-summarized]";
+
+/** 从 toolResult 原文构造冷存储归档块(seq 由 ContextStore.append 分配)。 */
+export function buildToolResultArchiveChunk(text: string): Omit<ColdChunk, "seq"> {
+  return {
+    type: "ledger",
+    role: "tool",
+    summary: makeSummary("ledger", text),
+    content: text,
+    ts: Date.now(),
+  };
+}
+
+/** 在精简/摘要文本中嵌入 [r{seq}](已有则不重复)。 */
+export function withToolResultRecallMarker(body: string, seq: number): string {
+  const marker = `[r${seq}]`;
+  if (body.includes(marker)) return body;
+  return `${marker}\n${body}`;
+}
 
 /** 摘要 prompt:强制保留错误/定位/结论,不遗漏关键信息。 */
 export const TOOL_RESULT_SUMMARIZE_PROMPT =
@@ -278,6 +297,10 @@ export interface ToolResultTrimPlan {
 export function planToolResultTrim(toolName: string, content: string): ToolResultTrimPlan {
   const text = content ?? "";
   if (text.trim() === "") return { action: "keep" };
+  // 幂等:已精简/摘要(含 [r{n}] 归档标记)的块不再二次改写
+  if (text.includes(TRIMMED_MARKER) || text.includes(SUMMARIZED_MARKER)) {
+    return { action: "keep" };
+  }
   const cls = classifyToolResult(toolName);
   if (cls === "keep") return { action: "keep" };
   const tokens = estimateTokens(text);

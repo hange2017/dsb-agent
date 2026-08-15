@@ -15,15 +15,28 @@
  */
 
 import type { ProviderMessage } from "./provider/types";
+import { makeSummary, type ColdChunk } from "../context/contextStore";
 
 export type ToolUseAction = "keep" | "trim";
 
 /** 值小于此字符数的瞬态字段不动。 */
 export const TRANSIENT_FIELD_MIN_CHARS = 200;
 
-/** 摘要替换模板。 */
+/**
+ * Transient summary marker prefix. Shared by generator (toolUsePolicy)
+ * and guards (executor Write/StrReplace) for detection.
+ */
+export const TRANSIENT_SUMMARY_PREFIX = "[TRANSIENT-SUMMARY";
+/** Summary template: warns NOT to write the marker into files. */
 export function transientSummary(fieldName: string, chars: number): string {
-  return `[瞬时参数已省略:${fieldName} ${chars} 字符;内容已在文件系统/执行状态中,如需可重新调用工具]`;
+  return `${TRANSIENT_SUMMARY_PREFIX} field=${fieldName} chars=${chars}] 瞬时参数省略标记:禁止写入文件,请用 Read/StrReplace 重新读取真实内容。`;
+}
+/** Detect transient summary text (guard against echo-back writes). */
+export function isTransientSummaryText(text: string): boolean {
+  if (typeof text !== "string") return false;
+  if (text.includes(TRANSIENT_SUMMARY_PREFIX)) return true;
+  if (text.includes("[瞬时参数已省略")) return true;
+  return text.includes("瞬时参数省略标记") && text.includes("禁止写入文件");
 }
 
 /**
@@ -107,6 +120,38 @@ export function planToolUseTrim(
   const trimmed = trimInput(input, fields);
   if (trimmed === input) return { action: "keep" };
   return { action: "trim", trimmedInput: trimmed };
+}
+
+/**
+ * StrReplace.old_string 原文归档块(仅旧串在替换后文件系统无副本)。
+ * 小值 / 已是省略标记 → undefined。
+ */
+export function buildStrReplaceOldStringArchiveChunk(
+  input: unknown,
+): Omit<ColdChunk, "seq"> | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  const oldString = (input as Record<string, unknown>).old_string;
+  if (typeof oldString !== "string") return undefined;
+  if (isTransientSummaryText(oldString)) return undefined;
+  if (oldString.length <= TRANSIENT_FIELD_MIN_CHARS) return undefined;
+  return {
+    type: "ledger",
+    role: "tool",
+    summary: makeSummary("ledger", oldString),
+    content: oldString,
+    ts: Date.now(),
+  };
+}
+
+/** 把 [r{seq}] 缀到已精简的 old_string 摘要上。 */
+export function withOldStringRecallMarker(trimmedInput: unknown, seq: number): unknown {
+  if (typeof trimmedInput !== "object" || trimmedInput === null) return trimmedInput;
+  const record = { ...(trimmedInput as Record<string, unknown>) };
+  if (typeof record.old_string !== "string") return trimmedInput;
+  const marker = `[r${seq}]`;
+  if (record.old_string.includes(marker)) return record;
+  record.old_string = `${record.old_string} ${marker}`;
+  return record;
 }
 
 /**

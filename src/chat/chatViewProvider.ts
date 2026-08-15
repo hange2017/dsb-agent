@@ -86,7 +86,7 @@ export class ChatViewProvider {
     private readonly mcp: McpRegistry,
     /** 插件缓存目录(globalStorageUri.fsPath):供技能扫描的 plugin 层读取 `<dir>/plugins/...`。 */
     private readonly pluginCacheDir: string,
-    /** 冷存储根目录(globalStorage/context/<projectKey>):createSession 内按会话建 ContextStore。 */
+    /** 冷存储根目录(globalStorage/context/<projectKey>):Provider 级共享 ContextStore。 */
     private readonly contextRoot: string,
     /** git 工作树 API(引擎层,无 vscode 依赖):由 extension.ts 用真实 execFile 后端装配后注入,/worktree 命令使用。 */
     private readonly worktree: WorktreeApi,
@@ -162,6 +162,8 @@ export class ChatViewProvider {
       pluginCacheDir: this.pluginCacheDir,
       runHookCommand: (command, input) => runHookCommandImpl(command, input),
     });
+    // Provider 级共享冷存储:Controller 归档与 Session/Executor/ContextRecall 必须同一实例
+    const sharedContextStore = new ContextStore(this.contextRoot);
     const controller = new ChatController(
       {
         apiKeyStore: this.apiKeyStore,
@@ -172,7 +174,7 @@ export class ChatViewProvider {
         getWorkspaceCwd: () =>
           vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
         sessionStore: new SessionStore(this.sessionsDir),
-        contextStore: new ContextStore(this.contextRoot),
+        contextStore: sharedContextStore,
         projectRuntime,
         todo,
         memory: this.memory,
@@ -304,6 +306,8 @@ export class ChatViewProvider {
           // 子代理模板(项目/用户/插件 .dsb/agents)按名注入 executor(第 10 个位置参数),
           // Agent 工具的 `agent` 参数据此解析角色;未命中返回 undefined → executor 报 Unknown agent。
           const agentTemplates = loadAgentTemplates(workspaceRoot, os.homedir(), projectRuntime.pluginDirs());
+          // 冷存储:与 Controller 共用 sharedContextStore(压缩/裁切/ContextRecall 同一内存+磁盘)
+          const contextStore = sharedContextStore;
           tools = new ToolExecutor(
             this.memory,
             todo,
@@ -317,10 +321,9 @@ export class ChatViewProvider {
             (name) => agentTemplates.find((t) => t.name === name),
             undefined,
             this.globalMemory,
+            contextStore,
           );
           tools.registerPluginTools(projectRuntime.pluginToolSpecs());
-          // 冷存储:压缩前原文按会话持久化,ContextRecall 可回查(无 store 时工具 fail-open)
-          const contextStore = new ContextStore(this.contextRoot);
           // 项目上下文合并 4 层技能(项目/用户/VSCode 扩展/插件);扩展/插件层由本 Provider 注入
           const ctx = await loadProjectContext(workspaceRoot, {
             extensions: vscode.extensions.all,

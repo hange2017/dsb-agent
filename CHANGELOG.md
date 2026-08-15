@@ -4,6 +4,15 @@ DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);�
 
 ## [Unreleased]
 
+### 新增
+
+- **Snapshot Store(统一裁剪切点归档)**:
+  - `ContextStore` 主存改为 NDJSON 追加(`*.context.ndjson`)+ 异步 `SnapshotQueue`(debounce 50ms / batch 16),旧 `*.context.json` 惰性迁移;索引带字节偏移供 ContextRecall 随机读。
+  - 淘汰上限:全量 50MB + thinking 独立 8MB;空闲 compact(>500 条或 >8MB 内容)。
+  - thinking / toolResult / StrReplace.old_string 裁切前归档原文,标记嵌入 `[r{seq}]`;回合结束 `flush`。
+  - 修复注入链:`ChatViewProvider` 级共享 `ContextStore` 同时注入 Controller / ToolExecutor / AgentSession,ContextRecall 可用。
+  - Grep 工具描述补充「rg 不可用时降级为纯 Node」。
+
 ### 修复
 
 - **输入框 Ctrl/Cmd+Z 撤销失效**:发送后 `inputEl.value` 被编程式清空会销毁 textarea 原生撤销栈,输入框为空时按 Ctrl/Cmd+Z 现在会恢复上一次发送的文本;vim 模式 normal 状态不再拦截 Ctrl/Cmd/Alt 组合键,撤销/重做/复制/粘贴等浏览器原生行为恢复正常。

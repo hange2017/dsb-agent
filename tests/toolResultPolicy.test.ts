@@ -5,7 +5,10 @@ import {
   planToolResultTrim,
   toolResultText,
   TRIMMED_MARKER,
+  SUMMARIZED_MARKER,
   TOOL_RESULT_TRIM,
+  buildToolResultArchiveChunk,
+  withToolResultRecallMarker,
 } from "../src/agent/toolResultPolicy";
 import type { ProviderMessage } from "../src/agent/provider/types";
 
@@ -186,5 +189,20 @@ describe("findConsumedToolResults", () => {
 
   it("exported TRIMMED_MARKER is a string marker", () => {
     expect(TRIMMED_MARKER).toMatch(/^\[/);
+  });
+
+  it("keeps already trimmed/summarized results (idempotent)", () => {
+    expect(planToolResultTrim("Bash", `${TRIMMED_MARKER}\n[r3]\n` + cjkLines(100)).action).toBe("keep");
+    expect(planToolResultTrim("Bash", `${SUMMARIZED_MARKER}\n摘要`).action).toBe("keep");
+  });
+});
+
+describe("toolResult archive helpers", () => {
+  it("buildToolResultArchiveChunk and withToolResultRecallMarker", () => {
+    const c = buildToolResultArchiveChunk("exit=0\n一大段日志");
+    expect(c.type).toBe("ledger");
+    expect(c.content).toContain("一大段日志");
+    expect(withToolResultRecallMarker("body", 4)).toBe("[r4]\nbody");
+    expect(withToolResultRecallMarker("[r4]\nbody", 4)).toBe("[r4]\nbody");
   });
 });

@@ -14,6 +14,7 @@
  */
 
 import type { ProviderMessage } from "./provider/types";
+import { makeSummary, type ColdChunk } from "../context/contextStore";
 
 /** thinking 超过此字符数才精简;保留尾部结论的字符数(300 → 150 收紧)。 */
 export const THINKING_TAIL_CHARS = 150;
@@ -26,6 +27,29 @@ export const THINKING_TRIM_MARKER = "[thinking-trimmed:推理过程已精简,保
 
 /** 旧 thinking(超出最近 N 条)的标记:只剩一行结论。 */
 export const THINKING_OLD_MARKER = "[thinking-old:已消费历史推理,仅留结论]";
+
+/** 冷存储回查标记前缀(与压缩块 [r{n}] 同构)。 */
+const RECALL_MARKER_RE = /\[r\d+]/;
+
+/**
+ * 从 thinking 原文构造冷存储归档块(seq 由 ContextStore.append 分配)。
+ */
+export function buildThinkingArchiveChunk(thinking: string): Omit<ColdChunk, "seq"> {
+  return {
+    type: "thinking",
+    role: "assistant",
+    summary: makeSummary("thinking", thinking),
+    content: thinking,
+    ts: Date.now(),
+  };
+}
+
+/** 在精简文本末尾追加 [r{seq}](已有则不重复)。 */
+export function withRecallMarker(trimmed: string, seq: number): string {
+  const marker = `[r${seq}]`;
+  if (trimmed.includes(marker)) return trimmed;
+  return `${trimmed}\n${marker}`;
+}
 
 /**
  * 扫描 messages,找出「已被模型消费过」的 thinking 块(按时间升序)。
@@ -88,7 +112,7 @@ export function planThinkingTrim(
   if (text.trim() === "") return { action: "keep" };
   // 幂等保护:已含精简标记的文本视为已定型,禁止二次改写(否则已入前缀的块会再次变化,
   // 造成「精简 → 再精简」两种字节形态 → 缓存前缀断裂)。
-  if (text.includes(THINKING_TRIM_MARKER) || text.includes(THINKING_OLD_MARKER)) {
+  if (text.includes(THINKING_TRIM_MARKER) || text.includes(THINKING_OLD_MARKER) || RECALL_MARKER_RE.test(text)) {
     return { action: "keep" };
   }
   if (rankFromLatest >= THINKING_KEEP_RECENT_COUNT) {

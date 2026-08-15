@@ -102,12 +102,14 @@ describe("ContextStore", () => {
     expect(store.load("sid2")).toHaveLength(1);
   });
 
-  it("keeps file on disk after clear (empty array) and delete removes file", () => {
+  it("keeps file on disk after clear (empty array) and delete removes file", async () => {
     const store = new ContextStore(dir);
     store.append("sid1", [chunk({ seq: 1 })]);
+    await store.flush("sid1");
     store.clear("sid1");
-    expect(fs.existsSync(path.join(dir, "sid1.context.json"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "sid1.context.ndjson"))).toBe(true);
     store.delete("sid1");
+    expect(fs.existsSync(path.join(dir, "sid1.context.ndjson"))).toBe(false);
     expect(fs.existsSync(path.join(dir, "sid1.context.json"))).toBe(false);
   });
 
@@ -118,10 +120,11 @@ describe("ContextStore", () => {
     expect(store.load("sid1").map((c) => c.seq)).toEqual([1, 2]);
   });
 
-  it("listSessions returns session ids sorted, ignoring non-context files", () => {
+  it("listSessions returns session ids sorted, ignoring non-context files", async () => {
     const store = new ContextStore(dir);
     store.append("s_b", [chunk({ seq: 1 })]);
     store.append("s_a", [chunk({ seq: 1 })]);
+    await store.flush();
     fs.writeFileSync(path.join(dir, "note.txt"), "x", "utf8");
     expect(store.listSessions()).toEqual(["s_a", "s_b"]);
     expect(new ContextStore(path.join(dir, "missing")).listSessions()).toEqual([]);
@@ -186,14 +189,18 @@ describe("ContextStore", () => {
     expect(r2.merged).toBe(3);
   });
 
-  it("append writes a sibling index file (no content) and index() reads it", () => {
+  it("append writes a sibling index file (no content) and index() reads it", async () => {
     const store = new ContextStore(dir);
     store.append("sid1", [
       chunk({ seq: 1, type: "demand", summary: "需求摘要", content: "很长很长的原文".repeat(10) }),
       chunk({ seq: 2, type: "ledger", summary: "l", content: "x" }),
     ]);
+    // 内存可见,落盘需 flush
+    expect(store.index("sid1")).toHaveLength(2);
+    await store.flush("sid1");
     const idxFile = path.join(dir, "sid1.index.json");
     expect(fs.existsSync(idxFile)).toBe(true);
+    expect(fs.existsSync(path.join(dir, "sid1.context.ndjson"))).toBe(true);
     const raw = JSON.parse(fs.readFileSync(idxFile, "utf8"));
     expect(raw.version).toBe(1);
     expect(raw.chunks).toHaveLength(2);
@@ -211,13 +218,19 @@ describe("ContextStore", () => {
   });
 
   it("lazy-migrates a legacy session (context file only) by building index on read", () => {
-    const store = new ContextStore(dir);
-    store.append("legacy", [chunk({ seq: 1, summary: "旧", content: "旧内容" })]);
-    // 模拟旧版:只有 context 文件,没有 index 文件
+    // 模拟旧版:只有 .context.json,没有 index
+    fs.writeFileSync(
+      path.join(dir, "legacy.context.json"),
+      JSON.stringify({
+        chunks: [chunk({ seq: 1, summary: "旧", content: "旧内容" })],
+        compactedCount: 0,
+        prunedCount: 0,
+      }),
+      "utf8",
+    );
     const idxFile = path.join(dir, "legacy.index.json");
-    if (fs.existsSync(idxFile)) fs.rmSync(idxFile);
-    const store2 = new ContextStore(dir);
     expect(fs.existsSync(idxFile)).toBe(false);
+    const store2 = new ContextStore(dir);
     const idx = store2.index("legacy");
     expect(idx).toHaveLength(1);
     expect(idx[0].summary).toBe("旧");
@@ -228,9 +241,10 @@ describe("ContextStore", () => {
     expect(fs.existsSync(path.join(dir, "nope.index.json"))).toBe(false);
   });
 
-  it("recovers from corrupt index by rebuilding from content", () => {
+  it("recovers from corrupt index by rebuilding from content", async () => {
     const store = new ContextStore(dir);
     store.append("sid1", [chunk({ seq: 1, summary: "ok", content: "原文" })]);
+    await store.flush("sid1");
     fs.writeFileSync(path.join(dir, "sid1.index.json"), "{not json", "utf8");
     const store2 = new ContextStore(dir);
     expect(store2.index("sid1")).toHaveLength(1);
@@ -240,11 +254,14 @@ describe("ContextStore", () => {
     expect(raw.chunks).toHaveLength(1);
   });
 
-  it("delete removes both context and index files", () => {
+  it("delete removes both context and index files", async () => {
     const store = new ContextStore(dir);
     store.append("sid1", [chunk({ seq: 1 })]);
+    await store.flush("sid1");
     expect(fs.existsSync(path.join(dir, "sid1.index.json"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "sid1.context.ndjson"))).toBe(true);
     store.delete("sid1");
+    expect(fs.existsSync(path.join(dir, "sid1.context.ndjson"))).toBe(false);
     expect(fs.existsSync(path.join(dir, "sid1.context.json"))).toBe(false);
     expect(fs.existsSync(path.join(dir, "sid1.index.json"))).toBe(false);
   });
@@ -270,14 +287,16 @@ describe("ContextStore", () => {
     expect(store.stats("sid1")).toEqual({ compacted: 0, pruned: 0 });
   });
 
-  it("mtime cache refreshes after external write (new store instance sees new index)", () => {
+  it("mtime cache refreshes after external write (new store instance sees new index)", async () => {
     const store = new ContextStore(dir);
     store.append("sid1", [chunk({ seq: 1, summary: "one" })]);
+    await store.flush("sid1");
     expect(store.index("sid1")).toHaveLength(1);
-    // 模拟外部进程直接改文件:同一 store 实例经 mtime 检测重读
+    // 外部进程读盘后追加并 flush;新实例可见完整索引
     const external = new ContextStore(dir);
     external.append("sid1", [chunk({ seq: 2, summary: "two" })]);
-    expect(store.index("sid1").map((c) => c.seq)).toEqual([1, 2]);
+    await external.flush("sid1");
+    expect(new ContextStore(dir).index("sid1").map((c) => c.seq)).toEqual([1, 2]);
   });
 
   it("mergeView aggregates index entries (no content) with session tag", () => {
@@ -414,5 +433,64 @@ describe("ContextStore updateSummaries", () => {
     expect(store.updateSummaries("sid1", [{ seq: 1, summary: "same" }])).toBe(0);
     expect(store.updateSummaries("sid1", [{ seq: 1, summary: "" }])).toBe(0);
     expect(store.updateSummaries("sid1", [])).toBe(0);
+  });
+});
+
+describe("ContextStore NDJSON + async flush", () => {
+  it("flush writes .context.ndjson lines and index offsets", async () => {
+    const store = new ContextStore(dir);
+    store.append("s1", [chunk({ seq: 1, content: "A" }), chunk({ seq: 2, content: "B" })]);
+    expect(fs.existsSync(path.join(dir, "s1.context.ndjson"))).toBe(false);
+    await store.flush("s1");
+    const ndjson = path.join(dir, "s1.context.ndjson");
+    expect(fs.existsSync(ndjson)).toBe(true);
+    const lines = fs.readFileSync(ndjson, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]).content).toBe("A");
+    const idx = JSON.parse(fs.readFileSync(path.join(dir, "s1.index.json"), "utf8"));
+    expect(typeof idx.chunks[0].offset).toBe("number");
+    expect(typeof idx.chunks[0].length).toBe("number");
+  });
+
+  it("skips corrupt NDJSON lines (fail-open)", async () => {
+    fs.writeFileSync(
+      path.join(dir, "bad.context.ndjson"),
+      `${JSON.stringify(chunk({ seq: 1, content: "ok" }))}\n{not json\n${JSON.stringify(chunk({ seq: 2, content: "ok2" }))}\n`,
+      "utf8",
+    );
+    const store = new ContextStore(dir);
+    expect(store.load("bad").map((c) => c.seq)).toEqual([1, 2]);
+  });
+
+  it("migrates legacy .context.json to ndjson on append", async () => {
+    fs.writeFileSync(
+      path.join(dir, "leg.context.json"),
+      JSON.stringify({
+        chunks: [chunk({ seq: 1, summary: "old", content: "legacy" })],
+        compactedCount: 0,
+        prunedCount: 0,
+      }),
+      "utf8",
+    );
+    const store = new ContextStore(dir);
+    store.append("leg", [chunk({ seq: 2, content: "new" })]);
+    await store.flush("leg");
+    expect(fs.existsSync(path.join(dir, "leg.context.ndjson"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "leg.context.json"))).toBe(false);
+    expect(store.load("leg").map((c) => c.seq)).toEqual([1, 2]);
+  });
+
+  it("prune by maxTotalBytes keeps newest", () => {
+    const store = new ContextStore(dir, { maxTotalBytes: 30, maxChunks: 100 });
+    store.append("s1", [
+      chunk({ seq: 1, ts: 100, content: "aaaaaaaaaaaa" }),
+      chunk({ seq: 2, ts: 200, content: "bbbbbbbbbbbb" }),
+      chunk({ seq: 3, ts: 300, content: "cccccccccccc" }),
+    ]);
+    const removed = store.prune("s1");
+    expect(removed).toBeGreaterThan(0);
+    const left = store.load("s1");
+    expect(left[left.length - 1].seq).toBe(3);
+    expect(Buffer.byteLength(left.map((c) => c.content).join(""), "utf8")).toBeLessThanOrEqual(30);
   });
 });

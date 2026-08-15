@@ -3,6 +3,9 @@ import {
   findConsumedToolUses,
   planToolUseTrim,
   transientSummary,
+  isTransientSummaryText,
+  buildStrReplaceOldStringArchiveChunk,
+  withOldStringRecallMarker,
 } from "../src/agent/toolUsePolicy";
 import type { ProviderMessage } from "../src/agent/provider/types";
 
@@ -13,7 +16,7 @@ describe("planToolUseTrim", () => {
     expect(plan.action).toBe("trim");
     expect(plan.trimmedInput).toEqual({
       path: "src/foo.ts",
-      contents: expect.stringContaining("[瞬时参数已省略"),
+      contents: expect.stringContaining("[TRANSIENT-SUMMARY"),
     });
     expect((plan.trimmedInput as any).path).toBe("src/foo.ts");
   });
@@ -29,8 +32,8 @@ describe("planToolUseTrim", () => {
     const plan = planToolUseTrim("StrReplace", input);
     expect(plan.action).toBe("trim");
     const out = plan.trimmedInput as any;
-    expect(out.old_string).toContain("[瞬时参数已省略");
-    expect(out.new_string).toContain("[瞬时参数已省略");
+    expect(out.old_string).toContain("[TRANSIENT-SUMMARY");
+    expect(out.new_string).toContain("[TRANSIENT-SUMMARY");
     expect(out.path).toBe("a.ts");
     expect(out.replace_all).toBe(true);
   });
@@ -49,8 +52,8 @@ describe("planToolUseTrim", () => {
     expect(out.goal).toBe("优化统计");
     expect(out.stages[0].id).toBe("s1");
     expect(out.stages[0].dependsOn).toEqual([]);
-    expect(out.stages[0].prompt).toContain("[瞬时参数已省略");
-    expect(out.stages[1].prompt).toContain("[瞬时参数已省略");
+    expect(out.stages[0].prompt).toContain("[TRANSIENT-SUMMARY");
+    expect(out.stages[1].prompt).toContain("[TRANSIENT-SUMMARY");
   });
 
   it("keeps small Workflow stage prompts", () => {
@@ -62,8 +65,8 @@ describe("planToolUseTrim", () => {
     const input = { task: "任务描述".repeat(300), system: "系统提示".repeat(300) };
     const plan = planToolUseTrim("Agent", input);
     expect(plan.action).toBe("trim");
-    expect((plan.trimmedInput as any).task).toContain("[瞬时参数已省略");
-    expect((plan.trimmedInput as any).system).toContain("[瞬时参数已省略");
+    expect((plan.trimmedInput as any).task).toContain("[TRANSIENT-SUMMARY");
+    expect((plan.trimmedInput as any).system).toContain("[TRANSIENT-SUMMARY");
   });
 
   it("keeps tools with no transient fields", () => {
@@ -83,8 +86,18 @@ describe("planToolUseTrim", () => {
   });
 
   it("transientSummary is informative", () => {
-    expect(transientSummary("contents", 1234)).toContain("1234 字符");
-    expect(transientSummary("contents", 1234)).toContain("重新调用");
+    const s = transientSummary("contents", 1234);
+    expect(s).toContain("field=contents");
+    expect(s).toContain("chars=1234");
+    expect(s).toContain("禁止写入文件");
+  });
+
+  it("isTransientSummaryText detects new/legacy/combo markers", () => {
+    expect(isTransientSummaryText("[TRANSIENT-SUMMARY field=x chars=1] 瞬时参数省略标记:禁止写入文件")).toBe(true);
+    expect(isTransientSummaryText("[瞬时参数已省略:contents 300 字符]")).toBe(true);
+    expect(isTransientSummaryText("瞬时参数省略标记:禁止写入文件,请用 Read 读取")).toBe(true);
+    expect(isTransientSummaryText("正常内容 abc")).toBe(false);
+    expect(isTransientSummaryText("")).toBe(false);
   });
 });
 
@@ -161,7 +174,7 @@ describe("extended transient fields (TodoWrite/MemoryWrite)", () => {
     expect(plan.action).toBe("trim");
     const input = plan.trimmedInput as { op: string; content: string };
     expect(input.op).toBe("add");
-    expect(input.content).toContain("[瞬时参数已省略");
+    expect(input.content).toContain("[TRANSIENT-SUMMARY");
     expect(input.content.length).toBeLessThan(200);
   });
 
@@ -188,7 +201,7 @@ describe("extended transient fields (TodoWrite/MemoryWrite)", () => {
     expect(input.name).toBe("my-memory");
     expect(input.description).toBe("desc");
     expect(input.scope).toBe("project");
-    expect(String(input.body)).toContain("[瞬时参数已省略");
+    expect(String(input.body)).toContain("[TRANSIENT-SUMMARY");
     expect(String(input.body).length).toBeLessThan(200);
   });
 
@@ -210,5 +223,33 @@ describe("extended transient fields (TodoWrite/MemoryWrite)", () => {
     expect(planToolUseTrim("MemoryRead", { name: "abc", scope: "global" }).action).toBe("keep");
     expect(planToolUseTrim("MemoryList", { scope: "project" }).action).toBe("keep");
     expect(planToolUseTrim("MemoryDelete", { name: "abc" }).action).toBe("keep");
+  });
+});
+
+describe("StrReplace old_string archive helpers", () => {
+  it("archives large old_string only", () => {
+    const big = "旧".repeat(300);
+    const chunk = buildStrReplaceOldStringArchiveChunk({
+      path: "a.ts",
+      old_string: big,
+      new_string: "x".repeat(300),
+    });
+    expect(chunk?.content).toBe(big);
+    expect(chunk?.type).toBe("ledger");
+    expect(buildStrReplaceOldStringArchiveChunk({ path: "a.ts", old_string: "短" })).toBeUndefined();
+    expect(
+      buildStrReplaceOldStringArchiveChunk({
+        path: "a.ts",
+        old_string: transientSummary("old_string", 500),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("withOldStringRecallMarker suffixes [r{seq}]", () => {
+    const out = withOldStringRecallMarker(
+      { path: "a.ts", old_string: transientSummary("old_string", 300) },
+      9,
+    ) as Record<string, unknown>;
+    expect(String(out.old_string)).toContain("[r9]");
   });
 });

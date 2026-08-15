@@ -27,9 +27,22 @@ import {
   TOOL_RESULT_SUMMARIZE_PROMPT,
   TRIMMED_MARKER,
   SUMMARIZED_MARKER,
+  buildToolResultArchiveChunk,
+  withToolResultRecallMarker,
 } from "./toolResultPolicy";
-import { findConsumedToolUses, planToolUseTrim } from "./toolUsePolicy";
-import { findConsumedThinking, planThinkingTrim } from "./thinkingPolicy";
+import {
+  findConsumedToolUses,
+  planToolUseTrim,
+  buildStrReplaceOldStringArchiveChunk,
+  withOldStringRecallMarker,
+} from "./toolUsePolicy";
+import {
+  findConsumedThinking,
+  planThinkingTrim,
+  buildThinkingArchiveChunk,
+  withRecallMarker,
+} from "./thinkingPolicy";
+import type { ColdChunk } from "../context/contextStore";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
@@ -371,6 +384,7 @@ export class AgentSession {
    * tail 内已消费 toolUse 精简(同步,无 LLM 成本):
    * 瞬时参数(Write.contents / StrReplace.new_string / Workflow.stages[].prompt 等)
    * 替换为摘要文本,语义参数与 id/name 保留。失败不阻塞主循环。
+   * StrReplace.old_string 在替换前归档原文(文件系统已无副本)。
    */
   private trimConsumedToolUses(): void {
     try {
@@ -382,9 +396,14 @@ export class AgentSession {
         const block = msg.content[blockIndex];
         if (block.type !== "tool_use") continue;
         const plan = planToolUseTrim(block.name, block.input);
-        if (plan.action === "trim" && plan.trimmedInput !== undefined) {
-          block.input = plan.trimmedInput as Record<string, unknown>;
+        if (plan.action !== "trim" || plan.trimmedInput === undefined) continue;
+        let nextInput: unknown = plan.trimmedInput;
+        if (block.name === "StrReplace") {
+          const archive = buildStrReplaceOldStringArchiveChunk(block.input);
+          const seq = archive ? this.archiveCut([archive]) : undefined;
+          if (seq !== undefined) nextInput = withOldStringRecallMarker(nextInput, seq);
         }
+        block.input = nextInput as typeof block.input;
       }
     } catch {
       // 精简失败不阻塞主循环;下次发送前会重试
@@ -394,7 +413,7 @@ export class AgentSession {
   /**
    * tail 内已消费 thinking 原文精简(同步,零 LLM 成本):
    * 超阈值 thinking 保留尾部结论行 + 截断标记,前面删除;
-   * 保持 `{ type: "thinking" }` 块结构(API 要求)。失败不阻塞主循环。
+   * 原文写入冷存储,标记追加 [r{seq}] 供 ContextRecall。失败不阻塞主循环。
    */
   private trimConsumedThinking(): void {
     try {
@@ -408,9 +427,11 @@ export class AgentSession {
         if (msg.role !== "assistant") continue;
         const block = msg.content[blockIndex];
         if (block.type !== "thinking") continue;
-        const plan = planThinkingTrim(block.thinking, rankFromLatest - t);
+        const original = block.thinking;
+        const plan = planThinkingTrim(original, rankFromLatest - t);
         if (plan.action === "trim" && plan.trimmed !== undefined) {
-          block.thinking = plan.trimmed;
+          const seq = this.archiveCut([buildThinkingArchiveChunk(original)]);
+          block.thinking = seq !== undefined ? withRecallMarker(plan.trimmed, seq) : plan.trimmed;
         }
       }
     } catch {
@@ -435,16 +456,38 @@ export class AgentSession {
           const text = toolResultText(block.content);
           const plan = planToolResultTrim(toolName, text);
           if (plan.action === "keep") continue;
+          const seq = this.archiveCut([buildToolResultArchiveChunk(text)]);
           if (plan.action === "summarize") {
             const summary = await this.summarizeMessages(text, 400, TOOL_RESULT_SUMMARIZE_PROMPT);
-            block.content = [{ type: "text", text: `${SUMMARIZED_MARKER}\n${summary}` }];
+            const body =
+              seq !== undefined
+                ? withToolResultRecallMarker(summary, seq)
+                : summary;
+            block.content = [{ type: "text", text: `${SUMMARIZED_MARKER}\n${body}` }];
           } else if (plan.trimmed !== undefined) {
-            block.content = [{ type: "text", text: `${TRIMMED_MARKER}\n${plan.trimmed}` }];
+            const body =
+              seq !== undefined
+                ? withToolResultRecallMarker(plan.trimmed, seq)
+                : plan.trimmed;
+            block.content = [{ type: "text", text: `${TRIMMED_MARKER}\n${body}` }];
           }
         }
       }
     } catch {
       // 精简失败不阻塞主循环;下次发送前会重试
+    }
+  }
+
+  /** 裁剪切点原文入冷存储;返回分配的 seq(无 store / 失败 → undefined)。 */
+  private archiveCut(chunks: Array<Omit<ColdChunk, "seq">>): number | undefined {
+    const store = this.deps.contextStore;
+    if (!store || chunks.length === 0) return undefined;
+    try {
+      const withSeq = chunks.map((c) => ({ ...c, seq: undefined as unknown as number }));
+      const seqs = store.append(this.deps.sessionId ?? "default", withSeq);
+      return seqs[0];
+    } catch {
+      return undefined;
     }
   }
 
@@ -803,7 +846,12 @@ export class AgentSession {
             const text = toolResultText(block.content);
             const trimPlan = planToolResultTrim(toolUses[i]?.name ?? "", text);
             if (trimPlan.action === "trim" && trimPlan.trimmed !== undefined) {
-              block.content = [{ type: "text", text: `${TRIMMED_MARKER}\n${trimPlan.trimmed}` }];
+              const seq = this.archiveCut([buildToolResultArchiveChunk(text)]);
+              const body =
+                seq !== undefined
+                  ? withToolResultRecallMarker(trimPlan.trimmed, seq)
+                  : trimPlan.trimmed;
+              block.content = [{ type: "text", text: `${TRIMMED_MARKER}\n${body}` }];
             }
           }
         } catch (err) {
@@ -832,6 +880,12 @@ export class AgentSession {
       // 任意终态下 this.messages 都是合法快照(done 保留终态;error/abort 已 rollback 到 preSend),
       // 在此保存即「以最后一次稳定状态为准」。必须放在 if (terminal) 之外,abort 也要落盘。
       this.persistNow();
+      // 冷存储异步队列:回合结束冲刷,保证 ContextRecall 可读到本轮裁剪切点原文
+      try {
+        await this.deps.contextStore?.flush(this.deps.sessionId ?? "default");
+      } catch {
+        // fail-open
+      }
       // Stop:每次运行结束(done/error/取消)时触发,fire-and-forget 不延迟收尾事件
       void fireHook(this.hooks, "Stop", "", {});
     }
