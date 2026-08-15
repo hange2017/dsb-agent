@@ -90,7 +90,7 @@ describe("planToolResultTrim", () => {
   });
 
   it("trims Workflow output keeping stage headings", () => {
-    const out = ["## 阶段1", ...cjkLines(20), "## 阶段2", ...cjkLines(20), "## 阶段3", ...cjkLines(20)].join("\n");
+    const out = ["## 阶段1", ...cjkLines(50), "## 阶段2", ...cjkLines(50), "## 阶段3", ...cjkLines(50)].join("\n");
     const plan = planToolResultTrim("Workflow", out);
     expect(plan.action).toBe("trim");
     expect(plan.trimmed).toContain("## 阶段1");
@@ -99,9 +99,9 @@ describe("planToolResultTrim", () => {
   });
 
   it("upgrades to summarize when trim still exceeds threshold", () => {
-    // 每行 200 个 CJK ≈ 200 tokens:100 行 ≈ 20000;trim 后 35 行仍 ≈ 7000 > 3000
-    const big = "exit=0\n" + Array.from({ length: 100 }, (_, i) => `行${i} ` + "内容".repeat(200)).join("\n");
-    const plan = planToolResultTrim("Bash", big);
+    // 每行 200 个 CJK ≈ 200 tokens:100 行 ≈ 20000;WebFetch trim(head20+tail20)后 ≈ 40 行 ≈ 8000 > 3000
+    const big = Array.from({ length: 100 }, (_, i) => `行${i} ` + "内容".repeat(200)).join("\n");
+    const plan = planToolResultTrim("WebFetch", big);
     expect(plan.action).toBe("summarize");
   });
 
