@@ -7,5 +7,6 @@ dist/
 .claude/worktrees/
 .superpowers/
 .deepseek/
+benchmark/out/
 
 .dsb/checkpoints/
