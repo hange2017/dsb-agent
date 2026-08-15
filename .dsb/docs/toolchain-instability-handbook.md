@@ -14,7 +14,7 @@
 | # | 现象 | 严重度 | 根因归类 |
 |---|---|---|---|
 | 1 | Write 写入占位符文本(`[TRANSIENT-SUMMARY field=contents chars=XXXX]...`,文件仅 ~200 字节) | 🔴 高 | **占位符污染**(第 3 节,已定位并修复,见 3.5) |
-| 2 | Read/type 显示占位符但文件字节数正常(`len=1446` 等) | 🟡 中 | 显示层省略(无害,与现象 1 共用标记造成误判) |
+| 2 | Read/type 显示占位符但文件字节数正常(`len=1446` 等) | 🟡 中 | 显示层省略(无害,与现象 1 共用标记造成误判);2026-08-15 实测发现 Write 长参数在传递层也会被压缩成占位符并到达 executor,被 REFUSED 拦截(未污染,但证明「参数层也可能真实压缩」) |
 | 3 | cmd echo 生成 Python/ps1 脚本报 `IndentationError` / 引号丢失 / `\"` 转义 | 🟡 中 | Windows cmd 引号/缩进固有行为 |
 | 4 | 内联 `python -c "..."` 报 `SyntaxError: unterminated string literal` | 🟡 中 | cmd 引号解析与 POSIX 不同 |
 | 5 | 内联 PowerShell `-Command "..."` 输出被吞 / 报"缺少 ]" | 🟡 中 | PowerShell 引号嵌套 + 控制台代码页 |
@@ -99,9 +99,29 @@ const TRANSIENT_FIELDS = {
 
 **遗留提示**:历史污染文件可能仍含旧标记 `[瞬时参数已省略`,防御校验已兼容;若发现新写入文件含 `[TRANSIENT-SUMMARY`,说明 trim 或持久化链路仍有缺口,按第 4 节规避。
 
+### 3.6 新一轮防线(2026-08-15 实测验证)
+
+> 本次会话实测复现了「参数传递层压缩」:构造 Write 长 contents 时,实际到达 executor 的参数是占位符文本,被 REFUSED 拦截。说明占位符不仅存在于显示层,**长参数在传递层确实会被压缩**,Write/StrReplace 的守卫是最后一道防线。
+
+| # | 防线 | 状态 | 位置 |
+|---|---|---|---|
+| 1 | Read 大文件输出头行 `(file: ..., lines: N, showing a-b)`,支持分段读 | ✅ 已实施 | `src/agent/tools/workspaceFs.ts`(readWorkspaceFile) |
+| 2 | Write/StrReplace tool_result 回显 `bytes/lines/首行预览`,给模型内容锚点 | ✅ 已实施 | `src/agent/tools/executor.ts` |
+| 3 | toolUsePolicy 字段细分阈值:`Write.contents` 2000、`StrReplace.new_string` 1000(其余仍 200) | ✅ 已实施 | `src/agent/toolUsePolicy.ts`(`TRANSIENT_FIELD_MIN_CHARS_BY_KEY` / `fieldMinChars`) |
+| 4 | REFUSED 提示点名「复述陷阱」,禁止复述省略标记 | ✅ 已实施 | `src/agent/tools/executor.ts` |
+| 5 | 行为规则 `.dsb/rules/transient-summary-avoidance.md`(R1-R6:读真实内容、StrReplace 参数从 Read 复制、写后验证、REFUSED 不绕过、分段读、Bash heredoc 优先) | ✅ 已实施 | `.dsb/rules/` |
+
+**残余缺口**(已知,未根治):
+- 长参数传递层压缩的触发边界不明确(与长度/内容的确定性关系未验证),守卫拦截是兜底而非根治;
+- 历史污染文件(旧标记 `[瞬时参数已省略`)需逐个清理;
+- 显示层与参数层的压缩逻辑在代码中未见显式实现,疑似位于消息构造/序列化链路,后续可在 `agentLoop.ts` 消息落盘处加长参数探针确认。
+
 ## 4. 规避手册(操作层面,立即可用)
 
 ### 4.1 长内容写入:写后立即验证(最重要)
+
+> 2026-08-15 补充:长参数(>200 字符)经 Write/StrReplace 传入有被压缩为占位符的真实风险(已被 REFUSED 拦截过)。**规则/脚本/长文档写入优先用 Bash heredoc**(`cat > f <<'EOF'`),实测可靠;Write/StrReplace 仅用于短参数与精确替换。
+
 
 任何 `Write` 长内容(>200 字符,尤其脚本文件)后,**立即**做字节数 + 关键词验证:
 
