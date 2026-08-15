@@ -66,8 +66,9 @@ describe("冒烟:压缩 → 冷存储 → 回查", () => {
     // tail 保留 4 条
     expect(out).toHaveLength(5);
     expect(JSON.stringify(out.slice(1))).toContain("tail0");
-    // 冷存储文件存在且可按 seq 回查
-    const coldFile = path.join(tmp, "context", "s_smoke.context.json");
+    // 冷存储文件存在且可按 seq 回查(append 异步落盘,先冲刷再断言磁盘)
+    await store.flush("s_smoke");
+    const coldFile = path.join(tmp, "context", "s_smoke.context.ndjson");
     expect(fs.existsSync(coldFile)).toBe(true);
     const chunks = store.load("s_smoke");
     expect(chunks.length).toBeGreaterThanOrEqual(5);
