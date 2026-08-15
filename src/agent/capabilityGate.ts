@@ -48,7 +48,7 @@ export function dropEmptyContentMessages(messages: ProviderMessage[]): ProviderM
 
 /** 无 thinking 能力时从 outbound 历史剥掉 thinking 块,避免部分网关 400。 */
 export function stripThinkingBlocks(messages: ProviderMessage[]): ProviderMessage[] {
-  return messages.flatMap((msg) => {
+  return messages.flatMap<ProviderMessage>((msg) => {
     if (msg.role !== "assistant") return [msg];
     const kept = msg.content.filter((b): b is Exclude<ProviderBlock, { type: "thinking" }> => b.type !== "thinking");
     // 仅 thinking 的回合剥光后丢弃,不再用空 text 占位(空 content → API 400)
@@ -59,7 +59,7 @@ export function stripThinkingBlocks(messages: ProviderMessage[]): ProviderMessag
 
 /** 无 vision 时剥 user content 中的 image 块(含历史附件)。 */
 export function stripImageBlocks(messages: ProviderMessage[]): ProviderMessage[] {
-  return messages.flatMap((msg) => {
+  return messages.flatMap<ProviderMessage>((msg) => {
     if (msg.role !== "user") return [msg];
     if (typeof msg.content === "string") return [msg];
     const kept = msg.content.filter((b): b is Exclude<ProviderUserBlock, { type: "image" }> => b.type !== "image");
