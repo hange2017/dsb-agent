@@ -9,6 +9,17 @@ import { HookRunner } from "../src/hooks/hookRunner";
 import type { SubagentFactory } from "../src/agent/subagentRunner";
 
 let tmp: string;
+const symlinkSupported = (() => {
+  if (process.platform !== 'win32') return true;
+  try {
+    const probeP = path.join(os.tmpdir(), 'dsb-symlink-probe-' + process.pid);
+    fs.symlinkSync(probeP + '-target', probeP);
+    fs.unlinkSync(probeP);
+    return true;
+  } catch {
+    return false;
+  }
+})();
 let exec: ToolExecutor;
 
 beforeEach(() => {
@@ -32,6 +43,21 @@ describe("ToolExecutor", () => {
     const r = await exec.execute("StrReplace", { path: "b.txt", old_string: "foo", new_string: "baz" }, { workspaceRoot: tmp });
     expect(r.ok).toBe(true);
     expect(fs.readFileSync(path.join(tmp, "b.txt"), "utf8")).toBe("baz bar");
+  });
+
+  it("Write refuses transient summary marker contents", async () => {
+    const marker = "[TRANSIENT-SUMMARY field=contents chars=999] 瞬时参数省略标记:禁止写入文件";
+    const r = await exec.execute("Write", { path: "b.txt", contents: marker }, { workspaceRoot: tmp });
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("REFUSED");
+    expect(fs.existsSync(path.join(tmp, "b.txt"))).toBe(false);
+  });
+  it("StrReplace refuses transient summary new_string", async () => {
+    const marker = "[TRANSIENT-SUMMARY field=new_string chars=9] 瞬时参数省略标记";
+    const r = await exec.execute("StrReplace", { path: "a.txt", old_string: "hello", new_string: marker }, { workspaceRoot: tmp });
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("REFUSED");
+    expect(fs.readFileSync(path.join(tmp, "a.txt"), "utf8")).toBe("hello world\nsecond line\n");
   });
 
   it("Glob finds files", async () => {
@@ -143,7 +169,7 @@ describe("ToolExecutor", () => {
     expect(r.content).toContain("escapes");
   });
 
-  it("rejects symlink escapes", async () => {
+  it.skipIf(!symlinkSupported)("rejects symlink escapes", async () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "dsa-out-"));
     try {
       fs.writeFileSync(path.join(outside, "secret.txt"), "top secret", "utf8");
@@ -396,3 +422,45 @@ describe("ToolExecutor hooks", () => {
     }
   });
 });
+  
+  
+describe('ToolExecutor platform gate (B3)', () => {  
+  function platExec(platform: NodeJS.Platform): ToolExecutor {  
+    return new ToolExecutor(  
+      new MemoryStore(path.join(tmp, '.mem')),  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      undefined,  
+      platform,  
+    );  
+  }  
+  
+  it('allToolDefs exposes PowerShell on win32 and hides it on linux', () => {  
+    const winNames = platExec('win32').allToolDefs().map((t) => t.name);  
+    expect(winNames).toContain('PowerShell');  
+    const linNames = platExec('linux').allToolDefs().map((t) => t.name);  
+    expect(linNames).not.toContain('PowerShell');  
+  });  
+  
+  it('PowerShell executes a command on win32 (skipped elsewhere)', async () => {  
+    if (process.platform !== 'win32') return;  
+    const r = await platExec('win32').execute('PowerShell', { command: 'echo hi' }, { workspaceRoot: tmp });  
+    expect(r.ok).toBe(true);  
+    expect(r.content).toContain('hi');  
+  });  
+  
+  it('PowerShell is refused on non-win32', async () => {  
+    const r = await platExec('linux').execute('PowerShell', { command: 'echo hi' }, { workspaceRoot: tmp });  
+    expect(r.ok).toBe(false);  
+    expect(r.content).toContain('not available on linux');  
+  });  
+});  

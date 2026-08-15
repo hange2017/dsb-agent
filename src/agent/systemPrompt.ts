@@ -1,4 +1,5 @@
 import type { RuleEntry } from "../projectContext/rulesReader";
+import { platformInfo } from "../util/platformInfo";
 
 export interface SystemPromptInput {
   workspaceRoot: string;
@@ -13,6 +14,8 @@ export interface SystemPromptInput {
   dreamHint?: string;
   /** 项目框架文档(.dsb/docs/project-overview.md);首次进入项目自动生成。注入时截断,完整内容按需 Read。 */
   projectOverview?: string;
+  /** 当前操作系统(win32/linux/darwin);缺省 process.platform。 */
+  platform?: NodeJS.Platform;
 }
 export function buildSystemPrompt(input: SystemPromptInput): string {
   const parts = [
@@ -72,5 +75,20 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   if (input.dreamHint) {
     parts.push(`## 记忆整理提示\n${input.dreamHint}`);
   }
+  const env = buildRunEnvSegment(input.platform);
+  if (env) parts.push(env);
   return parts.join("\n\n");
+}
+
+/** 运行环境段:告知模型当前 OS 与 shell,避免在 Windows cmd 下生成 Unix 命令。未知平台省略。 */
+function buildRunEnvSegment(platform: NodeJS.Platform | undefined): string {
+  const info = platformInfo(platform);
+  if (platform !== "win32" && platform !== "linux" && platform !== "darwin") return "";
+  return [
+    "## 运行环境",
+    `- OS: ${info.os}`,
+    `- Shell: ${info.shell}(Bash 工具经其执行)`,
+    `- 路径分隔符: ${info.sep}`,
+    `- 命令风格: ${info.commandStyle}`,
+  ].join("\n");
 }

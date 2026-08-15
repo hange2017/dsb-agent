@@ -108,6 +108,6 @@ describe("headless session with ScriptedProvider", () => {
     expect(tracker.summary().calls).toBe(2);
     // Bash 工具通过 cmd 执行,`echo world >> a.txt` 应追加内容
     const content = fs.readFileSync(path.join(workDir, "a.txt"), "utf8");
-    expect(content.trim()).toBe("hello\nworld".replace("\\n", "\n").trim());
+    expect(content.replace(/\r\n/g, "\n").trim()).toBe("hello\nworld");
   });
 });

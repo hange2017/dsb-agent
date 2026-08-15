@@ -40,4 +40,6 @@ export type PluginToolSpec = {
   inputSchema: Record<string, unknown>;
   /** 绝对路径可执行命令(已通过插件目录护栏)。 */
   commandPath: string;
+  /** 可选:仅在这些平台上接口对外推送;缺省 = 全平台。 */
+  platforms?: NodeJS.Platform[];
 };

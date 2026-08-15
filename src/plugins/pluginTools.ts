@@ -3,6 +3,14 @@ import type { ToolDef } from "../agent/tools/types";
 import type { PluginToolSpec } from "./types";
 
 /** 插件/工具 id 段:仅保留安全字符,供合格工具名。 */
+
+const KNOWN_PLATFORMS: ReadonlySet<string> = new Set(["win32", "linux", "darwin", "freebsd", "openbsd", "sunos", "aix", "android", "cygwin", "netbsd", "haiku"]);
+function parsePlatforms(raw: unknown): NodeJS.Platform[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((x): x is NodeJS.Platform => typeof x === "string" && KNOWN_PLATFORMS.has(x));
+  return out.length > 0 ? out : undefined;
+}
+
 export function sanitizePluginId(id: string): string {
   const s = id.replace(/[^A-Za-z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
   return s || "unnamed";
@@ -17,6 +25,7 @@ export function buildPluginToolDef(spec: PluginToolSpec): ToolDef {
     name: pluginToolQualifiedName(spec.pluginName, spec.name),
     description: `[plugin:${spec.pluginName}] ${spec.description}`,
     input_schema: spec.inputSchema,
+    ...(spec.platforms && spec.platforms.length > 0 ? { platforms: spec.platforms } : {}),
   };
 }
 
@@ -62,6 +71,7 @@ export function parsePluginToolsFromManifest(
       description,
       inputSchema: schema as Record<string, unknown>,
       commandPath,
+      platforms: parsePlatforms(o.platforms),
     });
   }
   return out;

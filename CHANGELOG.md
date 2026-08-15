@@ -2,6 +2,48 @@
 
 DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);实现计划与设计说明见 `.dsb/plans/` 与 `.dsb/specs/`。
 
+## [Unreleased]
+
+### 修复
+
+- **输入框 Ctrl/Cmd+Z 撤销失效**:发送后 `inputEl.value` 被编程式清空会销毁 textarea 原生撤销栈,输入框为空时按 Ctrl/Cmd+Z 现在会恢复上一次发送的文本;vim 模式 normal 状态不再拦截 Ctrl/Cmd/Alt 组合键,撤销/重做/复制/粘贴等浏览器原生行为恢复正常。
+- **瞬时参数省略标记污染防护**:瞬时参数摘要模板升级为强标识 `[TRANSIENT-SUMMARY field=... chars=...]` 并附「禁止写入文件」提示,模型不再把省略标记当真实内容复述;`Write`/`StrReplace` 执行前校验 `contents`/`old_string`/`new_string`,命中省略标记直接拒绝写入并提示用 `Read` 重新读取——从源头阻断「占位符污染文件」问题(Windows/Linux 均适用)。
+
+### 新增
+
+- **平台感知与工具平台门禁(B1)**:
+  - 工具定义新增 `platforms` 元数据(`ToolDef`),`filterToolDefs` 按 `process.platform` 过滤对外通告的工具集,为未来平台专用工具留好机制(当前核心工具全平台可用)。
+  - **Grep 不再完全失效**:rg 二进制解析新增 PATH 兜底(`rg`/`rg.exe`);无 rg 时降级为纯 Node 行级搜索(`grepFallback`,输出格式与 rg 一致),Windows 等无 rg 环境 Grep 永远可用(慢但可用)。
+  - **Bash 平台感知**:系统提示词新增「运行环境」段(OS/shell/路径分隔符/命令风格,按 `process.platform` 生成,Windows 提示用 `dir`/`type`);Bash 工具描述按平台动态生成,告知模型当前 shell 与命令风格。
+  - 新增 `src/util/platformInfo.ts` 集中平台信息,供提示词/工具描述/执行层共用。
+
+### 测试
+
+- 新增 `tests/platformGate.test.ts`(门禁过滤)、`tests/systemPrompt.test.ts`(运行环境段)、`tests/grepFallback.test.ts`(降级搜索);既有 `ripgrepPath.test.ts` 保持覆盖。
+
+### 扩展(B3)
+
+- **平台门禁扩展至 MCP/插件工具 + PowerShell 专用工具**:
+  - 插件工具:`PluginToolSpec` 新增可选 `platforms` 字段,manifest 工具条目可声明 `platforms: ["win32"]`(非法平台自动过滤);`buildPluginToolDef` 透传,插件工具按平台通告;执行入口加平台守卫,直接调用不匹配平台的插件工具返回错误。
+  - MCP 服务器:`.mcp.json` 服务器条目可声明 `platforms`;`McpRegistry` 注入平台并据此过滤 `listEnabled()`(平台不匹配的服务器不会连接/信任),`ensureConnected` 同样守卫。
+  - 新增 **PowerShell 专用工具**(仅 `win32` 暴露):以工作区为 cwd 执行 PowerShell 脚本(`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command`),输出格式与 Bash 一致;非 Windows 平台调用返回「not available」。
+- **测试**:新增 `tests/pluginTools.test.ts`(manifest 解析/透传/门禁过滤)、`tests/mcpRegistry.test.ts`(.mcp.json 解析/`listEnabled` 平台过滤);`tests/tools.test.ts` 新增 `ToolExecutor platform gate (B3)` 分组(PowerShell 在 win32 暴露/linux 隐藏、win32 执行、非 win32 拒绝)。
+
+### CI 平台矩阵
+
+- **CI 三平台矩阵显式化**:`ci.yml` 的 `test` job 已覆盖 `ubuntu-latest / windows-latest / macos-latest`,Test 步骤前新增 **Platform info** 步骤(打印 `process.platform`/`arch`/node 版本/内置 rg 包存在性),便于从 CI 日志直接核对平台分支。
+- **新增 `tests/platformMatrix.test.ts`**(真实平台冒烟,不注入平台):在 CI 三平台 runner 上验证「platformInfo 报告真实 OS/shell/分隔符」「allToolDefs 在 win32 暴露 PowerShell、其它平台隐藏」「Bash 描述匹配真实 shell(cmd.exe / /bin/bash)」「Bash 真实执行基础命令」「Grep 永远可用(原生 rg 或纯 Node 降级)」共 6 用例,把「每个平台都能跑」从口头约定变成 CI 硬性检查。
+
+### 真实验证(Windows, 2026-08-14)
+
+- 发现 `.tools/node-v20.19.0-win-x64` 便携 Node 后,实际跑通完整测试套件:**106 个测试文件 / 1038 用例全部通过**(1 个 Windows 无符号链接权限用例按平台跳过),`tsc --noEmit` 与 `npm run compile`(esbuild)均通过,`dist/bin/win32-x64-rg.exe` 随打包生成,Grep 不再报 not found。
+- 真实验证暴露并修复 4 处问题:
+  - `tests/tools.test.ts` 的 `platExec()` 构造参数错位(平台参数落在多余第 15 位被忽略,导致注入 linux 仍暴露 PowerShell)→ 修正为 14 参数,平台门禁用例真实生效。
+  - `executor.ts` 的 PowerShell dispatch 缺平台守卫 → 非 win32 直接调用现在返回 `PowerShell is not available on <platform>`。
+  - `benchmark/smoke.test.ts` 的 Bash 追加断言不兼容 Windows cmd 的 CRLF 输出 → 断言改为 EOL 规范化比较。
+  - `tests/grepFallback.test.ts` 的「无效正则字面量」用例误用 `a+b`(合法正则)→ 改用真正的无效正则 `(text`。
+  - `ToolExecContext.platform` 声明但 executor 从未读取(仅构造参数生效)→ dispatch 统一解析 `ctx.platform ?? this.platform ?? process.platform`,执行上下文注入平台真正生效。
+
 ## [0.2.1] — 2026-08-12
 
 ### 修复
@@ -12,6 +54,7 @@ DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);�
 
 - README 新增「真实编程使用统计数据」(平均每次调用费用置顶,含命中率/费用明细/官方单价口径),并同步英文版。
 - 历史信息总预算设置建议更新为「64K 即可运行,并非越大越好」。
+- 新增 `.dsb/docs/toolchain-instability-handbook.md`:本环境工具链不稳定现象与规避手册(占位符污染根因已定位至 `src/agent/toolUsePolicy.ts` + 操作规避)。
 
 ### 内部
 

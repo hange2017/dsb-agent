@@ -364,6 +364,7 @@ export class ChatViewProvider {
               ) || undefined,
               rules: ctx.rules,
               locale,
+              platform: process.platform,
               dreamHint: buildDreamHint(this.memory, locale),
               // 项目框架文档:首次进入项目自动生成,注入摘要供 agent 参考
               projectOverview: ctx.projectOverview,

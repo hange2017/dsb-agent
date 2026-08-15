@@ -257,3 +257,48 @@ describe("ChatController lazy MCP connect", () => {
     expect(exec.allToolDefs().map((d) => d.name)).toContain("mcp__echo__hello");
   });
 });
+
+describe("McpRegistry platform gate", () => {
+  it("parses optional platforms from .mcp.json server configs", () => {
+    fs.writeFileSync(
+      path.join(root, ".mcp.json"),
+      JSON.stringify({
+        servers: {
+          alpha: { command: "node", args: ["a.js"], platforms: ["win32"] },
+          beta: { url: "http://x", platforms: ["linux", "darwin"] },
+          gamma: { command: "node", args: ["c.js"] },
+          delta: { command: "node", args: ["d.js"], platforms: ["win32", "bogus"] },
+        },
+      }),
+      "utf8",
+    );
+    const reg = new McpRegistry("win32");
+    const cfgs = reg.loadFromMcpJson(root);
+    expect(cfgs).toHaveLength(4);
+    const byName = Object.fromEntries(cfgs.map((c) => [c.name, c]));
+    expect(byName.alpha.platforms).toEqual(["win32"]);
+    expect(byName.beta.platforms).toEqual(["linux", "darwin"]);
+    expect(byName.gamma.platforms).toBeUndefined();
+    expect(byName.delta.platforms).toEqual(["win32"]);
+  });
+
+  it("listEnabled filters servers by the current platform", () => {
+    fs.writeFileSync(
+      path.join(root, ".mcp.json"),
+      JSON.stringify({
+        servers: {
+          alpha: { command: "node", args: ["a.js"], platforms: ["win32"] },
+          beta: { command: "node", args: ["b.js"], platforms: ["linux"] },
+          gamma: { command: "node", args: ["c.js"] },
+        },
+      }),
+      "utf8",
+    );
+    const win = new McpRegistry("win32");
+    win.loadFromMcpJson(root);
+    expect(win.listEnabled().map((c) => c.name).sort()).toEqual(["alpha", "gamma"]);
+    const linux = new McpRegistry("linux");
+    linux.loadFromMcpJson(root);
+    expect(linux.listEnabled().map((c) => c.name).sort()).toEqual(["beta", "gamma"]);
+  });
+});

@@ -90,7 +90,7 @@ export const CORE_TOOLS: ToolDef[] = [
   },
   {
     name: "Bash",
-    description: "以工作区为 cwd 执行 shell 命令。",
+    description: "以工作区为 cwd 执行 shell 命令。Windows 经 cmd.exe,Linux/macOS 经 /bin/bash;请按当前 OS 选择命令风格。",
     input_schema: {
       type: "object",
       properties: {
@@ -100,6 +100,20 @@ export const CORE_TOOLS: ToolDef[] = [
       required: ["command"],
     },
   },
+  {
+    name: "PowerShell",
+    description: "在 Windows 上以工作区为 cwd 执行 PowerShell 脚本(仅 Windows 可用)。适合文件/进程/系统管理等 cmd 不擅长的场景。",
+    platforms: ["win32"],
+    input_schema: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "要执行的 PowerShell 命令/脚本" },
+        timeout_ms: { type: "number" },
+      },
+      required: ["command"],
+    },
+  },
+
   TODO_TOOL_DEF,
   {
     name: "WebSearch",

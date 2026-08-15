@@ -50,6 +50,13 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Platform info
+        shell: bash
+        run: |
+          node -e 'console.log("process.platform =", process.platform); console.log("arch =", process.arch); console.log("node =", process.version)'
+          echo "runner.os = ${{ runner.os }}"
+          ls node_modules/@vscode/ripgrep-* 2>/dev/null | head -20 || echo "no platform ripgrep package found"
+
       - name: Test
         # github-actions reporter:失败测试以 ::error:: 输出,显示为 check annotation(便于从 API 定位平台差异)
         run: npx vitest run --reporter=github-actions

@@ -12,6 +12,11 @@ export interface McpServerTools {
 }
 
 export class McpRegistry {
+  private readonly platform: NodeJS.Platform;
+  constructor(platform?: NodeJS.Platform) {
+    this.platform = platform ?? process.platform;
+  }
+
   private clients = new Map<string, McpClient>();
   private toolsCbs: Array<(tools: McpServerTools[]) => void> = [];
   /** 已连接服务器上报过的工具集,供后续订阅者重放。executor 按会话惰性创建,
@@ -30,6 +35,7 @@ export class McpRegistry {
     this.configs = Object.entries(servers).map(([name, raw]) => {
       const r = raw as Record<string, unknown>;
       const enabled = r.enabled !== false;
+      const platforms = parsePlatforms(r.platforms);
       const trusted = r.trusted === true;
       if (typeof r.command === "string") {
         return {
@@ -37,6 +43,7 @@ export class McpRegistry {
           spec: { transport: "stdio", command: r.command, args: asStrArr(r.args), env: r.env as Record<string, string> | undefined },
           enabled,
           trusted,
+          platforms,
         };
       }
       if (typeof r.url === "string") {
@@ -45,6 +52,7 @@ export class McpRegistry {
           spec: { transport: "streamable-http", url: r.url, headers: r.headers as Record<string, string> | undefined },
           enabled,
           trusted,
+          platforms,
         };
       }
       throw new Error(`Invalid MCP server config for ${name}`);
@@ -53,7 +61,9 @@ export class McpRegistry {
   }
 
   listEnabled(): McpServerConfig[] {
-    return this.configs.filter((c) => c.enabled);
+    return this.configs.filter(
+      (c) => c.enabled && (!c.platforms || c.platforms.length === 0 || c.platforms.includes(this.platform)),
+    );
   }
 
   /** 将启用中的服务器标为已信任(用户显式 mcpConnect opt-in)。 */
@@ -84,6 +94,7 @@ export class McpRegistry {
     if (this.clients.has(serverName)) return true;
     const cfg = this.configs.find((c) => c.name === serverName);
     if (!cfg || !cfg.enabled || !cfg.trusted) return false;
+    if (cfg.platforms && cfg.platforms.length > 0 && !cfg.platforms.includes(this.platform)) return false;
     try {
       const client = new McpClient(cfg.name);
       await client.connect(cfg.spec);
@@ -125,6 +136,13 @@ export class McpRegistry {
     this.clients.clear();
     this.knownTools = [];
   }
+}
+
+const KNOWN_PLATFORMS: ReadonlySet<string> = new Set(["win32", "linux", "darwin", "freebsd", "openbsd", "sunos", "aix", "android", "cygwin", "netbsd", "haiku"]);
+function parsePlatforms(raw: unknown): NodeJS.Platform[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((x): x is NodeJS.Platform => typeof x === "string" && KNOWN_PLATFORMS.has(x));
+  return out.length > 0 ? out : undefined;
 }
 
 function asStrArr(v: unknown): string[] | undefined {

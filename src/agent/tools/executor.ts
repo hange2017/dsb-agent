@@ -11,6 +11,10 @@ import {
   writeWorkspaceFile,
 } from "./workspaceFs";
 import { CORE_TOOLS, buildMcpToolDef } from "./definitions";
+import { filterToolDefs } from "./platformGate";
+import { isTransientSummaryText } from "../toolUsePolicy";
+import { platformInfo } from "../../util/platformInfo";
+import { grepFallback } from "./grepFallback";
 import { TodoManager } from "./todoTool";
 import { defaultWebSearch, webFetch, webSearch, type WebSearchImpl } from "./webTools";
 import { runSubagent, type SubagentFactory } from "../subagentRunner";
@@ -67,6 +71,26 @@ async function resolveRgBinary(ctx: ToolExecContext): Promise<string | undefined
   } catch {
     // ignore
   }
+  // PATH 兜底:用户系统级安装了 rg 时可用(win32 上为 rg.exe)
+  const fromPath = findRgOnPath();
+  if (fromPath) return fromPath;
+  return undefined;
+}
+
+/** 在 PATH 中查找 rg 可执行文件(win32 为 rg.exe)。 */
+function findRgOnPath(): string | undefined {
+  const names = process.platform === "win32" ? ["rg.exe", "rg"] : ["rg"];
+  for (const name of names) {
+    for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+      if (!dir) continue;
+      try {
+        const candidate = path.join(dir, name);
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      } catch {
+        // ignore
+      }
+    }
+  }
   return undefined;
 }
 
@@ -91,6 +115,12 @@ function accumulateStream(current: string, chunk: string): string {
   if (current.length >= MAX_STREAM_CHARS) return current;
   const next = current + chunk;
   return next.length > MAX_STREAM_CHARS ? next.slice(0, MAX_STREAM_CHARS) : next;
+}
+
+/** Bash 工具描述按平台生成,让模型知道当前 shell 与命令风格。 */
+function bashToolDescription(platform: NodeJS.Platform): string {
+  const info = platformInfo(platform);
+  return `以工作区为 cwd 执行 shell 命令(当前 shell: ${info.shell})。命令风格: ${info.commandStyle}。`;
 }
 
 function errorResult(message: string): ToolExecResult {
@@ -156,6 +186,47 @@ function runShell(command: string, cwd: string, signal: AbortSignal | undefined,
   });
 }
 
+function runPowerShell(command: string, cwd: string, signal: AbortSignal | undefined, timeoutMs: number): Promise<ToolExecResult> {
+  if (signal?.aborted) return Promise.resolve({ ok: false, content: formatShellOutput(-1, "", "", "Aborted") });
+  return new Promise((resolve) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { cwd, windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const killChild = (): void => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+    };
+    const finish = (ok: boolean, content: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve({ ok, content });
+    };
+    child.stdout?.on("data", (c: Buffer) => { stdout = accumulateStream(stdout, c.toString()); });
+    child.stderr?.on("data", (c: Buffer) => { stderr = accumulateStream(stderr, c.toString()); });
+    const timer = setTimeout(() => {
+      killChild();
+      finish(false, formatShellOutput(-1, stdout, stderr, "Command timed out"));
+    }, timeoutMs);
+    const onAbort = (): void => {
+      killChild();
+      finish(false, formatShellOutput(-1, stdout, stderr, "Aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    child.on("error", (err) => finish(false, formatShellOutput(-1, stdout, stderr, err.message)));
+    child.on("close", (code) => {
+      const exit = code ?? -1;
+      finish(true, formatShellOutput(exit, stdout, stderr));
+    });
+  });
+}
+
 async function runGrep(input: Record<string, unknown>, ctx: ToolExecContext): Promise<ToolExecResult> {
   const pattern = asString(input.pattern, "pattern");
   const args = ["--line-number", "--no-heading", "--color=never"];
@@ -169,10 +240,20 @@ async function runGrep(input: Record<string, unknown>, ctx: ToolExecContext): Pr
 
   const rgBinary = await resolveRgBinary(ctx);
   if (!rgBinary) {
+    // 无 rg:降级为纯 Node 行扫描(慢但永远可用),避免 Windows 等无 rg 环境 Grep 完全失效。
+    const fallback = grepFallback(pattern, {
+      root: ctx.workspaceRoot,
+      path: userPath,
+      glob: typeof input.glob === "string" && input.glob ? input.glob : undefined,
+      caseInsensitive: input.case_insensitive === true,
+    });
+    if (fallback.ok) return { ok: true, content: truncateToolResult(fallback.content) };
     return {
       ok: false,
       content: truncateToolResult(
-        "ERROR: ripgrep (rg) not found. Install @vscode/ripgrep or ensure the extension bundled dist/bin/rg.",
+        "ERROR: ripgrep (rg) not found; fallback search failed: " +
+          fallback.content +
+          ". Install @vscode/ripgrep or run npm run build.",
       ),
     };
   }
@@ -244,6 +325,8 @@ export class ToolExecutor {
     private readonly globalMemory?: MemoryStore,
     /** 冷存储:ContextRecall 回查压缩前原文;缺省时该工具 fail-open。 */
     private readonly contextStore?: ContextStore,
+    /** 平台门禁用平台;缺省 process.platform。测试可注入。 */
+    private readonly platform?: NodeJS.Platform,
   ) {
     this.subagentDepth = initialSubagentDepth;
     this.mcp?.onTools((tools) => {
@@ -260,12 +343,15 @@ export class ToolExecutor {
     }
   }
 
-  /** 循环对外通告的工具定义:核心工具 + MCP + 插件工具。 */
+  /** 循环对外通告的工具定义:核心工具 + MCP + 插件工具,按平台门禁过滤。 */
   allToolDefs(): ToolDef[] {
     const mcp: ToolDef[] = [];
     for (const defs of this.mcpServerDefs.values()) mcp.push(...defs);
     const plugin = [...this.pluginTools.values()].map(buildPluginToolDef);
-    return [...this.toolDefs, ...mcp, ...plugin];
+    const platform = this.platform ?? process.platform;
+    return filterToolDefs([...this.toolDefs, ...mcp, ...plugin], platform).map((d) =>
+      d.name === "Bash" ? { ...d, description: bashToolDescription(platform) } : d,
+    );
   }
 
   async execute(name: string, input: Record<string, unknown>, ctx: ToolExecContext): Promise<ToolExecResult> {
@@ -281,9 +367,15 @@ export class ToolExecutor {
 
   /** 核心分发:mcp__ / plugin__ 转发,其余走核心 switch。 */
   private async dispatch(name: string, input: Record<string, unknown>, ctx: ToolExecContext): Promise<ToolExecResult> {
+    const platform = ctx.platform ?? this.platform ?? process.platform;
     if (name.startsWith("mcp__")) return await this.executeMcp(name, input);
     const pluginSpec = this.pluginTools.get(name);
-    if (pluginSpec) return await this.executePluginTool(pluginSpec, input, ctx);
+    if (pluginSpec) {
+      if (pluginSpec.platforms && pluginSpec.platforms.length > 0 && !pluginSpec.platforms.includes(platform)) {
+        return errorResult(`Tool ${name} is not available on ${platform}`);
+      }
+      return await this.executePluginTool(pluginSpec, input, ctx);
+    }
     const def = CORE_TOOLS.find((t) => t.name === name);
     if (!def) return errorResult(`Unknown tool: ${name}`);
     const root = ctx.workspaceRoot;
@@ -305,6 +397,12 @@ export class ToolExecutor {
         case "Write": {
           const filePath = asString(input.path, "path");
           const contents = typeof input.contents === "string" ? input.contents : "";
+          if (isTransientSummaryText(contents)) {
+            return errorResult(
+              `REFUSED: contents 疑似瞬时参数省略标记(transient summary),拒绝写入 ${filePath}。
+请先用 Read/StrReplace 读取真实内容,再以完整内容重试。`
+            );
+          }
           this.checkpoints?.snapshot(resolveWorkspacePath(root, filePath));
           writeWorkspaceFile(root, filePath, contents);
           return { ok: true, content: `Wrote ${filePath}` };
@@ -313,6 +411,10 @@ export class ToolExecutor {
           const filePath = asString(input.path, "path");
           const oldString = asString(input.old_string, "old_string");
           const newString = asString(input.new_string, "new_string");
+          if (isTransientSummaryText(newString) || isTransientSummaryText(oldString)) {
+            return errorResult(`REFUSED: old_string/new_string 疑似瞬时参数省略标记,拒绝修改 ${filePath}。
+请先用 Read 读取真实内容后重试。`);
+          }
           const full = resolveWorkspacePath(root, filePath); // 逃逸保持红:在 try 外抛
           this.checkpoints?.snapshot(full); // 快照失败也必须红(真实失败,非「无匹配」)
           try {
@@ -350,6 +452,16 @@ export class ToolExecutor {
           const requested = asOptionalNumber(input.timeout_ms);
           const timeoutMs = Math.min(requested !== undefined && requested > 0 ? requested : DEFAULT_SHELL_TIMEOUT_MS, MAX_SHELL_TIMEOUT_MS);
           const result = await runShell(command, root, ctx.signal, timeoutMs);
+          return result;
+        }
+        case "PowerShell": {
+          if (platform !== "win32") {
+            return errorResult(`PowerShell is not available on ${platform}`);
+          }
+          const command = asString(input.command, "command");
+          const requested = asOptionalNumber(input.timeout_ms);
+          const timeoutMs = Math.min(requested !== undefined && requested > 0 ? requested : DEFAULT_SHELL_TIMEOUT_MS, MAX_SHELL_TIMEOUT_MS);
+          const result = await runPowerShell(command, root, ctx.signal, timeoutMs);
           return result;
         }
         case "TodoWrite": {
