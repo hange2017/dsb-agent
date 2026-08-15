@@ -28,31 +28,46 @@ export interface PrepareRoundResult {
   toolParallelMode: ToolParallelMode;
 }
 
+/** 消息是否含可发送的非空 content(空串/空数组/仅空 text 会触发网关 400)。 */
+export function messageHasNonEmptyContent(msg: ProviderMessage): boolean {
+  const content = msg.content;
+  if (typeof content === "string") return content.length > 0;
+  if (!Array.isArray(content) || content.length === 0) return false;
+  return content.some((b) => {
+    if (b.type === "text") return (b.text ?? "").length > 0;
+    if (b.type === "thinking") return (b.thinking ?? "").length > 0;
+    // tool_use / tool_result / image 等块本身即非空载荷
+    return true;
+  });
+}
+
+/** 丢弃空 content 消息,避免 `messages.N: all messages must have non-empty content`。 */
+export function dropEmptyContentMessages(messages: ProviderMessage[]): ProviderMessage[] {
+  return messages.filter(messageHasNonEmptyContent);
+}
+
 /** 无 thinking 能力时从 outbound 历史剥掉 thinking 块,避免部分网关 400。 */
 export function stripThinkingBlocks(messages: ProviderMessage[]): ProviderMessage[] {
-  return messages.map((msg) => {
-    if (msg.role !== "assistant") return msg;
+  return messages.flatMap((msg) => {
+    if (msg.role !== "assistant") return [msg];
     const kept = msg.content.filter((b): b is Exclude<ProviderBlock, { type: "thinking" }> => b.type !== "thinking");
-    if (kept.length === 0) {
-      return { role: "assistant", content: [{ type: "text", text: "" }] };
-    }
-    return { role: "assistant", content: kept };
+    // 仅 thinking 的回合剥光后丢弃,不再用空 text 占位(空 content → API 400)
+    if (kept.length === 0) return [];
+    return [{ role: "assistant", content: kept }];
   });
 }
 
 /** 无 vision 时剥 user content 中的 image 块(含历史附件)。 */
 export function stripImageBlocks(messages: ProviderMessage[]): ProviderMessage[] {
-  return messages.map((msg) => {
-    if (msg.role !== "user") return msg;
-    if (typeof msg.content === "string") return msg;
+  return messages.flatMap((msg) => {
+    if (msg.role !== "user") return [msg];
+    if (typeof msg.content === "string") return [msg];
     const kept = msg.content.filter((b): b is Exclude<ProviderUserBlock, { type: "image" }> => b.type !== "image");
-    if (kept.length === 0) {
-      return { role: "user", content: "" };
-    }
+    if (kept.length === 0) return []; // 纯图片消息剥光后丢弃,避免 content:""
     if (kept.length === 1 && kept[0].type === "text") {
-      return { role: "user", content: kept[0].text };
+      return [{ role: "user", content: kept[0].text }];
     }
-    return { role: "user", content: kept };
+    return [{ role: "user", content: kept }];
   });
 }
 
@@ -140,7 +155,8 @@ export function sanitizeOutbound(caps: ModelCapabilities, messages: ProviderMess
   let out = repairToolUseResultPairs(messages);
   if (caps.supportsThinking === false) out = stripThinkingBlocks(out);
   if (caps.supportsVision === false) out = stripImageBlocks(out);
-  return out;
+  // 落盘损坏 / thinking 全剥 / 空占位:统一剔除,防止网关 400 non-empty content
+  return dropEmptyContentMessages(out);
 }
 
 /** 剩余窗约束 max_tokens:min(cap, remaining - reserve),至少 1。 */

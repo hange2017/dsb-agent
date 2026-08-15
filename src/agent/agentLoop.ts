@@ -678,6 +678,11 @@ export class AgentSession {
             }
           }
         }
+        // 仅 thinking 且处理侧关闭时 persistBlocks 为空:勿 content:[](后续发送触发 API 400)
+        if (persistBlocks.length === 0) {
+          terminal = { type: "done" };
+          return;
+        }
         this.messages.push({ role: "assistant", content: persistBlocks });
 
         if (toolUses.length === 0) {

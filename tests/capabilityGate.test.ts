@@ -126,6 +126,26 @@ describe("sanitizeOutbound", () => {
     });
     expect(out[3]).toEqual({ role: "user", content: "继续" });
   });
+
+  // 网关 400: messages.N: all messages must have non-empty content
+  // 场景:thinking 全剥后空 assistant、或历史落盘 content:[]
+  it("drops empty-content messages before send (API 400: non-empty content)", () => {
+    const messages: ProviderMessage[] = [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "only think" }],
+      },
+      { role: "assistant", content: [] },
+      { role: "user", content: "" },
+      { role: "user", content: "继续" },
+    ];
+    const out = sanitizeOutbound({ supportsVision: true, supportsThinking: false }, messages);
+    expect(out).toEqual([
+      { role: "user", content: "hi" },
+      { role: "user", content: "继续" },
+    ]);
+  });
 });
 
 describe("repairToolUseResultPairs", () => {
