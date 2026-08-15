@@ -1304,7 +1304,7 @@ describe("AgentSession toolUse tail trimming", () => {
       { role: "user", content: "写文件" },
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(500) } }],
+        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
       },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "Wrote src/foo.ts" }] }] },
       { role: "assistant", content: [{ type: "text", text: "写完了" }] },
@@ -1325,7 +1325,7 @@ describe("AgentSession toolUse tail trimming", () => {
       { role: "user", content: "写文件" },
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(500) } }],
+        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
       },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "Wrote src/foo.ts" }] }] },
     ];
@@ -1335,7 +1335,7 @@ describe("AgentSession toolUse tail trimming", () => {
     const sent = calls[0]!.messages;
     const assistantMsg = sent.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
     const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
-    expect(block.input.contents).toBe("内容".repeat(500));
+    expect(block.input.contents).toBe("内容".repeat(1100));
   });
 
   it("keeps Read toolUse (no transient fields) even when consumed", async () => {
@@ -1360,8 +1360,8 @@ describe("AgentSession toolUse tail trimming", () => {
     const { provider, calls } = fakeProvider([
       {
         result: {
-          blocks: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(500) } }],
-          toolUses: [{ id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(500) } }],
+          blocks: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
+          toolUses: [{ id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
         },
       },
       { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },

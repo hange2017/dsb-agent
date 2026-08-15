@@ -19,8 +19,25 @@ import { makeSummary, type ColdChunk } from "../context/contextStore";
 
 export type ToolUseAction = "keep" | "trim";
 
-/** 值小于此字符数的瞬态字段不动。 */
+/** 值小于此字符数的瞬态字段不动(全局默认)。 */
 export const TRANSIENT_FIELD_MIN_CHARS = 200;
+
+/**
+ * 按「工具.字段」细分的最小保留阈值(高于全局默认 → 该字段更多原文进上下文)。
+ * 理由:Write.contents / StrReplace.new_string 是模型工作产物,若一写入就被
+ * 摘要替换,模型在后续轮次看不到自己写过的内容,只能「复述省略标记」→ 污染。
+ * 放宽后中小文件内容保留在上下文中,模型能基于真实内容继续工作、写后直接引用。
+ * (阈值只影响「保留多少原文」,定型后字节仍恒定,不影响缓存前缀稳定性。)
+ */
+export const TRANSIENT_FIELD_MIN_CHARS_BY_KEY: Record<string, number> = {
+  "Write.contents": 2000,
+  "StrReplace.new_string": 1000,
+};
+
+/** 取「工具.字段」细分阈值,无细分回退全局默认。 */
+export function fieldMinChars(toolName: string, fieldName: string): number {
+  return TRANSIENT_FIELD_MIN_CHARS_BY_KEY[`${toolName}.${fieldName}`] ?? TRANSIENT_FIELD_MIN_CHARS;
+}
 
 /**
  * Transient summary marker prefix. Shared by generator (toolUsePolicy)
@@ -66,10 +83,10 @@ function valueChars(value: unknown): number {
   }
 }
 
-/** 替换单个瞬态字段值为摘要文本;小值原样返回。 */
-function trimTransientField(fieldName: string, value: unknown): unknown {
+/** 替换单个瞬态字段值为摘要文本;小值(按字段细分阈值)原样返回。 */
+function trimTransientField(toolName: string, fieldName: string, value: unknown): unknown {
   const chars = valueChars(value);
-  if (chars <= TRANSIENT_FIELD_MIN_CHARS) return value;
+  if (chars <= fieldMinChars(toolName, fieldName)) return value;
   return transientSummary(fieldName, chars);
 }
 
@@ -79,7 +96,7 @@ function trimTransientField(fieldName: string, value: unknown): unknown {
  *  - 其余瞬态字段为字符串,直接替换。
  * 返回新对象(仅在发生替换时),否则返回原 input 引用。
  */
-function trimInput(input: unknown, fields: string[]): unknown {
+function trimInput(toolName: string, input: unknown, fields: string[]): unknown {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
   const record = input as Record<string, unknown>;
   const out: Record<string, unknown> = { ...record };
@@ -94,13 +111,13 @@ function trimInput(input: unknown, fields: string[]): unknown {
         const s = stage as Record<string, unknown>;
         if (typeof s.prompt !== "string") return stage;
         const chars = s.prompt.length;
-        if (chars <= TRANSIENT_FIELD_MIN_CHARS) return stage;
+        if (chars <= fieldMinChars(toolName, "stages")) return stage;
         changed = true;
         return { ...s, prompt: transientSummary("stage prompt", chars) };
       });
       out[key] = trimmed;
     } else {
-      const v = trimTransientField(key, out[key]);
+      const v = trimTransientField(toolName, key, out[key]);
       if (v !== out[key]) {
         changed = true;
         out[key] = v;
@@ -117,7 +134,7 @@ export function planToolUseTrim(
 ): { action: ToolUseAction; trimmedInput?: unknown } {
   const fields = TRANSIENT_FIELDS[toolName];
   if (!fields) return { action: "keep" };
-  const trimmed = trimInput(input, fields);
+  const trimmed = trimInput(toolName, input, fields);
   if (trimmed === input) return { action: "keep" };
   return { action: "trim", trimmedInput: trimmed };
 }

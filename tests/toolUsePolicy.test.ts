@@ -11,7 +11,7 @@ import type { ProviderMessage } from "../src/agent/provider/types";
 
 describe("planToolUseTrim", () => {
   it("trims Write.contents but keeps path", () => {
-    const input = { path: "src/foo.ts", contents: "内容".repeat(500) };
+    const input = { path: "src/foo.ts", contents: "内容".repeat(1100) };
     const plan = planToolUseTrim("Write", input);
     expect(plan.action).toBe("trim");
     expect(plan.trimmedInput).toEqual({
@@ -27,8 +27,25 @@ describe("planToolUseTrim", () => {
     expect(plan.action).toBe("keep");
   });
 
+  it("per-field thresholds: Write.contents 2000 / StrReplace.new_string 1000", () => {
+    // Write.contents 1500 字符(<2000 细分阈值)但 >200 全局阈值 → 保留原文
+    const w = planToolUseTrim("Write", { path: "a.ts", contents: "内容".repeat(750) });
+    expect(w.action).toBe("keep");
+    // Write.contents 2200 字符(>2000) → trim
+    const w2 = planToolUseTrim("Write", { path: "a.ts", contents: "内容".repeat(1100) });
+    expect(w2.action).toBe("trim");
+    // StrReplace.new_string 600 字符(<1000)但 >200 → 保留
+    const sr = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(300), new_string: "新".repeat(600) });
+    expect(sr.action).toBe("trim"); // old_string 300>200 仍触发 trim
+    expect((sr.trimmedInput as any).new_string).not.toContain("[TRANSIENT-SUMMARY");
+    // StrReplace.new_string 1200 字符(>1000) → trim
+    const sr2 = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(300), new_string: "新".repeat(1200) });
+    expect(sr2.action).toBe("trim");
+    expect((sr2.trimmedInput as any).new_string).toContain("[TRANSIENT-SUMMARY");
+  });
+
   it("trims StrReplace old_string and new_string", () => {
-    const input = { path: "a.ts", old_string: "旧".repeat(300), new_string: "新".repeat(500), replace_all: true };
+    const input = { path: "a.ts", old_string: "旧".repeat(300), new_string: "新".repeat(1100), replace_all: true };
     const plan = planToolUseTrim("StrReplace", input);
     expect(plan.action).toBe("trim");
     const out = plan.trimmedInput as any;
