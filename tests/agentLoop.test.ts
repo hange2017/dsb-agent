@@ -1135,6 +1135,12 @@ describe("AgentSession toolResult tail trimming", () => {
     return rows.join("\n");
   }
 
+  function bigWebOutput(): string {
+    const rows: string[] = ["exit=0"];
+    for (let i = 0; i < 200; i++) rows.push(`行${i} ` + "内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容内容");
+    return rows.join("\n");
+  }
+
   function sessionDeps(initialHistory: ProviderMessage[]) {
     const { provider, calls } = fakeProvider([{ result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } }]);
     const breakdowns: Array<{ totalTokens: number; toolResultTokens: number; messageBreakdown: Array<{ kind: string; tokens: number }> }> = [];
@@ -1155,19 +1161,19 @@ describe("AgentSession toolResult tail trimming", () => {
     return { session, calls, breakdowns };
   }
 
-  it("replaces consumed big Bash toolResult with trimmed marker before send", async () => {
+  it("replaces consumed big WebFetch toolResult with trimmed marker before send", async () => {
     const initialHistory: ProviderMessage[] = [
       { role: "user", content: "需求" },
       {
         role: "assistant",
         content: [
-          { type: "text", text: "先跑命令" },
-          { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls -la" } },
+          { type: "text", text: "先抓页面" },
+          { type: "tool_use", id: "t1", name: "WebFetch", input: { url: "https://example.com" } },
         ],
       },
       {
         role: "user",
-        content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: bigBashOutput() }] }],
+        content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: bigWebOutput() }] }],
       },
       { role: "assistant", content: [{ type: "text", text: "我看到了输出" }] },
     ];
@@ -1180,15 +1186,16 @@ describe("AgentSession toolResult tail trimming", () => {
     const text = (resultMsg!.content as any[])[0].content[0].text as string;
     expect(text.startsWith("[tool-result-trimmed]")).toBe(true);
     expect(text).toContain("exit=0");
-    // 保留 head5+tail30+折叠 ≈ 35 行,明显小于原始 100 行
-    expect(text.length).toBeLessThan(bigBashOutput().length * 0.6);
+    expect(text).toContain("行199");
+    // 保留 head40+tail40+折叠 ≈ 81 行,明显小于原始 200 行
+    expect(text.length).toBeLessThan(bigWebOutput().length * 0.6);
 
-    // 打点反映精简后真实发送:tool_result tokens 远小于原始(~3000)
+    // 打点反映精简后真实发送:tool_result tokens 远小于原始(~8800)
     expect(breakdowns.length).toBeGreaterThan(0);
     const b = breakdowns[0]!;
-    expect(b.toolResultTokens).toBeLessThan(1500);
+    expect(b.toolResultTokens).toBeLessThan(4000);
     const trPart = b.messageBreakdown.find((p) => p.kind === "tool_result");
-    expect(trPart!.tokens).toBeLessThan(1500);
+    expect(trPart!.tokens).toBeLessThan(4000);
   });
 
   it("keeps latest unconsumed toolResult as-is", async () => {
@@ -1238,13 +1245,13 @@ describe("AgentSession toolResult tail trimming", () => {
   });
 
   it("P1: writes trim-class tool result as final form at write time (not send-pre), keeping prefix stable", async () => {
-    // 第一轮 provider 触发 Bash 工具,本地执行产生超大输出;agentLoop 将 tool_result
+    // 第一轮 provider 触发 WebFetch 工具,本地执行产生超大输出;agentLoop 将 tool_result
     // push 前(写前定型)就按 planToolResultTrim 裁剪,使该块自首次进入消息即字节恒定。
     const { provider, calls } = fakeProvider([
-      { result: { blocks: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "run" } }], toolUses: [{ id: "t1", name: "Bash", input: { command: "run" } }] } },
+      { result: { blocks: [{ type: "tool_use", id: "t1", name: "WebFetch", input: { url: "https://example.com" } }], toolUses: [{ id: "t1", name: "WebFetch", input: { url: "https://example.com" } }] } },
       { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
     ]);
-    const tools = fakeTools({ Bash: () => ({ ok: true, content: bigBashOutput() }) }).tools;
+    const tools = fakeTools({ WebFetch: () => ({ ok: true, content: bigWebOutput() }) }).tools;
     const session = new AgentSession({
       provider,
       tools,
@@ -1264,7 +1271,7 @@ describe("AgentSession toolResult tail trimming", () => {
     const text = (resultMsg!.content as any[])[0].content[0].text as string;
     expect(text.startsWith("[tool-result-trimmed]")).toBe(true);
     expect(text).toContain("exit=0");
-    expect(text.length).toBeLessThan(bigBashOutput().length * 0.6);
+    expect(text.length).toBeLessThan(bigWebOutput().length * 0.6);
 
     // 持久 history 中该 tool_result 已在 push 时定型(messages 已含定型态),
     // 证明不是等到发送前 trimConsumedToolResults 才替换。
@@ -1422,7 +1429,7 @@ describe("AgentSession thinking tail trimming", () => {
     expect(block.thinking).toContain("[thinking-trimmed");
     expect(block.thinking).toContain("推理第 59 行");
     expect(block.thinking).not.toContain("推理第 0 行");
-    expect(block.thinking.length).toBeLessThan(bigThinking().length / 4);
+    expect(block.thinking.length).toBeLessThan(bigThinking().length / 2);
   });
 
   it("keeps latest unconsumed thinking as-is", async () => {
@@ -1460,7 +1467,7 @@ describe("AgentSession thinking tail trimming", () => {
     expect(block.thinking).toBe("短思考");
   });
 
-  it("collapses old consumed thinking beyond recent N to one-line (N=10)", async () => {
+  it("collapses old consumed thinking beyond recent N to one-line (N=15)", async () => {
     const mk = (n: number) => ({
       role: "assistant" as const,
       content: [
@@ -1470,7 +1477,7 @@ describe("AgentSession thinking tail trimming", () => {
     });
     const initialHistory: ProviderMessage[] = [
       { role: "user", content: "需求" },
-      ...Array.from({ length: 12 }, (_, i) => mk(i + 1)),
+      ...Array.from({ length: 16 }, (_, i) => mk(i + 1)),
       { role: "assistant", content: [{ type: "text", text: "最终结论" }] },
     ];
     const { session, calls } = sessionDeps(initialHistory);
@@ -1481,16 +1488,15 @@ describe("AgentSession thinking tail trimming", () => {
       .flatMap((m) => (m.content as any[]).filter((b) => b.type === "thinking"))
       .map((b) => b.thinking as string);
 
-    // 12 条已消费 thinking:最近 10 条保留,最旧 2 条压成一行
-    expect(blocks).toHaveLength(12);
+    // 16 条已消费 thinking:最近 15 条保留,最旧 1 条压成一行
+    expect(blocks).toHaveLength(16);
     const olds = blocks.filter((t) => t.startsWith("[thinking-old:"));
-    expect(olds).toHaveLength(2);
+    expect(olds).toHaveLength(1);
     expect(olds[0]).toContain("轮次1结论");
     expect(olds[0]).not.toContain("轮次1推理");
-    expect(olds[1]).toContain("轮次2结论");
     const recent = blocks.filter((t) => !t.startsWith("[thinking-old:"));
-    // 其余 10 条:短 thinking(≤150)原样保留
-    expect(recent.filter((t) => !t.startsWith("[thinking-trimmed")).length).toBe(10);
+    // 其余 15 条:短 thinking(≤150)原样保留
+    expect(recent.filter((t) => !t.startsWith("[thinking-trimmed")).length).toBe(15);
   });
 
   it("P3: shapes oversized thinking at persist time (first entry), keeping prefix stable", async () => {
