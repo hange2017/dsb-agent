@@ -1,0 +1,16 @@
+# 统一 LF 行尾:所有文本文件在仓库内存储为 LF,避免 CRLF 混入
+* text=auto eol=lf
+
+# 二进制文件明确标记
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.zip binary
+*.vsix binary
+*.node binary
