@@ -52,6 +52,28 @@ describe("ToolExecutor", () => {
     expect(r.content).toContain("REFUSED");
     expect(fs.existsSync(path.join(tmp, "b.txt"))).toBe(false);
   });
+  it("REFUSED hints at readback trap (禁止复述) and segment read", async () => {
+    const marker = "[TRANSIENT-SUMMARY field=contents chars=999] 瞬时参数省略标记:禁止写入文件";
+    const r = await exec.execute("Write", { path: "b.txt", contents: marker }, { workspaceRoot: tmp });
+    expect(r.content).toContain("复述");
+    expect(r.content).toContain("Read");
+  });
+
+  it("Write echo includes bytes/lines/首行预览 anchor", async () => {
+    const contents = "第一行\n第二行\nthird line";
+    const r = await exec.execute("Write", { path: "c.txt", contents }, { workspaceRoot: tmp });
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("bytes");
+    expect(r.content).toContain("lines");
+    expect(r.content).toContain("内容预览");
+    expect(r.content).toContain("第一行");
+  });
+
+  it("Read includes (file/lines/showing) header for segment-read planning", async () => {
+    const r = await exec.execute("Read", { path: "a.txt" }, { workspaceRoot: tmp });
+    expect(r.ok).toBe(true);
+    expect(r.content).toMatch(/\(file: .*?, lines: \d+, showing \d+-\d+\)/);
+  });
   it("StrReplace refuses transient summary new_string", async () => {
     const marker = "[TRANSIENT-SUMMARY field=new_string chars=9] 瞬时参数省略标记";
     const r = await exec.execute("StrReplace", { path: "a.txt", old_string: "hello", new_string: marker }, { workspaceRoot: tmp });

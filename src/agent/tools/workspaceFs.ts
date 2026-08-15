@@ -52,9 +52,16 @@ export function readWorkspaceFile(root: string, rel: string, opts?: { offset?: n
   }
   const all = fs.readFileSync(full, "utf8");
   const lines = all.split("\n");
+  const total = lines.length;
   const start = Math.max(0, (opts?.offset ?? 1) - 1);
   const end = opts?.limit !== undefined ? start + opts.limit : lines.length;
-  return lines.slice(start, Math.min(end, lines.length)).join("\n");
+  const shownEnd = Math.min(end, total);
+  const shownStart = start >= total ? total : start + 1;
+  // 头行给出文件总行数与当前读取区间,支持分段读长文件(读计划/读大文件时
+  // 模型能判断是否漏段、是否需要继续 Read 下一段)。
+  const header = `(file: ${rel}, lines: ${total}, showing ${shownStart}-${shownEnd})`;
+  const body = lines.slice(start, shownEnd).join("\n");
+  return body.length === 0 ? header : `${header}\n${body}`;
 }
 
 export function writeWorkspaceFile(root: string, rel: string, contents: string): void {

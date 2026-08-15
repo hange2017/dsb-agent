@@ -105,6 +105,12 @@ function asString(value: unknown, field: string): string {
   return value;
 }
 
+/** 把内容压成单行预览(供 Write/StrReplace 的 tool_result 回显,给模型「我写了什么」的锚点)。 */
+function oneLinePreview(text: string, max = 120): string {
+  const line = text.split("\n").filter((l) => l.trim()).join(" ") || "(empty)";
+  return line.length > max ? line.slice(0, max) + "…" : line;
+}
+
 function asOptionalNumber(value: unknown): number | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Expected a number");
@@ -400,12 +406,15 @@ export class ToolExecutor {
           if (isTransientSummaryText(contents)) {
             return errorResult(
               `REFUSED: contents 疑似瞬时参数省略标记(transient summary),拒绝写入 ${filePath}。
-请先用 Read/StrReplace 读取真实内容,再以完整内容重试。`
+上下文中的省略标记不是真实内容,禁止复述或写入文件。
+请先用 Read 读取真实内容(长文件请分段 offset/limit),再以完整内容重试。`
             );
           }
           this.checkpoints?.snapshot(resolveWorkspacePath(root, filePath));
           writeWorkspaceFile(root, filePath, contents);
-          return { ok: true, content: `Wrote ${filePath}` };
+          const written = fs.statSync(resolveWorkspacePath(root, filePath));
+          const lineCount = contents.length === 0 ? 0 : contents.split("\n").length;
+          return { ok: true, content: `Wrote ${filePath} (${written.size} bytes, ${lineCount} lines) · 内容预览: ${oneLinePreview(contents)}` };
         }
         case "StrReplace": {
           const filePath = asString(input.path, "path");
@@ -413,13 +422,14 @@ export class ToolExecutor {
           const newString = asString(input.new_string, "new_string");
           if (isTransientSummaryText(newString) || isTransientSummaryText(oldString)) {
             return errorResult(`REFUSED: old_string/new_string 疑似瞬时参数省略标记,拒绝修改 ${filePath}。
-请先用 Read 读取真实内容后重试。`);
+上下文中的省略标记不是真实内容,禁止复述或写入文件。
+请先用 Read 读取真实内容(长文件请分段 offset/limit),再以完整内容重试。`);
           }
           const full = resolveWorkspacePath(root, filePath); // 逃逸保持红:在 try 外抛
           this.checkpoints?.snapshot(full); // 快照失败也必须红(真实失败,非「无匹配」)
           try {
             const { replacements } = strReplaceWorkspaceFile(root, filePath, oldString, newString, input.replace_all === true);
-            return { ok: true, content: `Replaced ${replacements} occurrence(s) in ${filePath}` };
+            return { ok: true, content: `Replaced ${replacements} occurrence(s) in ${filePath} · new_string 预览: ${oneLinePreview(newString)}` };
           } catch (err) {
             const code = (err as NodeJS.ErrnoException)?.code;
             // 文件系统权限错误是真实失败,保持红;仅「无匹配」标完成(绿)
