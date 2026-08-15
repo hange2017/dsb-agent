@@ -40,8 +40,8 @@ describe("planThinkingTrim", () => {
     expect(plan.trimmed).toContain("推理第 59 行");
     // 头部行被删除
     expect(plan.trimmed).not.toContain("推理第 0 行");
-    // 长度显著变小且不超过阈值 + 标记行
-    expect(plan.trimmed!.length).toBeLessThan(big.length / 4);
+    // 长度显著变小(THINKING_TAIL_CHARS 150→400 后保留尾巴变长,比例放宽到 1/2)
+    expect(plan.trimmed!.length).toBeLessThan(big.length / 2);
     expect(plan.trimmed!.length).toBeLessThan(THINKING_TAIL_CHARS + 100);
   });
 

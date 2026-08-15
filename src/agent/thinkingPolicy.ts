@@ -16,11 +16,11 @@
 import type { ProviderMessage } from "./provider/types";
 import { makeSummary, type ColdChunk } from "../context/contextStore";
 
-/** thinking 超过此字符数才精简;保留尾部结论的字符数(300 → 150 收紧)。 */
-export const THINKING_TAIL_CHARS = 150;
+/** thinking 超过此字符数才精简;保留尾部结论的字符数(150 → 400 放宽:避免决策所需推理中段被过早丢弃)。 */
+export const THINKING_TAIL_CHARS = 400;
 
 /** 已消费 thinking 中,最近 N 条保留完整尾巴;更早的压成一行结论。 */
-export const THINKING_KEEP_RECENT_COUNT = 10;
+export const THINKING_KEEP_RECENT_COUNT = 15;
 
 /** 截断标记:模型应知道详细推理已被精简,只剩结尾结论。 */
 export const THINKING_TRIM_MARKER = "[thinking-trimmed:推理过程已精简,保留结尾结论]";
