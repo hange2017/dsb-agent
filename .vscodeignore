@@ -16,5 +16,7 @@ webview/**
 resources/**
 !resources/icon.png
 scripts/**
+benchmark/**
+dist-benchmark/**
 **/*.map
 *.vsix
