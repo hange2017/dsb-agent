@@ -1,18 +1,22 @@
 # 工作记录：2026-08-14 20:00 → 2026-08-15（平台工具 + Snapshot Store）
 
-> 范围对照：`bbb/` 计划与 SDD、`dsb-agent/.dsb` 设计/计划、仓库根 `.dsb` checkpoints、以及 `dsb-agent` 源码。
-> 状态：功能已实现；本文档为交付与审计备忘。
+> 范围对照：`dsb-agent/.dsb`（权威）、历史工作区 `bbb/`（已同步计划/账本）、以及 `dsb-agent` 源码。
+> 状态：功能已实现并提交；本文档为交付与审计备忘。
 
 ## 1. 功能线 A — 平台感知与工具门禁（B1 + B3）
 
-### 文档
+### 文档（仓库内权威路径）
 
 | 路径 | 角色 |
 |------|------|
-| `bbb/plans/2026-08-14-platform-tools.md` | 实现计划（Task 1–5） |
-| `bbb/sdd/platform-tools/progress.md` | SDD 进度账本 |
-| `bbb/docs/toolchain-instability-handbook.md` | Windows 工具链不稳定手册 |
-| `dsb-agent/.dsb/docs/toolchain-issues.md` | 工具链问题日志（过程） |
+| `.dsb/specs/2026-08-14-platform-tools-design.md` | 设计说明 |
+| `.dsb/plans/2026-08-14-platform-tools.md` | 实现计划（Task 1–5，checkbox 已对齐） |
+| `.dsb/sdd/platform-tools/progress.md` | SDD 进度账本 |
+| `.dsb/docs/platform-tools.md` | 实现记录 |
+| `.dsb/docs/toolchain-instability-handbook.md` | Windows 工具链不稳定手册 |
+| `.dsb/docs/toolchain-issues.md` | 工具链问题日志（过程） |
+
+> 上述文件于 2026-08-15 自 `bbb/` 迁入本仓库；`bbb/` 保留副本，**以 `dsb-agent/.dsb` 为准**。
 
 ### 实现要点
 
