@@ -25,14 +25,8 @@ describe("classifyToolResult", () => {
     expect(classifyToolResult("")).toBe("keep");
   });
 
-  it("keeps Bash/Grep outputs (2026-08-12: no rule-trim; full output kept for later decisions)", () => {
-    for (const name of ["Bash", "Grep"]) {
-      expect(classifyToolResult(name)).toBe("keep");
-    }
-  });
-
   it("trims low-density tools", () => {
-    for (const name of ["WebFetch", "WebSearch", "Workflow", "Agent"]) {
+    for (const name of ["Bash", "Grep", "WebFetch", "WebSearch", "Workflow", "Agent"]) {
       expect(classifyToolResult(name)).toBe("trim");
     }
   });
@@ -55,19 +49,26 @@ describe("planToolResultTrim", () => {
     expect(plan.action).toBe("keep");
   });
 
-  it("keeps huge successful Bash output (2026-08-12: Bash never rule-trimmed)", () => {
+  it("trims huge successful Bash output: exit line + head + tail + fold marker", () => {
     const big = "exit=0\n" + cjkLines(100);
     const plan = planToolResultTrim("Bash", big);
-    expect(plan.action).toBe("keep");
+    expect(plan.action).toBe("trim");
+    expect(plan.trimmed).toContain("exit=0");
+    expect(plan.trimmed).toContain("… (省略");
+    const lines = plan.trimmed!.split("\n");
+    expect(lines.length).toBeLessThan(TOOL_RESULT_TRIM.bashHead + TOOL_RESULT_TRIM.bashTail + 3);
   });
 
-  it("keeps huge failed Bash output (error lines stay, no rule-trim)", () => {
+  it("trims huge failed Bash output but keeps error lines and exit code", () => {
     const fail = "exit=1\n" + cjkLines(80) + "\nERROR: build failed at step 3\nFATAL: cannot continue";
     const plan = planToolResultTrim("Bash", fail);
-    expect(plan.action).toBe("keep");
+    expect(plan.action).toBe("trim");
+    expect(plan.trimmed).toContain("exit=1");
+    expect(plan.trimmed).toContain("ERROR: build failed at step 3");
+    expect(plan.trimmed).toContain("FATAL: cannot continue");
   });
 
-  it("keeps Grep results (2026-08-12: Grep never rule-trimmed)", () => {
+  it("trims Grep results grouped per file with limit and path:line prefix", () => {
     const rows: string[] = [];
     for (let f = 0; f < 3; f++) {
       for (let n = 0; n < 15; n++) {
@@ -75,7 +76,11 @@ describe("planToolResultTrim", () => {
       }
     }
     const plan = planToolResultTrim("Grep", rows.join("\n"));
-    expect(plan.action).toBe("keep");
+    expect(plan.action).toBe("trim");
+    const kept = plan.trimmed!.split("\n").filter((l) => l.startsWith("src/"));
+    expect(kept).toHaveLength(3 * TOOL_RESULT_TRIM.grepPerFile);
+    expect(plan.trimmed).toContain("还有 5 条匹配");
+    expect(plan.trimmed!.split("\n")[0]).toMatch(/^src\/a0\.ts:\d+:/);
   });
 
   it("trims WebFetch with head/tail", () => {
@@ -85,7 +90,7 @@ describe("planToolResultTrim", () => {
   });
 
   it("trims Workflow output keeping stage headings", () => {
-    const out = ["## 阶段1", ...cjkLines(50), "## 阶段2", ...cjkLines(50), "## 阶段3", ...cjkLines(50)].join("\n");
+    const out = ["## 阶段1", ...cjkLines(20), "## 阶段2", ...cjkLines(20), "## 阶段3", ...cjkLines(20)].join("\n");
     const plan = planToolResultTrim("Workflow", out);
     expect(plan.action).toBe("trim");
     expect(plan.trimmed).toContain("## 阶段1");
@@ -94,9 +99,9 @@ describe("planToolResultTrim", () => {
   });
 
   it("upgrades to summarize when trim still exceeds threshold", () => {
-    // 每行 400 个 CJK ≈ 400 tokens:100 行 ≈ 40000;trim(head40+tail40)后仍 ≈ 32000 > 12000
+    // 每行 200 个 CJK ≈ 200 tokens:100 行 ≈ 20000;trim 后 35 行仍 ≈ 7000 > 3000
     const big = "exit=0\n" + Array.from({ length: 100 }, (_, i) => `行${i} ` + "内容".repeat(200)).join("\n");
-    const plan = planToolResultTrim("WebFetch", big);
+    const plan = planToolResultTrim("Bash", big);
     expect(plan.action).toBe("summarize");
   });
 
