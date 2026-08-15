@@ -322,6 +322,8 @@ export class ChatViewProvider {
             undefined,
             this.globalMemory,
             contextStore,
+            undefined, // platform(默认 process.platform)
+            this.statsStore,
           );
           tools.registerPluginTools(projectRuntime.pluginToolSpecs());
           // 项目上下文合并 4 层技能(项目/用户/VSCode 扩展/插件);扩展/插件层由本 Provider 注入

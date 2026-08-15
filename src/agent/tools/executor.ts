@@ -32,6 +32,7 @@ import type { PluginToolSpec } from "../../plugins/types";
 import { buildPluginToolDef, pluginToolQualifiedName } from "../../plugins/pluginTools";
 import { contextRecallExecute, contextRecallUnavailable } from "./contextRecallTool";
 import type { ContextStore } from "../../context/contextStore";
+import type { StatsStore } from "../../stats/statsStore";
 
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000;
 const MAX_SHELL_TIMEOUT_MS = 300_000;
@@ -333,6 +334,8 @@ export class ToolExecutor {
     private readonly contextStore?: ContextStore,
     /** 平台门禁用平台;缺省 process.platform。测试可注入。 */
     private readonly platform?: NodeJS.Platform,
+    /** 统计存储:ContextRecall 调用统计打点;总开关关闭时注入 undefined,经 `?.` 静默跳过。 */
+    private readonly statsStore?: StatsStore,
   ) {
     this.subagentDepth = initialSubagentDepth;
     this.mcp?.onTools((tools) => {
@@ -625,9 +628,14 @@ export class ToolExecutor {
         }
         case "ContextRecall": {
           // 无冷存储 fail-open:不报错,提示不可用
-          if (!this.contextStore) return contextRecallUnavailable();
+          if (!this.contextStore) {
+            this.statsStore?.record("context_recall", { mode: "unavailable" });
+            return contextRecallUnavailable();
+          }
           const sessionId = typeof ctx.sessionId === "string" ? ctx.sessionId : "default";
-          return contextRecallExecute(this.contextStore, sessionId, input);
+          return contextRecallExecute(this.contextStore, sessionId, input, (s) => {
+            this.statsStore?.record("context_recall", s as unknown as Record<string, unknown>);
+          });
         }
         default:
           return errorResult(`Unknown tool: ${name}`);
