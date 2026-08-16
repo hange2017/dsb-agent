@@ -173,9 +173,159 @@ src/                                  ← 1 个入口文件 + 14 个顶层目录
 - **桥接方式**:宿主把 `deps`(配置、工具、权限、统计…)注入引擎;引擎把事件(文本、工具调用、状态、统计快照)通过 `onEvent` 抛回宿主 → 界面更新。方向固定、单向,引擎永远不反向依赖宿主。
 - **与 1.1 的关系**:1.1 的 L2 交互控制层里,`chat/context` 绝大多数文件其实在依赖维度上属于**引擎侧**(可单测);只有 chatViewProvider / contextCapture 两个是宿主侧。职责分层 ≠ 依赖分层,不要混淆。
 
-## 三、待分析问题(后续填充)
+## 三、依赖关系:模块间 import 关系图
 
-- [ ] 依赖关系:模块间 import 关系图,核心枢纽(agentLoop / chatController / contextManager / extension.ts)的上下游
-- [ ] 数据流细节:一次对话从输入 → 模型调用 → 工具执行 → 上下文管理 → 压缩 → 统计落盘的全链路(与本文 1.2 互补,偏时序)
-- [ ] 关键设计决策与取舍:缓存前缀稳定性、thinking 收敛、写前定型等为什么这么做
-- [ ] 系统概念对照:与 [system-concepts.md](../2026-08-16-system-concepts.md) 的概念定义对齐
+> 数据来源:`grep -rln` 实测(src/ 115 个 .ts,引用方向 = "谁 import 谁")。
+
+### 3.1 顶层依赖画像(被引用热度)
+
+| 模块 | 被多少文件 import | 角色 |
+|------|------:|------|
+| `agent/` | 15 | **引擎核心**:几乎所有人都在用(agentLoop、executor、contextManager…) |
+| `context/` | 11 | **素材与存储**:contextStore 被 agentLoop/contextManager 等使用 |
+| `i18n/` | 8 | **文案**:UI 与错误消息都要本地化 |
+| `providers/` | 7 | **模型配置**:providerStore/modelCatalog 是引擎的"模型源" |
+| `session/` | 7 | **会话档案**:存盘/恢复 |
+| `hooks/` | 6 | **钩子**:hookRunner 被引擎与宿主桥共同调用 |
+| `stats/` | 6 | **记账**:providerSendStats/statsStore 被引擎各环节打点 |
+| `chat/` | 2 | **交互控制**:主要被宿主桥(chatViewProvider)使用 |
+
+### 3.2 核心枢纽的上下游(实测引用)
+
+```
+                    ┌──────────────┐
+    webview  ─────► │ chatViewProvider │ ──► ChatController ──► SessionService ──► SessionStore
+   (前端界面)       │   (宿主桥,依赖  │      (消息路由/互斥)      (会话生命周期)      (落盘)
+                    │    vscode)     │
+                    └──────┬───────┘
+                           │ new AgentSession({...deps})
+                           ▼
+              ┌──────────────────────────┐
+              │  AgentSession (agentLoop) │ ◄── 被 7 个文件 import:
+              │   引擎主循环/唯一入口      │      subagentRunner / executor /
+              └──────┬───────────────────┘      contextManager / chatViewProvider /
+                     │                           chatController / anthropicMessagesClient
+        ┌────────────┼───────────────┬──────────────┐
+        ▼            ▼               ▼              ▼
+   provider 客户端  ContextManager  tools/executor  stats(providerSendStats)
+   (anthropic      (contextCompactor/  (工具执行、      (打点 → statsStore)
+    Messages API)    contextStore)      todo/权限)
+```
+
+**关键发现**:
+- **`extension.ts` 是总装车间**:它 import 了 30+ 个模块,把所有 `deps`(配置/密钥/存储/面板)组装好后一次性注入 `AgentSession` 与 `ChatController`。引擎本身不知道 vscode 存在。
+- **`AgentSession` 是引擎的唯一入口**:所有对话(用户消息、子 agent、benchmark CLI、插件调用)最终都走 `session.send()`。它被 7 个文件引用,是当之无愧的枢纽。
+- **`memoryStore` 是"被引用最热的叶子"**(9 处):memoryManager/memoryDream/sessionProgress 等都依赖它,但它是纯存储,不反向依赖任何人。
+- **`chatController` 只被 2 个文件引用**:它更多是"使用方"(消费 chatViewProvider 的输入、调用 SessionService),本身不是被依赖中心——**枢纽是 AgentSession,不是 chatController**。
+
+## 四、数据流细节:一次对话的全链路
+
+> 与 1.2(主循环六环节)互补:这里偏**时序 + 具体模块**,按一次 `send` 从输入到落盘的顺序。
+
+```
+[L1] 你在聊天框输入 "帮我修这个 bug" ──► webview 前端
+       │ 前端发 {type:"send", text} 消息
+       ▼
+[L2] chatViewProvider (宿主桥,依赖 vscode)
+       │ 校验 API Key / 工作区 → 组装 deps
+       ▼
+     ChatController.send(userText)          ← 互斥:busy 时直接 return
+       │ · 打点 message_sent(只记长度,隐私友好)
+       │ · 展开内联引用(@文件/图片 chips → prompt)
+       │ · sessionService.ensureSession(cwd) → 恢复/新建会话
+       │ · post({role:"user"}) 让界面先显示你的气泡
+       ▼
+     SessionService ──► SessionStore(档案)
+       ▼
+     AgentSession.send(prompt, onEvent, opts)     ← 引擎唯一入口
+       │
+       ▼  ┌────────────────────────────────────────────┐
+       │  │ [主循环] for round = 0..maxRounds          │
+       │  │ 1. 准备请求:历史 + system + tools 组装      │
+       │  │ 2. provider.send() → AnthropicMessagesClient │
+       │  │    └─ onProviderSend 打点(只记 token 数字)   │
+       │  │ 3. 解析返回:文本增量 / tool_use / usage      │
+       │  │    └─ onEvent({text_delta/thinking_delta})   │
+       │  │ 4. 若有 tool_use:                           │
+       │  │    ├─ 权限检查(PermissionManager)            │
+       │  │    ├─ tools/executor 执行(可并行,防冲突)     │
+       │  │    ├─ tool_result 写前定型(trim 类)          │
+       │  │    └─ push 回 messages → 下一轮              │
+       │  │ 5. 上下文管理:触发阈值 → ContextManager       │
+       │  │    ├─ compact:合并旧块 + 追加新内容           │
+       │  │    ├─ 超预算:只删尾部 / re-summarize 尾部     │
+       │  │    └─ 冷存储:archived 到 contextStore         │
+       │  │ 6. 无 tool_use → terminal = done,收尾        │
+       │  └────────────────────────────────────────────┘
+       │
+       ▼
+     onEvent 一路回推:chatViewProvider.onAgentEvent → webview 渲染
+       │
+       ▼
+     会话落盘:SessionStore.save(含 rawText 原文,不含展开 prompt)
+       ▼
+     统计落盘:statsStore.record("provider_round" / "compaction" / "message_sent")
+```
+
+**时序要点**:
+1. **消息先落历史再请求**:`AgentSession.send` 先把 user 消息 push 进 messages,再发请求——保证发送出去的 messages 与本地历史一致(缓存前缀稳定)。
+2. **压缩发生在轮与轮之间**:`ContextManager` 在每次 provider 返回后、下一轮请求前检查 `needsCompaction()`,触发时合并旧压缩块 + 追加新内容(见 §5 的 P2 设计)。
+3. **统计只记数字不记内容**:所有打点(`provider_send`/`provider_round`/`compaction`/`message_sent`)只存 token 数、耗时、命中率等数字,消息原文**不落盘**,隐私友好。
+4. **回滚快照**:发送前 `this.messages.slice()` 存快照,失败/取消时恢复,避免压缩留下的稀疏空洞污染后续轮。
+
+## 五、关键设计决策与取舍
+
+> 这些决策是项目"为什么长这样"的答案,也是后续演进必须遵守的约束。详见各自规则文档。
+
+### 5.1 缓存前缀稳定性(最高优先级约束)🔴
+
+**为什么**:DeepSeek 独立缓存前缀单元机制(请求边界落盘 / 公共前缀检测 / 固定 token 间隔落盘)。system + tools + 历史 messages 前缀任何一字节变化 → 整段 miss → 缓存雪崩(压缩后首轮命中率曾 ~10%)。
+
+**已落地规则**(规则文档 `.dsb/rules/cache-prefix-stability.md`):
+| 规则 | 内容 |
+|------|------|
+| P0 | system 禁止放会话内会变的内容(todo 移出 system → 尾部注入) |
+| P1 | tool_result 发送前精简 = 同一内容两种形态 → 改为**写前定型**(push 前定最终字节) |
+| P2 | 压缩块重建 = 整块重写 → **只追加、只删尾、标题恒输出** |
+| 工具顺序 | 工具 def 顺序跨轮稳定,新增工具在消息层追加说明 |
+
+**硬性验收**:稳定期命中率 68~75%、压缩后首轮 ~10%(基线);改动 system/压缩块/messages 构造必须跑 `scripts/analyze-cache-prefix.py` 对比,不降命中率是硬性要求。
+
+### 5.2 引擎层不依赖 vscode(可测性/可复用性)
+
+**为什么**:全部逻辑(agent/context/stats/providers)可脱离 VS Code 在 Node 里单测(101 个测试文件 / 1090 tests),且可被 `benchmark/cli.ts` headless 复用打榜。输入输出走 `deps` 接口注入,事件走 `onEvent` 外发,方向固定单向。
+
+**代价**:宿主桥(chatViewProvider/extension)承担全部装配逻辑,代码量大、易碎;任何新能力都要在宿主层"接线"。
+
+### 5.3 thinking 全链路收敛(可剥离、可分级)
+
+**为什么**:不同模型对 thinking 的支持差异大,且 thinking 产物会污染上下文(剥离产出不进历史/压缩/脉络)。收敛成:
+- `thinkingProcessEnabled`:流程是否处理 thinking(false = 模型可思考但产物不落历史)。
+- `thinkingLevel`:强度预设(off/低/中/高),按模型能力兜底。
+- 设置面板全局开关 + 强度兜底,`budgetInfo()` 在关闭时把 split 归一化为两段。
+
+**代价**:配置项增多,模型能力与用户设置的组合矩阵需要 `capabilityGate`/`modePolicy` 兜底。
+
+### 5.4 统计体系:只记数字,不记内容
+
+**为什么**:既要成本/命中率分析,又要隐私友好。`providerSendStats`/`statsStore` 只存 token 数、耗时、缓存命中 token、事件类型,消息正文不进统计。
+
+**代价**:无法事后回溯"当时发了什么",只能看数字;需要另开调试日志才可见内容。
+
+### 5.5 法律严格避让(开源发布约束)
+
+**为什么**:以开源方式发布,产品名 DSBAgent,禁止攀附任何第三方产品名(见 `.dsb/rules/legal-strict-avoidance.md`)。影响所有用户可见文案、README、package.json。
+
+## 六、系统概念对照
+
+> 与 [system-concepts.md](../2026-08-16-system-concepts.md) 对齐:本文用到的关键术语定义。
+
+| 本文术语 | 定义(见 system-concepts) | 出现位置 |
+|----------|--------------------------|----------|
+| 引擎层 | 不依赖 vscode、走 deps 注入 + onEvent 外发的逻辑层 | §2.3 |
+| 宿主层 | 依赖 vscode、负责装配/UI/密钥的层 | §2.3 |
+| AgentSession | 引擎唯一入口,一次 send = 一轮对话主循环 | §3.2 / §4 |
+| ContextManager | 上下文压缩/裁剪/冷存储的决策者 | §4 步骤5 |
+| 缓存前缀 | system+tools+messages 的公共前缀,命中则省 token | §5.1 |
+| 压缩块 | `[前文摘要]` 块,append-only 结构 | §5.1 P2 |
+| 冷存储 | 超预算历史归档到 contextStore,按需回捞 | §4 步骤5 |
