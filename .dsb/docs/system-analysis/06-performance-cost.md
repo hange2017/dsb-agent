@@ -8,7 +8,7 @@
 
 ## 待分析问题(填充时逐项回答)
 
-- [ ] 缓存前缀稳定性:当前基线(稳定期命中率 68~75%、压缩后首轮 ~10%)、优化手段(P0-P3)、验证脚本(scripts/analyze-cache-prefix.py)
+- [ ] 缓存前缀稳定性:当前基线(稳定期命中率 **97.0~97.7%**、压缩后首轮 **49~54%**,2026-08-17 修正口径,见 `2026-08-16-P2落地后缓存命中新基线.md`)、优化手段(P0-P3)、验证脚本(scripts/analyze-cache-prefix.py,含 `--self-test`)
 - [ ] 压缩成本:压缩耗时/自耗 token 统计、triggerRatio 阈值、CompactionStats 滑动窗口
 - [ ] token 优化:toolUsePolicy 瞬态字段、toolResultPolicy trim、thinking 精简、历史预算默认 150K
 - [ ] 延迟链路:provider 往返、preparedMs、QA 抽查成本

@@ -291,9 +291,9 @@ src/                                  ← 1 个入口文件 + 14 个顶层目录
 | 规则5(P3) | 不删中部已消费块(tool_use/thinking 保留) | ✅ `agentLoop.ts:392/421` 只做幂等兜底,中部块保留 |
 | 规则6(P1) | 同一内容只允许一种字节形态(tool_result 写前定型) | ✅ `agentLoop.ts:858-866` push 前定型,trim 类首次即最终形态 |
 
-**⚠️ 计划了但尚未做的**(见下方缺口清单):P2/规则4 的**基线对比量化**从未执行——`scripts/analyze-cache-prefix.py` 的 68~75% 稳定期 / ~10% 压缩后首轮都是 2026-08-10/11 的**旧基线**,P0-P3 全量落地后的改前改后对比尚无数据;小时级官方对账也停在 08-10/11。
+**✅ 基线对比量化已执行(2026-08-17)**:修正 `scripts/analyze-cache-prefix.py`(sendSeq 时间序配对 / 归组补 miss / broken 语义)后,对 08-15/16 全量数据实测并修正真实口径——详见 `.dsb/docs/2026-08-16-P2落地后缓存命中新基线.md` 与 `.dsb/docs/2026-08-17-cache-prefix-analysis-fix.md`。
 
-**硬性验收**:稳定期命中率 68~75%、压缩后首轮 ~10%(基线);改动 system/压缩块/messages 构造必须跑 `scripts/analyze-cache-prefix.py` 对比,不降命中率是硬性要求——**该验收 P2 后尚未执行**。
+**硬性验收(修正后基线)**:稳定期命中率 **97.0~97.7%**(旧基线 68~75%);压缩后首轮 **49~54%**(compaction 后**第一个 round**,旧基线 ~10%;「30s 窗口」口径虚高 89.6% 已废弃)。改动 system/压缩块/messages 构造必须跑 `scripts/analyze-cache-prefix.py`(含 `--self-test`)对比,不降命中率是硬性要求。
 
 ### 5.2 引擎层不依赖 vscode(可测性/可复用性)
 
