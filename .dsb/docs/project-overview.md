@@ -43,7 +43,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 - `todoPanel.ts`:任务清单面板;`toolPresentation.ts`:工具调用展示格式化。
 - `suggestions.ts`:输入建议;`exportSession.ts`:会话导出;`projectRuntime.ts`:项目运行时探测。
 - `toolPresentation` / `format` 协同处理消息渲染。
-- **交互增强**:消息正文内联路径/URL 双击跳转(`open_url` + linkify,块级 pre 除外)、内联面板显隐工具(`setInlinePanelOpen`/`toggleInlinePanel`)。
+- **交互增强**:消息正文内联路径/URL 双击跳转(`open_url` + linkify,块级 pre 除外)、内联面板显隐工具(`setInlinePanelOpen`/`toggleInlinePanel`)、消息区滚动跟随冻结(上滚查看历史时新内容不拽动视口,回底部自动恢复)+ ▲▼ 轮次导航(▲ 上一个用户输入、▼ 下一个回复/回到最新,平滑滚动 + 目标高亮,与历史懒加载协同)。
 
 ### 3. 引擎核心 — `src/agent/`(不依赖 vscode 模块,可单测)
 - `agentLoop.ts`:Agent 主循环(模型调用 → 工具执行 → 上下文管理 → 压缩判定),`deps` 注入全部依赖,事件通过 `onEvent` 外发(含 `compaction_stats`)。
@@ -147,4 +147,4 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 4. **ContextRecall 回查提升(P0+P1)**:统计埋点六模式 + 工具描述强化 + 压缩块尾部恒输出回查提示行 + 原创技能 `skills/context-recall-usage`(随扩展分发)。
 5. **发布 0.2.0 / 0.2.1**:Windows/三平台 CI 兼容修复、打包内置多平台 ripgrep、.vscodeignore 排除 benchmark 修复 vsce 打包卡死、README 双语重排 + 真实使用统计、Open VSX 安装说明。
 6. **工具策略优化**:toolResultPolicy trim 阈值上调(Bash/Grep 完整输出保留)、thinking 精简阈值 150→400 最近保留 15、toolUsePolicy 瞬态字段按「工具.字段」细分阈值、Read 头行分段提示 + StrReplace 回显锚点。
-7. **其它**:webview 全面 i18n + 默认英文、内联路径/URL 双击跳转、供应商模型探测增强(URL 清洗自愈/401 报错/import 内存同步)、Snapshot Store NDJSON 归档、上下文预算默认值窗口 1M / 历史 150K。
+7. **其它**:webview 全面 i18n + 默认英文、内联路径/URL 双击跳转、消息区滚动跟随冻结 + ▲▼ 轮次导航、供应商模型探测增强(URL 清洗自愈/401 报错/import 内存同步)、Snapshot Store NDJSON 归档、上下文预算默认值窗口 1M / 历史 150K。
