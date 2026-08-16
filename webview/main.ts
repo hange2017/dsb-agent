@@ -9,6 +9,7 @@ import type { Capabilities, Mode, ModelInfo } from "../src/providers/types";
 import { detectTrigger, type TriggerInfo } from "../src/chat/suggestions";
 import { VimInput } from "./vim";
 import type { TimelineStepMessage } from "../src/chat/protocol";
+import { pickNavTarget, type NavAnchor } from "./navTargets";
 
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
@@ -95,6 +96,14 @@ let historyMode = false; // 是否处于历史重放缓存模式
 let historyBuffer: HostToWebviewMessage[] = []; // 重放事件缓存(history_start/end 之间)
 let pendingRounds: HostToWebviewMessage[][] = []; // 尚未渲染的更早轮次(时间升序,最旧在前)
 
+// ---- 滚动跟随冻结 + ▲▼ 轮次导航 ----
+let stickToBottom = true; // 是否跟随底部:用户上滚超过阈值后冻结,新内容不再拽动视口
+let suppressStickCheck = false; // 程序滚动(导航/懒加载)期间屏蔽 stick 重算,防误判
+let stickRaf = 0; // rAF 节流句柄(流式高频滚动只重算一次/帧)
+let stickSuppressTimer: number | undefined; // 程序滚动结束恢复检查的定时器
+let navAnchorEls = new Map<string, HTMLElement>(); // 锚点 id → DOM 元素(跳转高亮用)
+const kStickThreshold = 64; // 距底多少 px 内视为「在底部」(≈滚轮一格,留缓冲)
+
 /** 瞬态状态提示,不影响 busy 状态(附加错误等不该重新启用 Send)。 */
 function showToast(message: string, isError = false): void {
   statusEl.textContent = message;
@@ -130,6 +139,7 @@ function cancelTransientClear(): void {
 }
 
 function scrollBottom(): void {
+  if (!stickToBottom) return; // 用户已上滚冻结:新内容不拽动视口
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -289,6 +299,90 @@ function loadMoreHistoryRounds(): void {
   messagesEl.append(frag);
   // 显式重设滚动位置:原 DOM 顶部保持在视口原位置(渲染过程 scrollBottom 的干扰被覆盖)
   messagesEl.scrollTop = prevScrollTop + (messagesEl.scrollHeight - prevHeight);
+}
+
+// ---- ▲▼ 轮次导航 ----
+/** 实时收集当前消息区的 USER/DSB 锚点(DOM 序),并记录对应元素供跳转高亮。 */
+function collectAnchors(): NavAnchor[] {
+  navAnchorEls.clear();
+  const anchors: NavAnchor[] = [];
+  const base = messagesEl.getBoundingClientRect();
+  const scrollTop = messagesEl.scrollTop;
+  const add = (el: HTMLElement, kind: "user" | "dsb") => {
+    const rect = el.getBoundingClientRect();
+    const id = `${kind}-${anchors.length}`;
+    navAnchorEls.set(id, el);
+    anchors.push({
+      id,
+      kind,
+      top: rect.top - base.top + scrollTop,
+      bottom: rect.bottom - base.top + scrollTop,
+    });
+  };
+  // USER 框 = 用户输入消息;DSB 框 = 助手最终回复(tl-step.tl-text.final)
+  for (const el of messagesEl.querySelectorAll<HTMLElement>(".msg.user")) add(el, "user");
+  for (const el of messagesEl.querySelectorAll<HTMLElement>(
+    ".msg.assistant .tl-step.tl-text.final .tl-text-body",
+  )) {
+    add(el, "dsb");
+  }
+  anchors.sort((a, b) => a.top - b.top);
+  return anchors;
+}
+
+/** 平滑跳到目标锚点并短暂高亮;程序滚动期间屏蔽 stick 重算。 */
+function jumpToNav(anchor: NavAnchor): void {
+  suppressStickCheck = true;
+  const el = navAnchorEls.get(anchor.id);
+  messagesEl.scrollTo({ top: Math.max(0, anchor.top - 16), behavior: "smooth" });
+  if (el) {
+    el.classList.remove("nav-flash");
+    void el.offsetWidth; // 重启动画
+    el.classList.add("nav-flash");
+    el.addEventListener("animationend", () => el.classList.remove("nav-flash"), { once: true });
+  }
+  if (stickSuppressTimer !== undefined) window.clearTimeout(stickSuppressTimer);
+  stickSuppressTimer = window.setTimeout(() => {
+    suppressStickCheck = false;
+  }, 500);
+}
+
+/** ▲:跳到上一个 USER 框;目标在未渲染历史里时先增量加载。 */
+function onNavUp(): void {
+  stickToBottom = false; // 向上查看即离开底部,冻结跟随
+  let target = pickNavTarget(collectAnchors(), messagesEl.scrollTop, "up", false);
+  let guard = 0;
+  while (!target && pendingRounds.length > 0 && guard++ < 100) {
+    loadMoreHistoryRounds();
+    target = pickNavTarget(collectAnchors(), messagesEl.scrollTop, "up", false);
+  }
+  if (!target) return;
+  jumpToNav(target);
+}
+
+/** ▼:跟随态回底部并恢复跟随;非跟随态跳下一个 DSB,无目标则兜底回底部。 */
+function onNavDown(): void {
+  if (stickToBottom) {
+    suppressStickCheck = true;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (stickSuppressTimer !== undefined) window.clearTimeout(stickSuppressTimer);
+    stickSuppressTimer = window.setTimeout(() => {
+      suppressStickCheck = false;
+    }, 300);
+    return;
+  }
+  const target = pickNavTarget(collectAnchors(), messagesEl.scrollTop, "down", false);
+  if (target) {
+    jumpToNav(target);
+    return;
+  }
+  stickToBottom = true; // 下方无 DSB:兜底回底部 + 恢复跟随
+  suppressStickCheck = true;
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (stickSuppressTimer !== undefined) window.clearTimeout(stickSuppressTimer);
+  stickSuppressTimer = window.setTimeout(() => {
+    suppressStickCheck = false;
+  }, 300);
 }
 
 function findStepEl(container: HTMLElement, stepId: string): HTMLElement | undefined {
@@ -1157,6 +1251,20 @@ messagesEl.addEventListener("scroll", () => {
   if (messagesEl.scrollTop > 48) return;
   loadMoreHistoryRounds();
 });
+// 跟随状态检测:上滚超过阈值 → 冻结自动滚底;回到底部附近 → 恢复跟随
+messagesEl.addEventListener("scroll", () => {
+  if (stickRaf !== 0) return;
+  stickRaf = requestAnimationFrame(() => {
+    stickRaf = 0;
+    if (suppressStickCheck) return;
+    const d = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
+    stickToBottom = d <= kStickThreshold;
+  });
+});
+const navUpBtn = document.getElementById("navUp") as HTMLButtonElement;
+const navDownBtn = document.getElementById("navDown") as HTMLButtonElement;
+navUpBtn.addEventListener("click", onNavUp);
+navDownBtn.addEventListener("click", onNavDown);
 openProviderSettingsBtn.addEventListener("click", () => {
   closeSettings();
   post({ type: "open_provider_settings" });
@@ -1546,6 +1654,7 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
       historyMode = true;
       historyBuffer = [];
       pendingRounds = [];
+      stickToBottom = true;
       break;
     case "history_end":
       historyMode = false;
@@ -1667,6 +1776,12 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
     }
     case "reset":
       messagesEl.replaceChildren();
+      stickToBottom = true;
+      suppressStickCheck = false;
+      if (stickSuppressTimer !== undefined) {
+        window.clearTimeout(stickSuppressTimer);
+        stickSuppressTimer = undefined;
+      }
       for (const key of Object.keys(msgEls)) delete msgEls[key];
       queuedUserChips.length = 0;
       clearPendingChips();

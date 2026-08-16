@@ -134,7 +134,47 @@ body {
 }
 
 /* ---- messages ---- */
-#messages { flex: 1; overflow-y: auto; padding: 12px; }
+#chatArea {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#messages { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+/* ▲▼ 轮次导航:悬浮于消息区左缘垂直居中,常驻半透明,hover 加深 */
+#timelineNav {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+#timelineNav:hover { opacity: 1; }
+#timelineNav button {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+  line-height: 1;
+  border-radius: 6px;
+  background: rgba(127, 127, 127, 0.15);
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  cursor: pointer;
+  color: inherit;
+  padding: 0;
+}
+#timelineNav button:active { transform: scale(0.92); }
+/* 导航目标高亮闪烁 */
+.nav-flash { animation: navFlash 0.9s ease-out; }
+@keyframes navFlash {
+  0% { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.7); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
 .msg { margin-bottom: 10px; }
 .msg .body { white-space: pre-wrap; word-break: break-word; }
 .msg .body code {
