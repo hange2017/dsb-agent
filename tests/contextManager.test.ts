@@ -1123,4 +1123,156 @@ describe("ContextManager compaction events", () => {
     // compactedSeqs:tail 压缩应带出被压掉的 [r{n}] 序号
     expect(Array.isArray(ev!.compactedSeqs)).toBe(true);
   });
+
+  // —— 方向 2:tail 分级折叠 ——
+  it("tail fold (direction 2): folds older tail messages into the block, keeps recent raw", async () => {
+    const summarize = vi.fn(async (t: string) => `S(${t.length})`);
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize,
+      historyTokenBudget: 800,
+      budgetSplit: { compacted: 0.8, thinking: 0.1, tail: 0.1 },
+      tailFoldRatio: 0.5,
+    });
+    const msgs: ProviderMessage[] = Array.from({ length: 6 }, (_, i) => ({
+      role: "user",
+      content: `fold-msg-${i}-` + "x".repeat(40),
+    }));
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    expect(content).toContain("[compacted]");
+    // 较旧的 tail 部分(m3/m4)被折叠进压缩块
+    expect(content).toContain("fold-msg-3");
+    expect(content).toContain("fold-msg-4");
+    // 最近一条仍原样保留在 tail
+    const tailFlat = JSON.stringify(out.slice(1));
+    expect(tailFlat).toContain("fold-msg-5");
+    expect(tailFlat).not.toContain("fold-msg-4");
+  });
+
+  it("tail fold off (foldRatio=0) keeps older tail messages raw as before", async () => {
+    const summarize = vi.fn(async (t: string) => `S(${t.length})`);
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize,
+      historyTokenBudget: 800,
+      budgetSplit: { compacted: 0.8, thinking: 0.1, tail: 0.1 },
+      tailFoldRatio: 0,
+    });
+    const msgs: ProviderMessage[] = Array.from({ length: 6 }, (_, i) => ({
+      role: "user",
+      content: `fold-msg-${i}-` + "x".repeat(40),
+    }));
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    // foldRatio=0 → m3 不被折叠,仍在 tail
+    expect(content).not.toContain("fold-msg-3");
+    expect(JSON.stringify(out.slice(1))).toContain("fold-msg-3");
+    expect(JSON.stringify(out.slice(1))).toContain("fold-msg-5");
+  });
+
+  it("tail fold boundary never orphans a tool_result (direction 2)", async () => {
+    const summarize = vi.fn(async (t: string) => `S(${t.length})`);
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize,
+      historyTokenBudget: 800,
+      budgetSplit: { compacted: 0.8, thinking: 0.1, tail: 0.1 },
+      tailFoldRatio: 0.65,
+    });
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "a-" + "x".repeat(40) },
+      { role: "user", content: "b-" + "x".repeat(40) },
+      { role: "user", content: "c-" + "x".repeat(40) },
+      { role: "user", content: "d-" + "x".repeat(40) },
+      { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Read", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+      { role: "user", content: "g-" + "x".repeat(40) },
+    ];
+    const out = await cm.compact(msgs);
+    const tail = out.slice(1);
+    const orphaned =
+      tail[0].role === "user" &&
+      Array.isArray(tail[0].content) &&
+      tail[0].content.some((b) => b.type === "tool_result");
+    expect(orphaned).toBe(false);
+    const flat = JSON.stringify(tail);
+    expect(flat).toContain("tool_use");
+    expect(flat).toContain("tool_result");
+  });
+
+  // —— 方向 3:preset 压缩块快照 ——
+  it("preset compacted block (direction 3): uses snapshot as prev when history has no block, seq continues", async () => {
+    const summarize = vi.fn(async (t: string) => `S(${t.length})`);
+    const oldBlock = buildCompactedBlock({
+      demands: ["- [r1] 旧需求", "- [r2] 旧需求2"],
+      conclusions: [],
+      explanations: [],
+      ledger: [],
+    });
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize,
+      presetCompactedBlock: oldBlock,
+    });
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "新需求X" },
+      { role: "user", content: "新需求Y" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    expect(content).toContain("[compacted]");
+    // preset 旧行保留(快照字节可命中)
+    expect(content).toContain("- [r1] 旧需求");
+    expect(content).toContain("- [r2] 旧需求2");
+    // 新段 seq 继续推进,不与快照重叠
+    expect(content).toContain("- [r3] 新需求X");
+    const seqs = [...content.matchAll(/\[r(\d+)\]/g)].map((m) => Number(m[1]));
+    expect(new Set(seqs).size).toBe(seqs.length);
+    // tail 仍保留最近消息
+    expect(JSON.stringify(out.slice(1))).toContain("tail3");
+  });
+
+  it("preset block is ignored when history already starts with a real compacted block", async () => {
+    const summarize = vi.fn(async (t: string) => `S(${t.length})`);
+    const oldBlock = buildCompactedBlock({
+      demands: ["- [r1] 旧需求"],
+      conclusions: [],
+      explanations: [],
+      ledger: [],
+    });
+    const presetBlock = buildCompactedBlock({
+      demands: ["- [r1] preset需求"],
+      conclusions: [],
+      explanations: [],
+      ledger: [],
+    });
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize,
+      presetCompactedBlock: presetBlock,
+    });
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: oldBlock },
+      { role: "user", content: "新需求X" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    expect(content).toContain("- [r1] 旧需求");
+    expect(content).not.toContain("preset需求");
+    expect(content).toContain("- [r2] 新需求X");
+  });
 });

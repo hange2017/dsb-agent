@@ -171,4 +171,33 @@ describe("SessionStore list title peek", () => {
     const list = store.list();
     expect(list.find((s) => s.id === id)!.title).toBe("ok 标题");
   });
+  it("round-trips compacted snapshot (block.json)", () => {
+    const id = store.create();
+    const block = "[前文摘要]\n[compacted]\n## 需求\n- [r1] 旧需求\n";
+    store.saveApiSnapshot(id, block);
+    expect(store.loadApiSnapshot(id)).toBe(block);
+  });
+
+  it("loadApiSnapshot returns null when missing or corrupt or non-block", () => {
+    const id = store.create();
+    expect(store.loadApiSnapshot(id)).toBeNull();
+    fs.writeFileSync(path.join(dir, `${id}.block.json`), "{bad", "utf8");
+    expect(store.loadApiSnapshot(id)).toBeNull();
+    fs.writeFileSync(path.join(dir, `${id}.block.json`), JSON.stringify({ block: "no marker" }), "utf8");
+    expect(store.loadApiSnapshot(id)).toBeNull();
+  });
+
+  it("delete removes snapshot file", () => {
+    const id = store.create();
+    store.saveApiSnapshot(id, "[compacted]\n## 需求\n");
+    store.delete(id);
+    expect(fs.existsSync(path.join(dir, `${id}.block.json`))).toBe(false);
+  });
+
+  it("list() does not treat .block.json as a session", () => {
+    const id = store.create();
+    store.saveApiSnapshot(id, "[compacted]\n");
+    expect(store.list().map((s) => s.id)).toEqual([id]);
+  });
+
 });
