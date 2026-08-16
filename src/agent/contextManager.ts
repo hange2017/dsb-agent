@@ -110,8 +110,22 @@ export interface ContextManagerOptions {
   triggerPct?: number;
   /** 压缩后目标比例:触发后收缩到额定×该比例(滞回);缺省 0.5,须 < triggerPct。 */
   targetPct?: number;
+  /**
+   * tail 分级折叠比例(方向 2):tail 预算内保留的近期消息中,较旧的该比例也折叠进压缩块
+   * (走 stratify 摘要,追加到各轨末尾——P2 只追加兼容),只保留最近 (1-ratio) 比例原样。
+   * 目的:压缩后首轮 tail 全 miss(结构性成本)的 miss 字节从「全量 tail」降到「近期保留 + 折叠增量」。
+   * undefined / 0 = 关闭(现状:tail 预算内全部原样保留)。须 < 1。
+   */
+  tailFoldRatio?: number;
   /** 压缩事件上报(4 个压缩位置 before/after tokens);缺省不回调。 */
   onCompaction?: (ev: CompactionRecord) => void;
+  /**
+   * 预置压缩块快照(方向 3):会话恢复时 apiHistory 缺失回退(eventsToHistory)场景下,
+   * 把上次持久化的压缩块原文注入 → compact() 时 prev 优先取它,输出块 = 快照旧行 + 本次增量,
+   * 旧块字节与上次发送一致 → 首轮可命中,避免「块全新生成」的最坏情况(命中率最低 7.6%)。
+   * 仅当 head[0] 无实际压缩块时生效;缺省不注入。
+   */
+  presetCompactedBlock?: string;
 }
 
 /** A5:从消息列表内容中提取 `[r{n}]` 序号(保持出现顺序)。 */
@@ -282,6 +296,31 @@ export class ContextManager {
     while (cut > 0 && isToolResultUserMessage(history[cut])) {
       cut--;
     }
+    // —— 方向 2:tail 分级折叠 ——
+    // tail 预算内保留的近期消息中,较旧的 tailFoldRatio 比例也折叠进压缩块
+    // (并入 head → stratify 摘要追加到各轨末尾,遵循 P2 只追加规则),
+    // 只保留最近 (1-tailFoldRatio) 比例原样 → 压缩后首轮 tail miss 从全量降到
+    // 「近期保留 + 折叠增量」。折叠边界不拆 tool_use/tool_result 对。
+    if (
+      budget &&
+      this.opts.tailFoldRatio !== undefined &&
+      this.opts.tailFoldRatio > 0 &&
+      this.opts.tailFoldRatio < 1 &&
+      cut > 0
+    ) {
+      const tailBudget = Math.max(1, Math.floor(budget.tailTokens * this.targetPct));
+      const recentTokens = Math.max(1, Math.floor(tailBudget * (1 - this.opts.tailFoldRatio)));
+      const keepRecent = this.tailKeepCount(history, recentTokens);
+      let foldEnd = history.length - keepRecent;
+      // 保留段首条若是 tool_result,其 tool_use 已在折叠段 → 前移 foldEnd 把它也折叠,
+      // 避免压缩后 tool_result 无配对 tool_use(API 400)。
+      while (foldEnd > cut && isToolResultUserMessage(history[foldEnd])) {
+        foldEnd--;
+      }
+      if (foldEnd > cut) {
+        cut = foldEnd; // 折叠段 [原 cut, foldEnd) 并入 head
+      }
+    }
     // 预算模式:全部消息都在 tail 预算内 → 无需压缩,原样返回
     if (budget && cut === 0) {
       return history;
@@ -293,11 +332,17 @@ export class ContextManager {
     // head[1] 可能是既有 thinking 块(独立消息)→ 解析旧脉络,增量合并。
     // 从旧块行推断已用最大序号,让新段 seq 继续推进(旧块可能是外部构造/上次压缩产物,
     // 实例计数器无法自行感知其占用)。
-    const prev = isCompactedMessage(head[0])
+    // head[0] 是既有压缩块 → 用实际块(freshStart=1,块本身不参与增量);
+    // 否则若注入 preset 快照(会话重建回退场景)→ 用快照作旧脉络(freshStart=0,全部消息
+    // 视为新增,输出块 = 快照旧行 + 本次增量 → 旧块字节与上次发送一致,首轮可命中)。
+    const hasBlock = isCompactedMessage(head[0]);
+    const prev = hasBlock
       ? parseCompactedBlock((head[0] as { role: "user"; content: string }).content)
-      : null;
+      : this.opts.presetCompactedBlock
+        ? parseCompactedBlock(this.opts.presetCompactedBlock)
+        : null;
     let prevThinking: ThinkingBlockParts = { correct: [], wrong: [], neutral: [] };
-    let freshStart = prev ? 1 : 0;
+    let freshStart = hasBlock ? 1 : 0;
     if (freshStart < head.length && isThinkingMessage(head[freshStart])) {
       prevThinking = parseThinkingBlock((head[freshStart] as { role: "user"; content: string }).content);
       freshStart++;

@@ -35,6 +35,7 @@
   "configuration.dsbAgent.contextWindowTokens.description": "Max input length (context window) sent to the model; 0 follows the model capability (default). Overrides the window used for compaction trigger and output budget when > 0.",
   "configuration.dsbAgent.compaction.triggerPct.description": "Pipeline trigger ratio: compaction fires when a block reaches rated tokens × this ratio (default 0.75).",
   "configuration.dsbAgent.compaction.targetPct.description": "Post-compaction target ratio: blocks shrink to rated tokens × this ratio (hysteresis, default 0.5, must be < triggerPct).",
+  "configuration.dsbAgent.compaction.tailFoldRatio.description": "Tail fold ratio (direction 2): the older part of tail-budget messages is folded into the compacted block (summarized, append-only); only the recent (1-ratio) part stays raw. Reduces post-compaction first-round tail miss. Default 0.35, 0 = off.",
   "configuration.dsbAgent.stats.enabled.description": "Enable local usage statistics (when disabled, no statistics events are recorded).",
   "configuration.dsbAgent.stats.detailLevel.description": "Statistics detail level: basic = round-level stats only, full = includes per-position compaction details and compaction quality sampling.",
   "configuration.dsbAgent.stats.compactionQa.description": "Run compaction quality sampling (asks the model about compacted [r{n}] entries): off means QA sampling is fully disabled (no extra provider request, no event recorded)."

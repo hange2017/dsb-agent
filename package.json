@@ -213,6 +213,13 @@
           "maximum": 1,
           "description": "%configuration.dsbAgent.compaction.targetPct.description%"
         },
+        "dsbAgent.compaction.tailFoldRatio": {
+          "type": "number",
+          "default": 0.35,
+          "minimum": 0,
+          "maximum": 0.99,
+          "description": "%configuration.dsbAgent.compaction.tailFoldRatio.description%"
+        },
         "dsbAgent.stats.enabled": {
           "type": "boolean",
           "default": true,

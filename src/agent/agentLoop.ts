@@ -156,6 +156,8 @@ export class AgentSession {
       onRecord?: (ev: SessionEvent) => void;
       /** 持久化 API 历史真相源:send 结束 / compact 后收到完整 ProviderMessage[]。子代理不传,保持瞬态。 */
       onPersist?: (messages: ProviderMessage[]) => void;
+      /** 全量快照持久化(方向 3):宿主拆两处落盘(apiHistory + 压缩块快照)。缺省回退 onPersist。 */
+      agentPersist?: (snap: { messages: ProviderMessage[]; compactedBlock?: string }) => void;
       /** 可选冷存储:自建 ContextManager 时注入,压缩过程写入原文供 ContextRecall 回查。 */
       contextStore?: ContextStore;
       /** 冷存储按会话隔离;缺省 "default"。 */
@@ -174,6 +176,10 @@ export class AgentSession {
       triggerPct?: number;
       /** 压缩后目标比例(滞回);缺省 0.5。 */
       targetPct?: number;
+      /** tail 分级折叠比例(方向 2):tail 预算内较旧的该比例折叠进压缩块;undefined/0 = 关闭。 */
+      tailFoldRatio?: number;
+      /** 预置压缩块快照(方向 3):会话恢复回退场景下注入上次持久化块,压缩时作旧脉络;缺省不注入。 */
+      compactedPreset?: string;
       /** 每次 provider.round 发送前的消息组成统计(只记 token 数,不记内容);缺省不回调。 */
       onProviderSend?: (breakdown: ProviderSendBreakdown) => void;
       /** 每次 provider.round 成功返回后,记录真实 usage(含缓存命中 token);缺省不回调。 */
@@ -233,6 +239,8 @@ export class AgentSession {
       budgetSplit: this.deps.budgetSplit,
       triggerPct: this.deps.triggerPct,
       targetPct: this.deps.targetPct,
+      tailFoldRatio: this.deps.tailFoldRatio,
+      presetCompactedBlock: this.deps.compactedPreset,
     });
     this.hooks = this.deps.hooks;
     // SessionStart:会话创建时触发(构造器为同步,fire-and-forget;失败由 fireHook 吞掉)。
@@ -261,10 +269,30 @@ export class AgentSession {
   /** 持久化当前 messages 快照:失败绝不阻断主循环(fail-open,与 hooks 同哲学)。 */
   private persistNow(): void {
     try {
-      this.deps.onPersist?.(this.messages);
+      // 全量快照 = apiHistory + 压缩块快照(经 agentPersist 由宿主拆两处落盘;无宿主时回退 onPersist)。
+      if (this.deps.agentPersist) {
+        this.deps.agentPersist({
+          messages: this.messages,
+          compactedBlock: this.extractCompactedBlock(),
+        });
+      } else {
+        this.deps.onPersist?.(this.messages);
+      }
     } catch {
       // 持久化失败忽略:不影响 agent 运行
     }
+  }
+
+  /** 从当前消息提取最近一条压缩块原文(带 [compacted] 的 user 文本消息);无则 undefined。 */
+  private extractCompactedBlock(): string | undefined {
+    const messages = this.messages;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "user" || typeof m.content !== "string") continue;
+      const content = m.content as string;
+      if (content.includes("[compacted]")) return content;
+    }
+    return undefined;
   }
 
   /** thinking 压缩成本统计:记录一次压缩事件并推送 UI 快照(经最近 send 的事件通道)。 */

@@ -120,6 +120,14 @@ export class Configuration {
     return v;
   }
 
+  /** tail 分级折叠比例(方向 2):tail 预算内较旧的该比例折叠进压缩块;缺省 0.35,[0,1) 有效,非法回退。 */
+  compactionTailFoldRatio(): number {
+    const raw = this.reader.getString("dsbAgent.compaction.tailFoldRatio");
+    if (raw === undefined || raw === "") return 0.35;
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 && v < 1 ? v : 0.35;
+  }
+
   /** 统计总开关:false 关闭后不再记录任何统计事件(StatsStore 不落盘);缺省 true。 */
   statsEnabled(): boolean {
     return this.reader.getString("dsbAgent.stats.enabled") !== "false";
