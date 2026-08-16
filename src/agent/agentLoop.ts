@@ -65,6 +65,7 @@ export type AgentLoopEvent =
     }
   | { type: "usage"; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number }
   | { type: "compaction_stats"; stats: CompactionStatsSnapshot }
+  | { type: "user_message"; text: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -125,6 +126,8 @@ export class AgentSession {
   // 压缩时整体替换为"摘要 + 尾部",故非 readonly
   private messages: ProviderMessage[] = [];
   private abortController: AbortController | undefined;
+  /** 交互式追加队列:busy 期间用户追加的新消息,下一轮循环顶部注入(只 push,前缀稳定)。 */
+  private readonly pendingAppends: string[] = [];
   private readonly todo: TodoManager;
   private readonly contextManager: ContextManager;
   /** A5:最近一次压缩事件(含 compactedSeqs),供 QA 抽查使用。 */
@@ -560,6 +563,17 @@ export class AgentSession {
             onEvent({ type: "info", text: "上下文压缩失败,继续原对话" });
           }
         }
+        // 交互式追加:busy 期间用户追加的新消息,每轮开始前注入消息尾部。
+        // 只 push 不改写既有消息 → 前缀字节稳定;追加作为新的一轮(user_message 事件)
+        // 由 chatController 关闭当前 assistant 时间线并新开 user/assistant 框。
+        if (this.pendingAppends.length > 0) {
+          const appends = this.pendingAppends.splice(0);
+          for (const text of appends) {
+            this.messages.push({ role: "user", content: text });
+            this.record({ kind: "user", text, timestamp: Date.now() });
+            onEvent({ type: "user_message", text });
+          }
+        }
         const forward: (ev: ProviderStreamEvent) => void = (ev) => {
           if (ev.type === "text_delta") {
             onEvent({ type: "text_delta", text: ev.text });
@@ -897,6 +911,24 @@ export class AgentSession {
   }
 
   cancel(): void {
+    // 停止时丢弃排队追加:用户主动取消,不应在下次发送时自动补发
+    this.pendingAppends.length = 0;
     this.abortController?.abort();
+  }
+
+  /**
+   * 交互式追加:busy 期间调用,把新消息排入队列,下一轮发送前注入消息尾部。
+   * 只 push 不改写既有消息 → 符合缓存前缀稳定性(变化只在消息尾部)。
+   * 空闲时调用方应直接走 send(),本方法仅排入队列。
+   */
+  append(text: string): void {
+    const trimmed = text.trim();
+    if (trimmed) this.pendingAppends.push(trimmed);
+  }
+
+  /** 取走尚未注入的追加(send 结束后兜底自动重发用;已停止时队列为空)。 */
+  takePendingAppends(): string[] {
+    if (this.pendingAppends.length === 0) return [];
+    return this.pendingAppends.splice(0);
   }
 }

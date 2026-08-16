@@ -59,6 +59,68 @@ describe("AgentSession", () => {
     expect(events).toContain("done");
   });
 
+  it("P0: append queues pending text and injects at next round start (user_message event)", async () => {
+    // 第一轮:触发一次 Bash(第二轮才有机会注入);第二轮:文本完成。
+    // 在第一轮 round 返回后调用 append,验证第二轮消息尾部注入 + user_message 事件。
+    let session!: AgentSession;
+    const calls: Array<{ messages: ProviderMessage[] }> = [];
+    let round = 0;
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true },
+      async round(messages, _opts, _onEvent): Promise<ProviderRoundResult> {
+        calls.push({ messages: JSON.parse(JSON.stringify(messages)) });
+        if (round === 0) {
+          round++;
+          session.append("  继续做 X  ");
+          return { blocks: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo hi" } }], toolUses: [{ id: "t1", name: "Bash", input: { command: "echo hi" } }] };
+        }
+        round++;
+        return { blocks: [{ type: "text", text: "done" }], toolUses: [] };
+      },
+    };
+    session = new AgentSession({ provider, tools: fakeTools({}).tools, permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }), workspaceRoot: "/tmp", systemPrompt: "s" });
+    const events: Array<string | { type: string; text?: string }> = [];
+    await session.send("hello", (ev) => events.push(ev.type === "user_message" ? { type: ev.type, text: ev.text } : ev.type));
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    // 第二轮消息尾部注入追加文本(trim 后),且只 push 不改写既有消息
+    const second = calls[1].messages;
+    expect(second[second.length - 1]).toEqual({ role: "user", content: "继续做 X" });
+    // 第一轮消息原样保留,未被追加污染
+    expect(calls[0].messages.map((m) => m.content)).not.toContain("继续做 X");
+    // 事件流包含 user_message
+    expect(events).toContainEqual({ type: "user_message", text: "继续做 X" });
+    // 追加已消费:队列为空
+    expect(session.takePendingAppends()).toEqual([]);
+  });
+
+  it("P0: cancel clears pending appends; takePendingAppends drains queue", async () => {
+    const { provider } = fakeProvider([{ result: { blocks: [{ type: "text", text: "hi" }], toolUses: [] } }]);
+    const session = new AgentSession({ provider, tools: fakeTools({}).tools, permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }), workspaceRoot: "/tmp", systemPrompt: "s" });
+    session.append("  排队消息  ");
+    expect(session.takePendingAppends()).toEqual(["排队消息"]);
+    session.append("a");
+    session.append("b");
+    session.cancel();
+    expect(session.takePendingAppends()).toEqual([]);
+  });
+
+  it("P0: appends too late (no next round) remain in queue for host fallback", async () => {
+    let session!: AgentSession;
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true },
+      async round(_messages, _opts, _onEvent): Promise<ProviderRoundResult> {
+        session.append("晚到消息");
+        return { blocks: [{ type: "text", text: "done" }], toolUses: [] };
+      },
+    };
+    session = new AgentSession({ provider, tools: fakeTools({}).tools, permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }), workspaceRoot: "/tmp", systemPrompt: "s" });
+    const events: string[] = [];
+    await session.send("hello", (ev) => events.push(ev.type));
+    expect(events).toContain("done");
+    // 首轮即 done,无下一轮注入 → 残留由 host 兜底自动重发
+    expect(session.takePendingAppends()).toEqual(["晚到消息"]);
+  });
+
   it("includes image blocks in user message when provider supports vision", async () => {
     const { provider, calls } = fakeProvider(
       [{ result: { blocks: [{ type: "text", text: "ok" }], toolUses: [] } }],
