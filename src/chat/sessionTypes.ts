@@ -34,7 +34,11 @@ export type CreateSessionFn = (opts: {
   initialHistory?: ProviderMessage[];
   onRecord?: (ev: SessionEvent) => void;
   onPersist?: (messages: ProviderMessage[]) => void;
+  /** 全量快照持久化(方向 3):宿主拆两处落盘(apiHistory + 压缩块快照)。缺省回退 onPersist。 */
+  agentPersist?: (snap: { messages: ProviderMessage[]; compactedBlock?: string }) => void;
   mcp?: McpRegistry;
   hooks?: HookRunner;
   onWorkflowProgress?: (stageId: string, status: "running" | "done" | "error") => void;
+  /** 预置压缩块快照(方向 3):会话恢复回退场景下注入上次持久化块;缺省不注入。 */
+  compactedPreset?: string;
 }) => Promise<SessionLike>;

@@ -248,7 +248,7 @@ export class ChatViewProvider {
         updateNotifications: async (enabled) => {
           await vscode.workspace.getConfiguration("dsbAgent").update("enableNotifications", enabled, vscode.ConfigurationTarget.Global);
         },
-        createSession: async ({ apiKey, baseUrl, model, capabilities, workspaceRoot, permissions, sessionId, initialHistory, onRecord, onPersist, mcp, hooks, onWorkflowProgress }) => {
+        createSession: async ({ apiKey, baseUrl, model, capabilities, workspaceRoot, permissions, sessionId, initialHistory, onRecord, onPersist, agentPersist, mcp, hooks, onWorkflowProgress, compactedPreset }) => {
           const activeProvider = this.providerStore?.getActive();
           const resolveModelCapabilities = (modelId: string) =>
             this.capabilityRegistry && activeProvider
@@ -380,6 +380,7 @@ export class ChatViewProvider {
             initialHistory,
             onRecord,
             onPersist,
+            agentPersist,
             todo,
             hooks,
             ripgrepPath: getConfiguredRipgrepPath(),
@@ -393,6 +394,8 @@ export class ChatViewProvider {
             windowTokensOverride: this.configuration.contextWindowTokens(),
             triggerPct: this.configuration.compactionTriggerPct(),
             targetPct: this.configuration.compactionTargetPct(),
+            tailFoldRatio: this.configuration.compactionTailFoldRatio(),
+            compactedPreset,
             // 每会话独立统计:thinking 压缩频率(对话轮次 + 压缩次数,滑动窗口 100)
             stats: new CompactionStats(),
             // 处理侧 thinking 开关:false 时「模型可先思考(请求仍带预算),但流程不处理 thinking」——剥离产出(不进历史/压缩/脉络)

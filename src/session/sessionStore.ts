@@ -122,6 +122,33 @@ export class SessionStore {
     fs.renameSync(tmp, file);
   }
 
+  private blockFileFor(id: string): string {
+    return path.join(this.sessionsDir, `${id}.block.json`);
+  }
+
+  /** 保存压缩块快照(方向 3):会话恢复回退时把上次发送的压缩块原文当旧脉络,首轮可命中。tmp + rename 原子写。 */
+  saveApiSnapshot(id: string, block: string): void {
+    const file = this.blockFileFor(id);
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ block }), "utf8");
+    fs.renameSync(tmp, file);
+  }
+
+  /** 读取压缩块快照;文件缺失/损坏/非块一律返回 null,绝不 throw。 */
+  loadApiSnapshot(id: string): string | null {
+    const file = this.blockFileFor(id);
+    if (!fs.existsSync(file)) return null;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+      if (parsed === null || typeof parsed !== "object") return null;
+      const block = (parsed as Record<string, unknown>).block;
+      if (typeof block !== "string" || !block.includes("[compacted]")) return null;
+      return block;
+    } catch {
+      return null;
+    }
+  }
+
   /** 持久化 todos;tmp + rename 避免半写。 */
   saveTodos(id: string, items: Array<{ id: string; content: string; done: boolean }>): void {
     const file = this.todosFileFor(id);
@@ -170,6 +197,8 @@ export class SessionStore {
     if (fs.existsSync(api)) fs.rmSync(api);
     const todos = this.todosFileFor(id);
     if (fs.existsSync(todos)) fs.rmSync(todos);
+    const block = this.blockFileFor(id);
+    if (fs.existsSync(block)) fs.rmSync(block);
   }
 }
 

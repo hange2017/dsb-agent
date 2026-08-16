@@ -77,9 +77,18 @@ export class SessionService {
       initialHistory: this.history,
       onRecord: (ev) => this.deps.sessionStore.append(sessionId, ev),
       onPersist: (msgs) => this.deps.sessionStore.saveApiHistory(sessionId, msgs),
+      // 方向 3:全量快照 = apiHistory + 压缩块快照;会话恢复回退时注入旧脉络(首轮缓存命中)。
+      agentPersist: ({ messages, compactedBlock }) => {
+        this.deps.sessionStore.saveApiHistory(sessionId, messages);
+        if (compactedBlock !== undefined) {
+          this.deps.sessionStore.saveApiSnapshot(sessionId, compactedBlock);
+        }
+      },
       mcp: this.deps.mcp,
       hooks: this.deps.makeHooks(workspaceRoot),
       onWorkflowProgress: this.deps.onWorkflowProgress,
+      // 方向 3:恢复本会话上次发送的压缩块快照,压缩首轮把旧块当已固化前缀(append-only 增量)。
+      compactedPreset: this.deps.sessionStore.loadApiSnapshot(sessionId) ?? undefined,
     });
     this.session = session;
     return { session, sessionId };
@@ -169,5 +178,16 @@ export class SessionService {
       else if (ev.kind === "assistant") history.push({ role: "assistant", content: [{ type: "text", text: ev.text }] });
     }
     return history;
+  }
+
+  /** 从消息历史提取最近一条压缩块原文(带 [compacted] 标记的 user 文本消息);无则 undefined。 */
+  private extractCompactedBlock(messages: ProviderMessage[]): string | undefined {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "user" || typeof m.content !== "string") continue;
+      const content = m.content as string;
+      if (content.includes("[compacted]")) return content;
+    }
+    return undefined;
   }
 }
