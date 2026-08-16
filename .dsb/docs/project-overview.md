@@ -117,6 +117,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 - 规则 → `.dsb/rules/`(含缓存前缀稳定性、瞬时参数省略标记避让、法律严格避让、仓库开发约定);技能 → `.dsb/skills/`(随扩展分发的内置技能见根 `skills/`,38 个可扫描)
 - 斜杠命令 → `.dsb/commands/`;子代理模板 → `.dsb/agents/`
 - 实现计划 → `.dsb/plans/`;设计说明 → `.dsb/specs/`;其它文档 → `.dsb/docs/`
+- 系统分析 → `.dsb/docs/system-analysis/`(架构 01 / 演进 02 / 模块 deep-dive 03 / 技术债 04 / 存储 05 / 性能成本 06 / 统计 07 / 测试 08 / 打榜 09)
 - 会话检查点 → `.dsb/checkpoints/`(gitignore,不推送)
 
 ## 数据与存储位置
