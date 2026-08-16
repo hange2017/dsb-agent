@@ -281,15 +281,19 @@ src/                                  ← 1 个入口文件 + 14 个顶层目录
 
 **为什么**:DeepSeek 独立缓存前缀单元机制(请求边界落盘 / 公共前缀检测 / 固定 token 间隔落盘)。system + tools + 历史 messages 前缀任何一字节变化 → 整段 miss → 缓存雪崩(压缩后首轮命中率曾 ~10%)。
 
-**已落地规则**(规则文档 `.dsb/rules/cache-prefix-stability.md`):
-| 规则 | 内容 |
-|------|------|
-| P0 | system 禁止放会话内会变的内容(todo 移出 system → 尾部注入) |
-| P1 | tool_result 发送前精简 = 同一内容两种形态 → 改为**写前定型**(push 前定最终字节) |
-| P2 | 压缩块重建 = 整块重写 → **只追加、只删尾、标题恒输出** |
-| 工具顺序 | 工具 def 顺序跨轮稳定,新增工具在消息层追加说明 |
+**已落地规则**(规则文档 `.dsb/rules/cache-prefix-stability.md`,2026-08-16 全量核验:代码 + 测试均真实存在):
+| 规则 | 内容 | 落地证据 |
+|------|------|----------|
+| 规则1(P0) | system 禁止放会话内会变的内容(todo 移出 system → 尾部注入) | ✅ `agentLoop.ts:102,598` `injectTodoIntoMessages` |
+| 规则2 | 工具 def 顺序跨轮稳定,新增工具在消息层追加说明 | ✅ 现状已符合(executor toolDefs + mcp 插入序 + plugin 会话内不变) |
+| 规则3 | 历史消息只追加、尾部变化,永不重写 | ✅ 现状已符合(messages 只 push,回滚恢复原快照) |
+| 规则4(P2) | 压缩块只追加、只删尾、标题恒输出 | ✅ `contextCompactor.ts:332` `track(includeEmptyTitle)` + `:470` `collapseTailExplanations` + `contextManager.ts:652` 删尾部;82 测试全绿 |
+| 规则5(P3) | 不删中部已消费块(tool_use/thinking 保留) | ✅ `agentLoop.ts:392/421` 只做幂等兜底,中部块保留 |
+| 规则6(P1) | 同一内容只允许一种字节形态(tool_result 写前定型) | ✅ `agentLoop.ts:858-866` push 前定型,trim 类首次即最终形态 |
 
-**硬性验收**:稳定期命中率 68~75%、压缩后首轮 ~10%(基线);改动 system/压缩块/messages 构造必须跑 `scripts/analyze-cache-prefix.py` 对比,不降命中率是硬性要求。
+**⚠️ 计划了但尚未做的**(见下方缺口清单):P2/规则4 的**基线对比量化**从未执行——`scripts/analyze-cache-prefix.py` 的 68~75% 稳定期 / ~10% 压缩后首轮都是 2026-08-10/11 的**旧基线**,P0-P3 全量落地后的改前改后对比尚无数据;小时级官方对账也停在 08-10/11。
+
+**硬性验收**:稳定期命中率 68~75%、压缩后首轮 ~10%(基线);改动 system/压缩块/messages 构造必须跑 `scripts/analyze-cache-prefix.py` 对比,不降命中率是硬性要求——**该验收 P2 后尚未执行**。
 
 ### 5.2 引擎层不依赖 vscode(可测性/可复用性)
 
