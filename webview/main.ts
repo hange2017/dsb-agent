@@ -28,6 +28,7 @@ const agentMood = document.getElementById("agentMood") as HTMLElement;
 const dayPhaseEl = document.getElementById("dayPhase") as HTMLElement;
 const inputEl = document.getElementById("input") as HTMLTextAreaElement;
 const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement;
+const appendBtn = document.getElementById("appendBtn") as HTMLButtonElement;
 const stopBtn = document.getElementById("stopBtn") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const newBtn = document.getElementById("newBtn") as HTMLButtonElement;
@@ -929,6 +930,8 @@ function renderSessions(sessions: Array<{ id: string; title: string; updatedAt: 
 function setBusy(next: boolean, info = ""): void {
   busy = next;
   sendBtn.hidden = next;
+  // 追加按钮:busy 时可见(追加到当前轮),空闲时隐藏(普通发送即可)
+  appendBtn.hidden = !next;
   stopBtn.hidden = !next;
   statusEl.textContent = info;
   // 动态 agent 状态表情:忙碌时🤔弹跳,空闲时😊浮动
@@ -1047,6 +1050,18 @@ function send(): void {
   }
   setBusy(true, t("等待模型…", locale));
   post({ type: "send", text });
+}
+
+/** 交互式追加:busy 期间把当前输入追加到进行中的这轮对话(不展开引用/图片)。 */
+function append(): void {
+  const text = inputEl.value.trim();
+  if (!text || !busy) return;
+  inputEl.value = "";
+  if (pendingChips.length) {
+    showToast(t("追加不支持附件,请先移除", locale), true);
+    return;
+  }
+  post({ type: "append", text });
 }
 
 function readFileBase64(file: File): Promise<string> {
@@ -1175,6 +1190,7 @@ function handleSuggestionKey(e: KeyboardEvent): boolean {
 // ---- DOM wiring ----
 
 sendBtn.addEventListener("click", send);
+appendBtn.addEventListener("click", append);
 stopBtn.addEventListener("click", () => post({ type: "cancel" }));
 newBtn.addEventListener("click", () => post({ type: "new_session" }));
 sessionsBtn.addEventListener("click", () => {

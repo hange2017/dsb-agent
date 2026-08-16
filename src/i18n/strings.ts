@@ -26,6 +26,10 @@ export const en: Record<string, string> = {
   // ---- 主面板 header/composer ----
   "发送": "Send",
   "停止": "Stop",
+  "追加": "Append",
+  "已追加,等待模型处理…": "Appended, waiting for the model…",
+  "追加不支持附件,请先移除": "Append does not support attachments, remove them first",
+  "当前会话不可用,无法追加": "Current session unavailable, cannot append",
   "输入消息…(Enter 发送 / Shift+Enter 换行)": "Type a message… (Enter to send / Shift+Enter for newline)",
   "新会话": "New session",
   "会话列表": "Sessions",
