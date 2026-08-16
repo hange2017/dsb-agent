@@ -10,3 +10,5 @@ dist/
 benchmark/out/
 
 .dsb/checkpoints/
+__pycache__/
+*.pyc

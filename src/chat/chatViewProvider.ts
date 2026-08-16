@@ -108,6 +108,11 @@ export class ChatViewProvider {
     private readonly statsStore?: StatsStore,
   ) {}
 
+  /** 本会话 provider_send 轮次计数(供前缀命中分析按会话精确配对相邻轮)。
+   * 必须跨 createSession 调用持续递增(同一会话多轮对话),否则 sendSeq 反复从 1 开始,
+   * 分析脚本会把同一会话的连续轮次误判为「会话重建」而漏配。 */
+  private readonly sendSeqBySession = new Map<string, number>();
+
   getController(): ChatController | undefined {
     return this.controller;
   }
@@ -300,8 +305,6 @@ export class ChatViewProvider {
           // 父会话与子代理共享同一 executor(及同一 store)。子代理工厂尚未赋值时闭包
           // 只读,不会执行快照,故在此处构造注入是安全的。
           const checkpoints = new CheckpointStore(workspaceRoot, sessionId);
-          // 本会话 provider_send 轮次计数(供前缀命中分析按会话精确配对相邻轮)
-          const sendSeqBySession = new Map<string, number>();
           // mcp 注册表在 executor 构造时订阅 onTools(含对已连接工具的重放),MCP 工具并入 allToolDefs()
           // 子代理模板(项目/用户/插件 .dsb/agents)按名注入 executor(第 10 个位置参数),
           // Agent 工具的 `agent` 参数据此解析角色;未命中返回 undefined → executor 报 Unknown agent。
@@ -396,8 +399,8 @@ export class ChatViewProvider {
             thinkingProcessEnabled: this.configuration.compactionThinkingEnabled(),
             // 发送前打点:记录每次 provider.round 的消息组成 token(只记数字不记内容)
             onProviderSend: (breakdown) => {
-              const sendSeq = (sendSeqBySession.get(sessionId) ?? 0) + 1;
-              sendSeqBySession.set(sessionId, sendSeq);
+              const sendSeq = (this.sendSeqBySession.get(sessionId) ?? 0) + 1;
+              this.sendSeqBySession.set(sessionId, sendSeq);
               this.statsStore?.record("provider_send", {
                 ...(breakdown as unknown as Record<string, unknown>),
                 sessionId,
