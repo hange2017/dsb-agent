@@ -940,24 +940,25 @@ function setBusy(next: boolean, info = ""): void {
   updateIdleMood();
 }
 
-/** 鼠标是否悬停在输入框上(悬停时躺平小人敬礼致意并淡出)。 */
-let hoveringInput = false;
-
-/** 空闲躺平小人:仅在空闲且输入框为空时可见(输入文字/忙碌时淡出);
- *  鼠标悬停输入框时切换为敬礼 🫡 并淡出,移出后恢复躺平。 */
+/** 空闲躺平小人:仅在空闲且输入框为空时可见(输入文字/忙碌时淡出)。
+ *  鼠标悬停输入框时由 mouseenter 触发一次敬礼问候,0.8s 后自动恢复躺平,
+ *  避免 saluteOut 动画 forwards 锁定 opacity:0 导致表情「消失」。 */
+let saluteTimer: number | undefined;
 function updateIdleMood(): void {
   const visible = !busy && inputEl.value.trim() === "";
   idleMoodEl.style.opacity = visible ? "1" : "0";
-  if (!visible) return;
-  if (hoveringInput) {
-    if (idleMoodEl.textContent !== "🫡") {
-      idleMoodEl.textContent = "🫡";
-      idleMoodEl.classList.add("saluting");
-    }
-  } else {
-    idleMoodEl.textContent = "😴";
+  if (!visible) {
+    // 忙碌/输入中:退出敬礼态并取消恢复定时器,防止动画残留锁定 opacity:0
     idleMoodEl.classList.remove("saluting");
+    if (saluteTimer !== undefined) {
+      window.clearTimeout(saluteTimer);
+      saluteTimer = undefined;
+    }
+    return;
   }
+  // 空闲:解除敬礼动画锁定,恢复躺平(悬停问候由 mouseenter 一次性触发)
+  idleMoodEl.textContent = "😴";
+  idleMoodEl.classList.remove("saluting");
 }
 
 /** 用户消息出现正向反馈时,弹出点赞回应动画。 */
@@ -1321,13 +1322,27 @@ if (composerHandle) {
 }
 
 const vim = new VimInput(inputEl, { enabled: () => vimEnabled });
-// 鼠标悬停输入框:躺平小人切换为敬礼并淡出(移出后恢复)
+// 鼠标悬停输入框:躺平小人敬礼问候(0.8s 后自动恢复躺平,不被动画锁定隐藏)
 inputEl.addEventListener("mouseenter", () => {
-  hoveringInput = true;
-  updateIdleMood();
+  if (busy || inputEl.value.trim() !== "") return;
+  idleMoodEl.classList.remove("saluting");
+  void idleMoodEl.offsetWidth; // 强制 reflow 重启动画
+  idleMoodEl.textContent = "🫡";
+  idleMoodEl.classList.add("saluting");
+  if (saluteTimer !== undefined) window.clearTimeout(saluteTimer);
+  saluteTimer = window.setTimeout(() => {
+    saluteTimer = undefined;
+    if (busy || inputEl.value.trim() !== "") return; // 已开始输入/忙碌:保持隐藏
+    idleMoodEl.textContent = "😴";
+    idleMoodEl.classList.remove("saluting");
+    idleMoodEl.style.opacity = "1";
+  }, 800);
 });
 inputEl.addEventListener("mouseleave", () => {
-  hoveringInput = false;
+  if (saluteTimer !== undefined) {
+    window.clearTimeout(saluteTimer);
+    saluteTimer = undefined;
+  }
   updateIdleMood();
 });
 inputEl.addEventListener("keydown", (e) => {
