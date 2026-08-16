@@ -7,7 +7,8 @@
 
 | 模块 | 文件数 | 核心文件 | 状态 |
 |------|--------|----------|------|
-| src/agent | 19 | agentLoop.ts / contextManager.ts / contextCompactor.ts | 📄 |
+| src/agent | 19 | agentLoop.ts / contextManager.ts / contextCompactor.ts | 🔄 |
+| └ 压缩子系统 | — | contextCompactor.ts / contextManager.ts | ✅ [001](001-context-compaction.md) |
 | src/agent/tools | 10 | executor.ts / definitions.ts / todoTool.ts | 📄 |
 | src/agent/memory | 5 | memoryManager.ts / memoryDream.ts | 📄 |
 | src/agent/provider | 3 | anthropicMessagesClient.ts / fallbackClient.ts | 📄 |

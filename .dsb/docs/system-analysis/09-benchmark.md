@@ -1,19 +1,43 @@
 # 09 · benchmark / 打榜专题
 
-> 状态:📄 骨架(待填充)
+> 状态:✅ 已完成(2026-08-17)
+> 关联:02-evolution-roadmap.md 方向 D;benchmark/ 目录。
 
-## 目的
+## 一、评测架构
 
-梳理 DSBAgent 打榜评测体系:SWE-bench 路线、成本效率卖点、进展与后续。
+```
+benchmark/
+├── cli.ts          # headless 入口:SWE-bench-Live 实例 → AgentSession → 工具执行 → patch
+├── provider.ts     # ScriptedProvider(fake 冒烟)/ 真实 provider 组装
+├── deps.ts         # 复用 src/agent 引擎依赖(不依赖 vscode)
+├── swebench.ts     # 实例读取 / problem prompt / repo 准备 / patch 提取 / git 校验
+├── stats.ts        # CostTracker(成本统计)
+├── build.mjs       # 独立构建(dist-benchmark/,不进扩展包)
+└── smoke.test.ts   # 两轮脚本对话全链路冒烟(无 API key)
+```
 
-## 待分析问题(填充时逐项回答)
+- 复用 `src/agent/` 引擎(AgentSession → ToolExecutor → Bash),headless 运行;
+  环境变量 `DSB_API_KEY / DSB_BASE_URL / DSB_MODEL / DSB_COST_PER_CALL`。
 
-- [ ] 评测架构:benchmark/cli.ts headless 包装、provider/stats 组装、smoke 测试
-- [ ] 路线图:打榜路线文档(benchmark-roadmap)、T1 完成 / T3 进行中 / T2、T4 待办
-- [ ] 卖点定义:"成本效率"(DeepSeek V4 Flash + ~95% 缓存命中率)如何用真实数据证明
-- [ ] 基础设施:T3 自包含 VM worklog、probe 实例准备脚本
-- [ ] 后续规划:完整榜单提交流程、结果归档、复现性保障
+## 二、路线图状态(benchmark-roadmap)
 
-## 产出形式
+| 里程碑 | 状态 | 说明 |
+|---|---|---|
+| T1 | ✅ 完成 | CLI headless 可跑 + smoke 测试 |
+| T3 | 🔄 进行中 | 自包含 VM worklog、probe 实例准备脚本 |
+| T2 / T4 | ⏳ 待办 | 完整榜单提交流程 / 结果归档与复现性 |
 
-评测架构说明 + 路线图状态 + 后续行动项。
+## 三、成本效率卖点(如何证明)
+
+- **卖点**:低单价模型(默认兼容端点)+ **~95% 缓存命中率**(稳定期 97.0~97.7%,见 06)
+  → 同任务成本显著低于无缓存方案。
+- **数据来源**:stats 体系(provider_round 真实 usage)→ 07 的口径规则保证可信;
+  打榜时 CostTracker 按实例汇总 cost/rounds,可直接产出「单实例成本」证据。
+- **待补**:与对照方案的公平对比(同实例、同 prompt、同轮次上限),写入 T2 提交规范。
+
+## 四、后续行动项
+
+1. T3 收尾:自包含 VM 复现环境 + 实例清单版本化。
+2. T2:提交规范(实例选择、轮次上限、温度、超时)→ 完整榜单跑批 → 结果归档格式。
+3. T4:复现性保障(固定依赖版本、patch 校验、输出哈希)。
+4. 卖点数据:跑 5~10 个代表性实例,输出「成本效率对照表」进 README(合规用语,见 rules/legal-strict-avoidance)。
