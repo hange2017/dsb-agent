@@ -18,6 +18,7 @@ DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);�
 - **输入框 Ctrl/Cmd+Z 撤销失效**:发送后 `inputEl.value` 被编程式清空会销毁 textarea 原生撤销栈,输入框为空时按 Ctrl/Cmd+Z 现在会恢复上一次发送的文本;vim 模式 normal 状态不再拦截 Ctrl/Cmd/Alt 组合键,撤销/重做/复制/粘贴等浏览器原生行为恢复正常。
 - **瞬时参数省略标记污染防护**:瞬时参数摘要模板升级为强标识 `[TRANSIENT-SUMMARY field=... chars=...]` 并附「禁止写入文件」提示,模型不再把省略标记当真实内容复述;`Write`/`StrReplace` 执行前校验 `contents`/`old_string`/`new_string`,命中省略标记直接拒绝写入并提示用 `Read` 重新读取——从源头阻断「占位符污染文件」问题(Windows/Linux 均适用)。
 - **输入框躺平小人悬停/输入后消失**:`saluteOut` 动画 `forwards` 锁定 `opacity:0`,而 `saluting` 类仅在 `mouseleave` 时移除;输入清空后即使恢复空闲,inline `opacity` 也被动画覆盖 → 表情永久不可见。现改为空闲分支强制解除 `saluting` 锁定并恢复 😴,悬停敬礼改为一次性问候(0.8s 后自动恢复躺平),忙碌/输入中不触发问候。
+- **▲▼ 轮次导航按钮被刷新内容遮挡**:导航按钮背景仅 `color-mix(... 10%, transparent)` + `opacity: 0.85` 近乎透明,且 `z-index: 20` 偏低;时间线动态刷新时新内容块(蓝框 USER/DSB 消息、代码块等)滚动划过按钮位置会从半透明按钮中透出,视觉上像「内容漂浮在箭头上面」。现改为 `z-index: 500`(高于消息区全部内容层 ≤3,低于设置抽屉 1000)+ 以编辑器背景为主的实底背景 + 加深阴影,箭头始终清晰浮于最上层。
 
 ### 新增
 
