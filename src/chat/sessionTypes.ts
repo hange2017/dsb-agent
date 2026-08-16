@@ -16,6 +16,10 @@ export type SessionLike = {
   cancel: () => void;
   /** 用户手动强制压缩上下文;失败时抛错,由命令层 toast。可选:旧实现/mock 可不提供。 */
   compactNow?: () => Promise<void>;
+  /** 交互式追加:busy 期间把新消息排入队列,下一轮发送前注入。可选:旧实现/mock 可不提供。 */
+  append?: (text: string) => void;
+  /** 取走尚未注入的追加(send 结束后兜底自动重发用)。可选:旧实现/mock 可不提供。 */
+  takePendingAppends?: () => string[];
 };
 
 export type CreateSessionFn = (opts: {

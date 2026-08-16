@@ -335,6 +335,9 @@ export class ChatController {
       case "send":
         await this.send(message.text);
         break;
+      case "append":
+        this.appendMessage(message.text);
+        break;
       case "cancel":
         this.sessionService.cancel();
         break;
@@ -1485,6 +1488,26 @@ export class ChatController {
     else this.post({ type: "sessions", sessions: this.sessionService.listSessions() });
   }
 
+  /**
+   * 交互式追加:busy 期间把新消息排入 agent 队列,下一轮发送前注入(追加按钮);
+   * 空闲时视为普通新消息直接发送。不展开 @引用/图片(追加仅文本,保持轻量)。
+   */
+  private appendMessage(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (!this.busy) {
+      void this.send(trimmed);
+      return;
+    }
+    const session = this.sessionService.getSession();
+    if (!session?.append) {
+      this.post({ type: "toast", message: t("当前会话不可用,无法追加", this.locale), error: true });
+      return;
+    }
+    session.append(trimmed);
+    this.post({ type: "status", busy: true, info: t("已追加,等待模型处理…", this.locale), transient: true });
+  }
+
   private async send(userText: string, opts?: { recordActivity?: boolean }): Promise<void> {
     if (this.busy) return; // 不依赖 webview 的 busy 标志,host 内部互斥
     this.busy = true;
@@ -1554,6 +1577,19 @@ export class ChatController {
       await session.send(prompt, (ev) => this.onAgentEvent(ev, assistantId), opts);
     } finally {
       this.busy = false;
+      // 交互式追加残留兜底:send 自然结束(done/error)时队列仍有未注入的追加
+      // (模型在最后输出轮,无下一轮可注入)→ 作为新对话轮自动发出。
+      // 用户点停止时 AgentSession.cancel() 已清空队列,不会触发补发。
+      // await 兜底:让一次 handle(send) 完整覆盖「追加轮」,而非 fire-and-forget;
+      // 第二轮已取空队列,不会递归。
+      try {
+        const pending = this.sessionService.getSession()?.takePendingAppends?.() ?? [];
+        if (pending.length > 0) {
+          await this.send(pending.join("\n"));
+        }
+      } catch {
+        // 兜底失败不阻断原 send 返回
+      }
     }
   }
 
@@ -1663,6 +1699,9 @@ export class ChatController {
   }
 
   private onAgentEvent(ev: AgentLoopEvent, assistantId: string): void {
+    // 注意:交互式追加(user_message)会把 currentAssistantId 切到新轮,
+    // 因此各 case 一律经 current() 取当前 id(user_message 之前回退入参)。
+    const current = (): string => this.currentAssistantId ?? assistantId;
     switch (ev.type) {
       case "status":
         this.post({ type: "status", busy: ev.busy, info: ev.info });
@@ -1672,23 +1711,40 @@ export class ChatController {
         // transient:webview 端 2 秒后自动清空该提示文本,不改变 busy 状态
         this.post({ type: "status", busy: true, info: ev.text, transient: true });
         break;
+      case "user_message":
+        // 交互式追加在引擎层注入:关闭当前 assistant 时间线(视为一段完成),
+        // 新开 user 框 + assistant 框,后续事件流向新的 currentAssistantId。
+        this.closeTextStep(current(), true);
+        this.finishThinking(current());
+        this.post({ type: "assistant_done", messageId: current() });
+        this.thinkingText.clear();
+        this.thinkingStartedAt.clear();
+        this.toolInputs.clear();
+        this.openTextStep = null;
+        this.textStepSeq = 0;
+        this.textBuffers.clear();
+        const nextAssistantId = newMessageId();
+        this.currentAssistantId = nextAssistantId;
+        this.post({ type: "message", id: newMessageId(), role: "user", text: ev.text });
+        this.post({ type: "message", id: nextAssistantId, role: "assistant", text: "" });
+        break;
       case "text_delta": {
-        this.finishThinking(assistantId);
-        const stepId = this.ensureTextStep(assistantId);
+        this.finishThinking(current());
+        const stepId = this.ensureTextStep(current());
         this.textBuffers.set(stepId, (this.textBuffers.get(stepId) ?? "") + ev.text);
-        this.post({ type: "stream", messageId: assistantId, text: ev.text, stepId });
+        this.post({ type: "stream", messageId: current(), text: ev.text, stepId });
         break;
       }
       case "thinking_delta": {
-        this.closeTextStep(assistantId, false);
-        if (!this.thinkingStartedAt.has(assistantId)) {
-          this.thinkingStartedAt.set(assistantId, Date.now());
+        this.closeTextStep(current(), false);
+        if (!this.thinkingStartedAt.has(current())) {
+          this.thinkingStartedAt.set(current(), Date.now());
         }
-        const next = (this.thinkingText.get(assistantId) ?? "") + ev.text;
-        this.thinkingText.set(assistantId, next);
+        const next = (this.thinkingText.get(current()) ?? "") + ev.text;
+        this.thinkingText.set(current(), next);
         this.post({
           type: "timeline_step",
-          messageId: assistantId,
+          messageId: current(),
           stepId: "thinking",
           kind: "thinking",
           status: "running",
@@ -1697,11 +1753,11 @@ export class ChatController {
         break;
       }
       case "tool_call": {
-        this.closeTextStep(assistantId, false);
-        this.finishThinking(assistantId);
+        this.closeTextStep(current(), false);
+        this.finishThinking(current());
         if (ev.input !== undefined) this.toolInputs.set(ev.callId, ev.input);
         const input = ev.input ?? this.toolInputs.get(ev.callId);
-        this.postToolStep(assistantId, ev.callId, ev.name, ev.status, input, ev.detail);
+        this.postToolStep(current(), ev.callId, ev.name, ev.status, input, ev.detail);
         if (ev.status !== "running") this.toolInputs.delete(ev.callId);
         break;
       }
@@ -1713,8 +1769,8 @@ export class ChatController {
         this.post({ type: "compaction_stats", stats: ev.stats });
         break;
       case "error":
-        this.closeTextStep(assistantId, false);
-        this.finishThinking(assistantId);
+        this.closeTextStep(current(), false);
+        this.finishThinking(current());
         this.post({ type: "status", busy: false, info: ev.message, error: true });
         // 错误级原生弹窗:不受面板可见性/通知开关约束(用户要求配好 key 后测试消息不对必须弹窗)
         try {
@@ -1724,11 +1780,11 @@ export class ChatController {
         }
         break;
       case "done": {
-        this.closeTextStep(assistantId, true);
-        this.finishThinking(assistantId);
+        this.closeTextStep(current(), true);
+        this.finishThinking(current());
         this.sessionUiState.setInterrupted(undefined);
         this.writeProgressMemory();
-        this.post({ type: "assistant_done", messageId: assistantId });
+        this.post({ type: "assistant_done", messageId: current() });
         this.post({ type: "status", busy: false, info: t("完成", this.locale) });
         if (this.notificationsEnabled() && !this.isVisible()) this.notifier.info("DSBAgent", t("任务完成", this.locale));
         break;

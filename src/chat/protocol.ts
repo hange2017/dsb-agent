@@ -121,6 +121,7 @@ export type HostToWebviewMessage =
 export type WebviewToHostMessage =
   | { type: "ready" }
   | { type: "send"; text: string }
+  | { type: "append"; text: string }
   | { type: "cancel" }
   | { type: "new" }
   | { type: "new_session" }

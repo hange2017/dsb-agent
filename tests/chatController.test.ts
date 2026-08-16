@@ -83,6 +83,107 @@ function pngB64(): string {
 }
 
 describe("ChatController", () => {
+  it("P0: append while busy queues into session.append and keeps busy", async () => {
+    const { controller, posted, sessionImpl } = makeControllableDeps(async () => {
+      // 永不 resolve:模拟模型长时间运行中(busy)
+      await new Promise<void>(() => {});
+    });
+    const appended: string[] = [];
+    (sessionImpl as { append?: (text: string) => void }).append = (text: string) => appended.push(text);
+    const sending = controller.handle({ type: "send", text: "hello" });
+    // 等待 send 走到 session.send(busy 且会话已就绪)
+    await new Promise((r) => setTimeout(r, 0));
+    await controller.handle({ type: "append", text: "  继续做  " });
+    expect(appended).toEqual(["继续做"]);
+    // 未触发第二次 send(busy 互斥,append 只入队)
+    const statuses = posted.filter((m) => (m as { type: string }).type === "status");
+    expect(statuses.length).toBe(1);
+    // send 挂起模拟 busy;测试结束后发送 promise 仍挂起,不 await 即可。
+    void sending;
+  });
+
+  it("P0: append while idle sends as a new message", async () => {
+    const { controller, sent } = makeControllableDeps(async (_text, onEvent) => {
+      onEvent({ type: "done" });
+    });
+    await controller.handle({ type: "append", text: "hello" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent).toEqual(["hello"]);
+  });
+
+  it("P0: user_message event closes current round and starts new assistant timeline", async () => {
+    const { controller, posted } = makeControllableDeps(async (_text, onEvent) => {
+      onEvent({ type: "text_delta", text: "first" });
+      onEvent({ type: "user_message", text: "追加" });
+      onEvent({ type: "text_delta", text: "second" });
+      onEvent({ type: "done" });
+    });
+    await controller.handle({ type: "send", text: "hi" });
+    const types = posted.map((m) => (m as { type: string }).type);
+    // 旧轮关闭 + 新 user 框 + 新 assistant 框 + 第二轮流 + 最终 done
+    expect(types.filter((t) => t === "assistant_done").length).toBe(2);
+    expect(types.filter((t) => t === "message").length).toBe(4); // host: user hi + assistant(旧);事件: user 追加 + assistant(新)
+    const userAppend = posted.find((m) => (m as { type: string }).type === "message" && (m as { role: string }).role === "user" && (m as { text: string }).text === "追加");
+    expect(userAppend).toBeTruthy();
+    const streams = posted.filter((m) => (m as { type: string }).type === "stream") as Array<{ text: string }>;
+    expect(streams.map((s) => s.text).join("")).toBe("firstsecond");
+    // 两个 assistant 框 id 不同(切轮)
+    const assistants = posted.filter((m) => (m as { type: string }).type === "message" && (m as { role: string }).role === "assistant") as Array<{ id: string }>;
+    expect(assistants.length).toBe(2);
+    expect(assistants[0].id).not.toBe(assistants[1].id);
+  });
+
+  it("P0: leftover pending appends are re-sent as new round after send finishes", async () => {
+    let sendCount = 0;
+    const leftover: string[] = [];
+    const { controller, sent } = makeControllableDeps(async (text, onEvent) => {
+      sendCount++;
+      if (sendCount === 1) {
+        onEvent({ type: "done" });
+        // 模型最后输出轮:追加太晚未注入 → 队列残留
+        leftover.push("晚到消息");
+      } else {
+        onEvent({ type: "text_delta", text: "second round" });
+        onEvent({ type: "done" });
+      }
+    });
+    // 重新构造:sessionImpl 需要 takePendingAppends
+    const sent2: string[] = [];
+    const sessionImpl = {
+      send: async (text: string, onEvent: (ev: AgentLoopEvent) => void) => {
+        sent2.push(text);
+        sendCount++;
+        if (sendCount === 1) {
+          onEvent({ type: "done" });
+          leftover.push("晚到消息");
+        } else {
+          onEvent({ type: "text_delta", text: "second round" });
+          onEvent({ type: "done" });
+        }
+      },
+      cancel: () => {},
+      takePendingAppends: () => {
+        const a = [...leftover];
+        leftover.length = 0;
+        return a;
+      },
+    };
+    const deps = {
+      apiKeyStore: { getApiKey: async () => "sk-test", setApiKey: async () => {} },
+      configuration: { baseUrl: () => "https://api.deepseek.com/anthropic", model: () => "m" },
+      getWorkspaceCwd: () => "/tmp",
+      sessionStore: store,
+      createSession: () => sessionImpl,
+      memory: new MemoryStore(path.join(dir, "mem")),
+    };
+    const posted2: unknown[] = [];
+    const controller2 = new ChatController(deps as never, (m) => posted2.push(m));
+    await controller2.handle({ type: "send", text: "hi" });
+    expect(sendCount).toBe(2);
+    expect(sent2).toEqual(["hi", "晚到消息"]);
+    expect(leftover).toEqual([]);
+  });
+
   it("sends user message and forwards stream events", async () => {
     const { controller, posted } = makeDeps();
     await controller.handle({ type: "ready" });
