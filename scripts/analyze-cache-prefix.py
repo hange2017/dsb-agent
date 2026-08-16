@@ -12,13 +12,17 @@ messageBreakdown:
     system+tools + 旧 compacted 块,tail 0 命中(严格前缀)。
 
 真实口径(权威):provider_round 的 cacheReadTokens / inputTokens 按天汇总,
-并单独统计「压缩后首轮」命中率 = 每个 compaction 事件(完成时间 t)之后的
-**第一个** provider_round(不是 30s 窗口内的所有轮——那会把已重建缓存的
+并按「压缩后第 k 轮」分组统计命中率 = 每个 compaction 事件(完成时间 t)
+之后的第 k 个 provider_round(k=1,2,3;4+ 归稳定期)。
+第 1 轮最差(compacted 增量 + tail 位置前移全 miss),第 2/3 轮展示
+「缓存重建后的恢复速度」——P2 后 compacted 块字节稳定,第 2 轮即应
+恢复到 ~90%+(不是 30s 窗口内所有轮混算——那会把已重建缓存的
 正常轮混入,严重高估)。
 
 实测(2026-08-15/16 修正后):
   - 稳定期(其余轮):平均 94.1~94.7%(中位 98.7~99.2%)
   - 压缩后首轮:平均 50.5~55.7%(中位 53.8~58.0%),仍有少量 <20% 的雪崩轮
+  - 压缩后第 2/3 轮:恢复至 ~90% / ~96%(缓存重建完成)
 
 用法:
   python3 scripts/analyze-cache-prefix.py [events.jsonl...]
@@ -200,6 +204,64 @@ def kind_of(part):
     return "tail"
 
 
+def group_real_rounds(rounds, comps):
+    """真实口径分组:按「压缩后第 k 轮」分桶(k=1,2,3;4+ 归稳定期)。
+
+    压缩后第 k 轮 = compaction 完成时间(t)之后第 k 个 provider_round(时间序)。
+    第 1 轮最差(compacted 增量 + tail 位置前移全 miss),第 2/3 轮展示
+    缓存重建恢复速度。返回 {bucket: {"hit": int, "miss": int, "n": int}}。
+    """
+    comp_times_by_sess = defaultdict(list)
+    for c in comps:
+        d = c.get("data", {})
+        comp_times_by_sess[d.get("sessionId", "?")].append(c.get("t", 0))
+    round_by_sess = defaultdict(list)
+    for r in rounds:
+        d = r.get("data", {})
+        round_by_sess[d.get("sessionId", "?")].append(r)
+
+    buckets = defaultdict(lambda: {"hit": 0, "miss": 0, "n": 0})
+    for sid, rs in round_by_sess.items():
+        rs.sort(key=lambda r: r.get("t", 0))
+        comps_sorted = sorted(comp_times_by_sess.get(sid, []))
+        ci = -1  # 最近一次已越过的 compaction 下标(时间序)
+        k = 0    # 该 compaction 之后的第几个 round
+        for r in rs:
+            t = r.get("t", 0)
+            # 越过所有完成时间 <= t 的 compaction
+            while ci + 1 < len(comps_sorted) and t >= comps_sorted[ci + 1]:
+                ci += 1
+                k = 0
+            if ci >= 0:
+                k += 1
+                if k == 1:
+                    name = "压缩后第1轮"
+                elif k in (2, 3):
+                    name = f"压缩后第{k}轮"
+                else:
+                    name = "其余轮(稳定期,4+)"
+            else:
+                name = "其余轮(稳定期,4+)"
+            g = buckets[name]
+            d = r.get("data", {})
+            g["n"] += 1
+            g["hit"] += d.get("cacheReadTokens", 0)
+            g["miss"] += d.get("inputTokens", 0)
+    # 压缩后首轮(<20%)雪崩计数:每个 compaction 后第一个 round 命中率过低
+    low = 0
+    for sid, rs in round_by_sess.items():
+        rs.sort(key=lambda r: r.get("t", 0))
+        for ct in sorted(comp_times_by_sess.get(sid, [])):
+            for i, r in enumerate(rs):
+                if r.get("t", 0) >= ct:
+                    d = r["data"]
+                    h, m = d.get("cacheReadTokens", 0), d.get("inputTokens", 0)
+                    if h + m > 0 and h / (h + m) < 0.2:
+                        low += 1
+                    break
+    return buckets, low
+
+
 def main():
     paths = sys.argv[1:] or default_paths()
     if not paths:
@@ -239,54 +301,19 @@ def main():
         print(f"compacted 未命中轮: {stats['avalanche_rounds']} | 额外未命中: {stats['avalanche_miss']:,}")
         print(f"雪崩成本 ≈ ¥{stats['avalanche_miss'] * PRICE_INPUT / 1e6:.4f}")
 
-    # 真实口径(权威):provider_round 命中率,按「压缩后首轮 / 其余轮」分组。
-    # 压缩后首轮 = compaction 完成(t)之后**第一个** round(不是 30s 窗口内全部)。
+    # 真实口径(权威):provider_round 命中率,按「压缩后第 k 轮」分组(k=1,2,3;4+ 稳定期)。
+    # 第 1 轮最差;第 2/3 轮展示缓存重建后的恢复速度(恢复曲线)。
     comps = [ev for ev in events if ev.get("type") == "compaction"]
     if rounds:
-        # 每会话:round 按 t 排序;标记哪些 round 是某压缩后的第一个
-        comp_times_by_sess = defaultdict(list)
-        for c in comps:
-            d = c.get("data", {})
-            comp_times_by_sess[d.get("sessionId", "?")].append(c.get("t", 0))
-        real_groups = {
-            "压缩后首轮(compaction 后第一个 round)": {"hit": 0, "miss": 0, "n": 0},
-            "其余轮(稳定期)": {"hit": 0, "miss": 0, "n": 0},
-        }
-        round_by_sess = defaultdict(list)
-        for r in rounds:
-            d = r.get("data", {})
-            round_by_sess[d.get("sessionId", "?")].append(r)
-        for sid, rs in round_by_sess.items():
-            rs.sort(key=lambda r: r.get("t", 0))
-            first_after = set()
-            for ct in sorted(comp_times_by_sess.get(sid, [])):
-                for i, r in enumerate(rs):
-                    if r.get("t", 0) >= ct:
-                        first_after.add(i)
-                        break
-            for i, r in enumerate(rs):
-                d = r.get("data", {})
-                g = real_groups["压缩后首轮(compaction 后第一个 round)"] if i in first_after else real_groups["其余轮(稳定期)"]
-                g["n"] += 1
-                g["hit"] += d.get("cacheReadTokens", 0)
-                g["miss"] += d.get("inputTokens", 0)
-        print("\n=== 真实口径(provider_round,权威;压缩后首轮=compaction 后第一个 round) ===")
-        for name, g in real_groups.items():
+        real_groups, low = group_real_rounds(rounds, comps)
+        print("\n=== 真实口径(provider_round,权威;压缩后第 k 轮恢复曲线) ===")
+        print("第 1 轮最差(compacted 增量 + tail 位置前移全 miss);第 2/3 轮看恢复速度")
+        order = ["压缩后第1轮", "压缩后第2轮", "压缩后第3轮", "其余轮(稳定期,4+)"]
+        for name in order:
+            g = real_groups[name]
             h, m = g["hit"], g["miss"]
             rate = h / (h + m) * 100 if (h + m) else 0
-            print(f"{name:<38} [{g['n']:>4}轮] 命中 {h:>10,} / 未命中 {m:>10,} / {rate:.1f}%")
-        # 压缩后首轮的雪崩(<20%)计数
-        low = 0
-        for sid, rs in round_by_sess.items():
-            rs.sort(key=lambda r: r.get("t", 0))
-            for ct in sorted(comp_times_by_sess.get(sid, [])):
-                for i, r in enumerate(rs):
-                    if r.get("t", 0) >= ct:
-                        d = r["data"]
-                        h, m = d.get("cacheReadTokens", 0), d.get("inputTokens", 0)
-                        if h + m > 0 and h / (h + m) < 0.2:
-                            low += 1
-                        break
+            print(f"{name:<22} [{g['n']:>4}轮] 命中 {h:>10,} / 未命中 {m:>10,} / {rate:.1f}%")
         if low:
             print(f"其中命中率 <20% 的雪崩首轮: {low} 次")
 
@@ -361,6 +388,26 @@ def self_test():
     st = analyze([s1, s2, s3b])
     g = st["groups"]
     cases.append(("稳定期多轮", st["broken"] == 0 and g["tail"]["hit"] == 1380 and g["tail"]["miss"] == 140))
+
+    # 7) 真实口径分组:压缩后第 1/2/3 轮恢复曲线(第 1 轮最差,第 2/3 轮恢复,4+ 稳定)
+    def round_ev(seq, t, hit, miss):
+        return {"type": "provider_round", "t": t,
+                "data": {"sessionId": "S", "sendSeq": seq, "cacheReadTokens": hit, "inputTokens": miss}}
+
+    comp = {"type": "compaction", "t": 500, "data": {"sessionId": "S"}}
+    r_before = round_ev(9, 400, 50, 1)    # 压缩前(无压缩段) → 稳定期
+    r1 = round_ev(10, 600, 8, 42)         # 压缩后第1轮:最差(16% < 20% 雪崩)
+    r2 = round_ev(11, 700, 40, 10)        # 第2轮:恢复(80%)
+    r3 = round_ev(12, 800, 45, 5)         # 第3轮:接近稳定(90%)
+    r4 = round_ev(13, 900, 48, 2)         # 4+ → 稳定期(96%)
+    buckets, low = group_real_rounds([r_before, r1, r2, r3, r4], [comp])
+    ok7 = (
+        buckets["压缩后第1轮"]["hit"] == 8 and buckets["压缩后第1轮"]["miss"] == 42
+        and buckets["压缩后第2轮"]["hit"] == 40 and buckets["压缩后第3轮"]["hit"] == 45
+        and buckets["其余轮(稳定期,4+)"]["hit"] == 98 and buckets["其余轮(稳定期,4+)"]["n"] == 2
+        and low == 1
+    )
+    cases.append(("压缩后 k 轮分组", ok7))
 
     failed = [name for name, ok in cases if not ok]
     for name, ok in cases:
