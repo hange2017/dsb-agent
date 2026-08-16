@@ -63,9 +63,10 @@
 
 ## 四、验证要求（改动后必做）
 
-- 影响 system / 压缩块 / tail / messages 构造的改动，跑 `python3 scripts/analyze-cache-prefix.py` 对比改前改后：
-  - 稳定期命中率（当前基线 68~75%）
-  - 压缩后首轮命中率（当前 ~10%）
+- 影响 system / 压缩块 / tail / messages 构造的改动，跑 `python3 scripts/analyze-cache-prefix.py`（支持 `--self-test` 自检算法）对比改前改后：
+  - 稳定期命中率（当前基线 **97.0~97.7%**，08-15/16 实测；旧基线 68~75%）
+  - 压缩后首轮命中率（当前 **49~54%**，真实口径=compaction 后**第一个** round；旧基线 ~10%）
   - compacted / thinking / tail 三组分别对比。
+- **口径注意**：压缩后首轮只统计 compaction 后第一个 round；「30s 窗口内所有 round」口径会稀释虚高（曾误报 89.6%，见 `.dsb/docs/2026-08-17-cache-prefix-analysis-fix.md`）。
 - 对账：`provider_round.cacheReadTokens` 与官方数据小时级对账（口径见 `.dsb/docs/2026-08-10-压缩成本与缓存雪崩分析.md`）。
 - 不降命中率是硬性验收；有例外需在 PR 说明理由并量化影响。
