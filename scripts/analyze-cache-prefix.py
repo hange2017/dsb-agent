@@ -4,9 +4,17 @@
 原理:缓存按请求前缀匹配。相邻两轮(同一 sessionId 的 sendSeq 递增)对比
 messageBreakdown 中每条的 hash:
   - 第一个 hash 变化的 index → 前缀断裂点。该点之前的所有部分 = 命中;
-    该点及其之后 = 未命中(真实 API 也按整条消息粒度处理缓存)。
+    该点及其之后 = 未命中(估算口径:按整条消息粒度全有全无,偏悲观)。
   - 按 kind 归属到 compacted / thinking_block / tail(其余)三组,分别统计
     命中与未命中 token。
+
+重要:sendSeq 回退/相等 = 会话重建(restore/复用),前后消息列表独立,
+不构成"相邻轮",自动跳过配对(否则误报海量前缀断裂)。
+
+真实口径(权威):provider_round 的 cacheReadTokens / inputTokens 按天汇总,
+并单独统计「压缩后首轮」命中率(compaction 事件后 30s 内的 provider_round)。
+实测(2026-08-15/16):真实 API 按块落盘,压缩后 compacted 块变化只影响该块,
+tail 大多仍命中 → 估算口径偏悲观,结论以真实口径为准。
 
 用法:
   python3 scripts/analyze-cache-prefix.py [events.jsonl...]
@@ -16,6 +24,7 @@ messageBreakdown 中每条的 hash:
   - 总体:可判定轮数、前缀断裂轮数
   - 三组(tail/compacted/thinking_block)的命中 / 未命中 / 命中率
   - 压缩雪崩轮(compacted 前缀断裂)单独列出
+  - 真实口径:稳定期 / 压缩后首轮的命中率(provider_round + compaction 事件)
   - 与真实 usage 的对账(可选,provider_round 存在时)
 """
 import glob
@@ -73,12 +82,18 @@ def analyze(sends):
 
     for sid, rows in grouped.items():
         rows.sort(key=lambda r: (r[0], r[1]))
-        prev = None
+        prev = None  # (sendSeq, data)
         for seq, t, d in rows:
             mb = d.get("messageBreakdown") or []
             if prev is not None:
+                prev_seq, prev_d = prev
+                # sendSeq 重置/回退 = 会话重建(restore/复用):前后请求消息列表独立,
+                # 不可按相邻轮对比(否则误报前缀断裂),跳过配对仅更新 prev。
+                if seq <= prev_seq:
+                    prev = (seq, d)
+                    continue
                 stats["pairs"] += 1
-                prev_mb = prev["messageBreakdown"] or []
+                prev_mb = prev_d["messageBreakdown"] or []
                 # 找第一个 hash 变化点
                 break_idx = None
                 for i in range(min(len(prev_mb), len(mb))):
@@ -111,7 +126,7 @@ def analyze(sends):
                 if compacted_miss > 0:
                     stats["avalanche_rounds"] += 1
                     stats["avalanche_miss"] += compacted_miss
-            prev = d
+            prev = (seq, d)
 
     return stats, breakdown_by_kind
 
@@ -154,6 +169,32 @@ def main():
         print(f"\n=== 压缩雪崩 ===")
         print(f"compacted 断裂轮: {stats['avalanche_rounds']} | 额外未命中: {stats['avalanche_miss']:,}")
         print(f"雪崩成本 ≈ ¥{stats['avalanche_miss'] * PRICE_INPUT / 1e6:.4f}")
+
+    # 真实口径(权威):provider_round 命中率,按「压缩后首轮 / 其余轮」分组
+    comps = [ev for ev in events if ev.get("type") == "compaction"]
+    if rounds:
+        comp_times_by_sess = defaultdict(list)
+        for c in comps:
+            d = c.get("data", {})
+            comp_times_by_sess[d.get("sessionId", "?")].append(c.get("t", 0))
+        real_groups = {
+            "压缩后首轮(compaction 后 30s 内)": {"hit": 0, "miss": 0, "n": 0},
+            "其余轮(稳定期)": {"hit": 0, "miss": 0, "n": 0},
+        }
+        for r in rounds:
+            d = r.get("data", {})
+            sid = d.get("sessionId", "?")
+            rt = r.get("t", 0)
+            is_after = any(0 < rt - ct < 30000 for ct in comp_times_by_sess.get(sid, []))
+            g = real_groups["压缩后首轮(compaction 后 30s 内)"] if is_after else real_groups["其余轮(稳定期)"]
+            g["n"] += 1
+            g["hit"] += d.get("cacheReadTokens", 0)
+            g["miss"] += d.get("inputTokens", 0)
+        print("\n=== 真实口径(provider_round,权威) ===")
+        for name, g in real_groups.items():
+            h, m = g["hit"], g["miss"]
+            rate = h / (h + m) * 100 if (h + m) else 0
+            print(f"{name:<34} [{g['n']}轮] 命中 {h:>10,} / 未命中 {m:>10,} / {rate:.1f}%")
 
     # 与真实 usage 对账
     if rounds:
