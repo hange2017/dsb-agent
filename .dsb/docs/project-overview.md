@@ -1,6 +1,6 @@
 # DSBAgent — 项目总体框架
 
-> 生成时间:2026-08-15(最近一周工作同步后重写)
+> 生成时间:2026-08-16(最近一周工作同步后重写;08-16 同步交互式追加 / 滚动冻结 / 轮次导航)
 > 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 115 个 .ts、webview 15 个文件、tests 107 个测试文件 / 1090 项)
 
 ## 项目简介
@@ -49,6 +49,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 ### 3. 引擎核心 — `src/agent/`(不依赖 vscode 模块,可单测)
 - `agentLoop.ts`:Agent 主循环(模型调用 → 工具执行 → 上下文管理 → 压缩判定),`deps` 注入全部依赖,事件通过 `onEvent` 外发(含 `compaction_stats`)。
   - **缓存前缀稳定性(P0-P3)**:todo 移出 system 注入请求尾部(P0);trim 类 tool_result 写前定型(P1);trim 类 tool_use/thinking 写前定型 + thinkingPolicy 幂等保护(P3)——保证 messages 前缀字节跨轮稳定,最大化缓存命中。
+  - **交互式追加队列**:busy 期间 `append(text)` 把新消息排入 `pendingAppends`,下一轮发送前注入消息尾部并发出 `user_message` 事件(只 push 不改写既有消息 → 前缀字节稳定;空闲时追加按钮隐藏,走普通发送)。
   - **thinking 处理侧开关**:thinking 剥离不进历史/压缩/脉络(可整体关闭)。
 - `contextManager.ts` / `contextCompactor.ts`:上下文组装、压缩(触发比例 `dsbAgent.compaction.triggerRatio` 默认 0.75)、压缩块 `[compacted]` 摘要、thinking 独立压缩。
   - **P2 压缩块 append-only**:只增尾部/只删尾部、标题恒输出、re-summarize 只动尾部新增行——稳定段前缀字节恒定,根治压缩后缓存雪崩。
