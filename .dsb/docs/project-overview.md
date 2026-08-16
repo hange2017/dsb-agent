@@ -17,7 +17,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 ├── webview/      Agent 聊天面板与各设置面板前端(15 个文件,esbuild 产物进 dist/webview)
 ├── tests/        单元测试(107 个测试文件,1090 项)
 ├── resources/    打包资源(原创图标 resources/icon.png,128×128)
-├── scripts/      构建/安装/分析脚本(generate-third-party-notices.mjs、install-extension.sh、analyze-cache-prefix.py、analyze-compaction-snowball.py)
+├── scripts/      构建/安装/分析脚本(generate-third-party-notices.mjs、install-extension.sh、analyze-cache-prefix.py、analyze-compaction-snowball.py、analyze-compaction-cost.py)
 ├── benchmark/    打榜评测(SWE-bench headless CLI 包装、T3 实例准备脚本、smoke 测试)
 ├── .github/      CI 工作流(三平台 typecheck → vitest → vsce package + 发布 job)
 ├── .dsb/         项目约定(技能 skills/、规则 rules/、命令 commands/、代理 agents/、计划 plans/、设计 specs/、文档 docs/)
@@ -144,7 +144,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ## 近期工作重点(2026-08-10 ~ 2026-08-15)
 
-1. **缓存前缀稳定性工程(P0-P3 全落地)**:todo 移出 system、tool_result/tool_use/thinking 写前定型、压缩块 append-only 只增尾部/只删尾部;规则固化于 `.dsb/rules/cache-prefix-stability.md`,命中率量化脚本 `scripts/analyze-cache-prefix.py` / `analyze-compaction-snowball.py`;provider_send 增加内容 hash 指纹(方案 B 分析)。
+1. **缓存前缀稳定性工程(P0-P3 全落地)**:todo 移出 system、tool_result/tool_use/thinking 写前定型、压缩块 append-only 只增尾部/只删尾部;规则固化于 `.dsb/rules/cache-prefix-stability.md`,命中率量化脚本 `scripts/analyze-cache-prefix.py` / `analyze-compaction-snowball.py` / `analyze-compaction-cost.py`(调用/压缩次数 + 压缩首轮未命中占比 + 额外成本,默认统计昨天+今天);provider_send 增加内容 hash 指纹(方案 B 分析)。
 2. **thinking 设置收敛**:全链路开关 + thinkingLevel 强度预设(low/medium/high 派生预算)+ 面板思考模式卡片;`dsbAgent.compaction.thinking` 默认关闭;关闭时预算归一化为两段。
 3. **统计扩展 A 清单全量落地**:压缩成本(A1)、provider_round(A2)、逐位置明细(A7)、QA 抽查(A5,`compactionQa` 开关)、preparedMs(A8)、聚合函数与统计开关。
 4. **ContextRecall 回查提升(P0+P1)**:统计埋点六模式 + 工具描述强化 + 压缩块尾部恒输出回查提示行 + 原创技能 `skills/context-recall-usage`(随扩展分发)。
