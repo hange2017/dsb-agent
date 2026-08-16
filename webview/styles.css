@@ -564,9 +564,11 @@ body.resizing, body.resizing * { user-select: none; cursor: ns-resize; }
   30% { opacity: 1; transform: rotate(0deg) scale(1.25); }
   100% { opacity: 0; transform: rotate(0deg) scale(1) translateY(-4px); }
 }
+/* 呼吸只用 brightness(不动 opacity):动画若含 opacity 会以高于 inline style 的优先级
+ * 覆盖 JS 的 style.opacity=0,导致输入文字时睡觉表情无法隐藏。 */
 @keyframes idleBreath {
-  0%, 100% { opacity: 0.85; transform: rotate(-25deg) scale(1); }
-  50% { opacity: 0.55; transform: rotate(-25deg) scale(0.94); }
+  0%, 100% { filter: brightness(1); transform: rotate(-25deg) scale(1); }
+  50% { filter: brightness(0.65); transform: rotate(-25deg) scale(0.94); }
 }
 @keyframes zRise {
   0% { opacity: 0; transform: translateY(4px); }
