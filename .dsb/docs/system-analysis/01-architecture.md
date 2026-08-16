@@ -5,9 +5,18 @@
 
 ## 一、整体工作流程总览
 
-### 1.1 三层总览:你 ↔ 引擎 ↔ 基础设施
+### 1.1 四层总览:界面 ↔ 交互控制 ↔ 引擎 ↔ 支撑
 
-DSBAgent 在 VS Code 里分成三层。**你不是在跟"一个程序"对话,而是在跟一个三层结构对话**——最上面是你看到的界面,中间是真正思考的引擎,下面一层是让引擎转起来的基础设施:
+DSBAgent 在 VS Code 里分成**四层**。**你不是在跟"一个程序"对话,而是在跟一个四层结构对话**——最上面是你看到的界面,中间是传话的主持人、思考的引擎,最下面是让引擎转起来的基础设施:
+
+> **这 4 层是怎么切出来的?**
+> 按「**离你有多近 / 离模型有多远**」的职责远近切,不是按代码目录硬切:
+> - **L1 界面层**:你 + 聊天面板(webview,浏览器环境)—— 只看得到它,它就是"DSBAgent"在你眼中的样子。
+> - **L2 交互控制层**:`chat/` + `context/` —— 把你说的、选的、拖进来的东西整理成引擎能懂的素材;把引擎说的话、工具进度推回界面。它"面向你"但不"在你的浏览器里"。
+> - **L3 引擎层**:`agent/` —— 真正思考的地方:组装请求、发模型、决定调工具、执行、压缩上下文。
+> - **L4 支撑层**:`providers/`、`settings/`、`projectContext/`、`session/`、`stats/`、`memory/`、`plugins/`、`mcp/`、`hooks/` …—— 引擎转起来要用的"水电煤气"。
+>
+> 注意:这里的"层"是**职责维度**;还有另一种按「是否依赖 vscode」切的二分(宿主层 vs 引擎层),见 [2.3](#23-分层边界引擎层-vs-宿主层),两者不冲突。
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
@@ -155,13 +164,14 @@ src/                                  ← 1 个入口文件 + 14 个顶层目录
 | `stats/` | **记账**:事件打点(provider_round/compaction 等)、聚合、命中率/成本 | 每轮调用都打点,支撑缓存/成本分析 |
 | `util/` | **工具箱**:平台信息、ripgrep 路径 | 杂项支撑(找 rg、判断平台) |
 
-### 2.3 分层边界:引擎层 vs 宿主层
+### 2.3 分层边界:引擎层 vs 宿主层(依赖维度)
 
-这是本项目最关键的架构决策,也是"能脱离 VS Code 跑起来"的原因:
+这是本项目最关键的架构决策,也是"能脱离 VS Code 跑起来"的原因。注意:这一节的"层"与 1.1 的职责四层**是两种切法**——这里是按「是否 import `vscode`」一刀切,粒度到**文件**:
 
-- **引擎层**:`src/agent/`(全部)、`src/context/`、`src/providers/`、`src/stats/` 等 —— **不 import `vscode` 模块**。所有输入输出走接口注入(`deps`),事件走 `onEvent` 外发 → 可在 Node 里直接单测、可被 `benchmark/cli.ts` headless 复用。
-- **宿主层**:`extension.ts`、`src/chat/chatViewProvider.ts`、`src/settings/` 面板 —— 依赖 vscode,负责装配、UI、密钥、命令注册。
+- **宿主层(依赖 vscode,共 5 类文件)**:`extension.ts`、`src/chat/chatViewProvider.ts`、`src/context/contextCapture.ts`、`src/settings/` 面板相关、webview 前端 —— 负责装配、UI、密钥、命令注册。经 `grep` 核实,`src/` 115 个 .ts 里依赖 vscode 的只有这些。
+- **引擎层(不 import `vscode`)**:`src/` 其余 ~110 个 .ts —— 包括 `agent/` 全部、`context/` 绝大部分、`chat/` 的 controller/sessionService/slashCommands 等(chat/ 仅 chatViewProvider 依赖 vscode)、`providers/`、`stats/`、`memory/`、`plugins/`、`mcp/`、`hooks/`、`session/` 等。所有输入输出走接口注入(`deps`),事件走 `onEvent` 外发 → 可在 Node 里直接单测、可被 `benchmark/cli.ts` headless 复用。
 - **桥接方式**:宿主把 `deps`(配置、工具、权限、统计…)注入引擎;引擎把事件(文本、工具调用、状态、统计快照)通过 `onEvent` 抛回宿主 → 界面更新。方向固定、单向,引擎永远不反向依赖宿主。
+- **与 1.1 的关系**:1.1 的 L2 交互控制层里,`chat/context` 绝大多数文件其实在依赖维度上属于**引擎侧**(可单测);只有 chatViewProvider / contextCapture 两个是宿主侧。职责分层 ≠ 依赖分层,不要混淆。
 
 ## 三、待分析问题(后续填充)
 
