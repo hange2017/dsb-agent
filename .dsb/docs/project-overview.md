@@ -36,6 +36,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ### 2. 会话与聊天 — `src/chat/`
 - `chatController.ts`:会话主控制器,消息流、工具执行编排、事件分发。
+  - **交互式追加**:busy 期间输入框"追加"按钮把新消息排入 AgentSession 队列,下一轮发送前注入消息尾部(只 push 不改写 → 前缀稳定);`user_message` 事件在 host 切新轮(关闭旧 assistant 时间线 + 新开 user/assistant 框);send 自然结束仍有残留时自动作为新对话轮补发(`takePendingAppends` 兜底);空闲时追加按钮隐藏,普通发送即可。
 - `chatViewProvider.ts`:Webview 面板宿主,注入 HTML/脚本,推送/接收协议事件;executor 构造注入 `statsStore`(ContextRecall 打点)。
 - `protocol.ts`:Webview ↔ 引擎消息协议(状态、消息、工具事件、compaction_stats 等)。
 - `sessionService.ts` / `sessionTypes.ts`:会话生命周期与类型。
