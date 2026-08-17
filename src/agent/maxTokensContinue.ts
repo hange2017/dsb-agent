@@ -1,4 +1,6 @@
-export type ProviderStopReason = "end_turn" | "tool_use" | "max_tokens" | "other";
+import type { ProviderStopReason } from "./provider/types";
+
+export type { ProviderStopReason };
 
 export const kMaxTokensContinueUserText =
   "[续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。";

@@ -146,7 +146,7 @@ describe("AnthropicMessagesClient", () => {
     expect(result.toolUses[0]?.input).toEqual({ command: "echo hi" });
   });
 
-  it("flushes tool_use into toolUses when content_block_stop is missing", async () => {
+  it("drops incomplete tool_use when content_block_stop is missing", async () => {
     const stream = sseBody([
       ["content_block_start", { index: 0, content_block: { type: "tool_use", id: "t3", name: "Read", input: { path: "c.txt" } } }],
       // 故意没有 content_block_stop
@@ -154,8 +154,54 @@ describe("AnthropicMessagesClient", () => {
     ]);
     const client = new AnthropicMessagesClient({ apiKey: "sk-test", baseUrl: "https://x", model: "m", fetchImpl: makeFetch(200, stream) });
     const result = await client.round([{ role: "user", content: "read" }], { system: "s", tools: TOOLS }, () => {});
-    expect(result.blocks).toEqual([{ type: "tool_use", id: "t3", name: "Read", input: { path: "c.txt" } }]);
-    expect(result.toolUses).toEqual([{ id: "t3", name: "Read", input: { path: "c.txt" } }]);
+    expect(result.toolUses).toEqual([]);
+    expect(result.blocks.every((b) => b.type !== "tool_use")).toBe(true);
+  });
+
+  it("parses stop_reason max_tokens from message_delta.delta", async () => {
+    const stream = sseBody([
+      ["content_block_start", { index: 0, content_block: { type: "thinking", thinking: "" } }],
+      ["content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "long…" } }],
+      ["content_block_stop", { index: 0 }],
+      [
+        "message_delta",
+        {
+          delta: { stop_reason: "max_tokens", stop_sequence: null },
+          usage: { input_tokens: 10, output_tokens: 8192 },
+        },
+      ],
+    ]);
+    const client = new AnthropicMessagesClient({
+      apiKey: "sk-test",
+      baseUrl: "https://x",
+      model: "m",
+      fetchImpl: makeFetch(200, stream),
+    });
+    const result = await client.round([{ role: "user", content: "hi" }], { system: "s", tools: TOOLS }, () => {});
+    expect(result.stopReason).toBe("max_tokens");
+    expect(result.usage?.outputTokens).toBe(8192);
+  });
+
+  it("drops incomplete tool_use (no content_block_stop) from blocks and toolUses", async () => {
+    const stream = sseBody([
+      ["content_block_start", { index: 0, content_block: { type: "thinking", thinking: "x" } }],
+      ["content_block_stop", { index: 0 }],
+      ["content_block_start", { index: 1, content_block: { type: "tool_use", id: "t3", name: "Read", input: {} } }],
+      ["content_block_delta", { index: 1, delta: { type: "input_json_delta", partial_json: "{\"path\":\"c" } }],
+      // 无 content_block_stop → 半截
+      ["message_delta", { delta: { stop_reason: "max_tokens" }, usage: { input_tokens: 1, output_tokens: 8192 } }],
+    ]);
+    const client = new AnthropicMessagesClient({
+      apiKey: "sk-test",
+      baseUrl: "https://x",
+      model: "m",
+      fetchImpl: makeFetch(200, stream),
+    });
+    const result = await client.round([{ role: "user", content: "read" }], { system: "s", tools: TOOLS }, () => {});
+    expect(result.toolUses).toEqual([]);
+    expect(result.blocks.every((b) => b.type !== "tool_use")).toBe(true);
+    expect(result.blocks.some((b) => b.type === "thinking")).toBe(true);
+    expect(result.stopReason).toBe("max_tokens");
   });
 
   it("densifies sparse block indexes so JSON never contains null holes", async () => {

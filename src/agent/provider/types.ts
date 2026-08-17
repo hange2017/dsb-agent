@@ -7,6 +7,9 @@ export type ProviderBlock =
 
 export type ProviderToolUse = { id: string; name: string; input: Record<string, unknown> };
 
+/** Provider 流停因;用于区分真结束与 max_tokens 截断。 */
+export type ProviderStopReason = "end_turn" | "tool_use" | "max_tokens" | "other";
+
 export type ProviderRoundResult = {
   blocks: ProviderBlock[];
   toolUses: ProviderToolUse[];
@@ -18,6 +21,8 @@ export type ProviderRoundResult = {
     /** 未命中缓存的输入 token(Anthropic cache_creation_input_tokens / DeepSeek prompt_cache_miss_tokens)。 */
     cacheWriteTokens?: number;
   };
+  /** 本轮停因;缺失时由上层做启发式兜底。 */
+  stopReason?: ProviderStopReason;
 };
 
 export type ProviderAssistantContent = ProviderBlock[];

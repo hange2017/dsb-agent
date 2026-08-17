@@ -5,9 +5,11 @@ import type {
   ProviderClient,
   ProviderMessage,
   ProviderRoundResult,
+  ProviderStopReason,
   ProviderStreamEvent,
 } from "./types";
 import { sanitizeOutbound } from "../capabilityGate";
+import { normalizeStopReason } from "../maxTokensContinue";
 
 type SseEvent = { event: string; data: Record<string, unknown> };
 
@@ -179,6 +181,7 @@ export class AnthropicMessagesClient implements ProviderClient {
     const toolUses: ProviderRoundResult["toolUses"] = [];
     const toolInputRaw: Record<number, string> = {};
     let usage: ProviderRoundResult["usage"];
+    let stopReason: ProviderStopReason | undefined;
 
     for await (const ev of parseSSEStream(reader)) {
       const data = ev.data;
@@ -244,9 +247,13 @@ export class AnthropicMessagesClient implements ProviderClient {
                 const parsed = JSON.parse(raw) as unknown;
                 if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
                   input = parsed as Record<string, unknown>;
+                } else {
+                  // 非对象 JSON → 半截/非法,不入 toolUses(策略 A)
+                  break;
                 }
               } catch {
-                // parse 失败保留 content_block_start 的 input
+                // JSON 未闭合 → 半截,不入 toolUses
+                break;
               }
             }
             // 必须写回 block:agentLoop 用 blocks 落盘;只更新 toolUses 会导致历史里 tool_use.input 恒为 {}
@@ -257,6 +264,7 @@ export class AnthropicMessagesClient implements ProviderClient {
         }
         case "message_delta": {
           const md = data as {
+            delta?: { stop_reason?: string | null };
             usage?: {
               input_tokens?: number;
               output_tokens?: number;
@@ -268,6 +276,9 @@ export class AnthropicMessagesClient implements ProviderClient {
               prompt_cache_miss_tokens?: number;
             };
           };
+          if (md.delta?.stop_reason != null && md.delta.stop_reason !== "") {
+            stopReason = normalizeStopReason(md.delta.stop_reason);
+          }
           if (md.usage) {
             const u = md.usage;
             usage = {
@@ -295,28 +306,17 @@ export class AnthropicMessagesClient implements ProviderClient {
     }
 
     // 按 index 写入会产生稀疏数组;压实后再返回,避免 JSON 出现 null 块。
-    // 若流在 content_block_stop 前结束,把尚未入库的 tool_use 补进 toolUses,避免上层把孤儿 tool_use 写进历史。
-    const denseBlocks = blocks.filter((b): b is ProviderBlock => b != null);
-    for (const b of denseBlocks) {
-      if (b.type !== "tool_use") continue;
-      if (toolUses.some((t) => t.id === b.id)) continue;
-      const idx = blocks.indexOf(b);
-      const raw = idx >= 0 ? toolInputRaw[idx] : undefined;
-      let input = b.input;
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as unknown;
-          if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-            input = parsed as Record<string, unknown>;
-          }
-        } catch {
-          // 保留 start 时的 input
-        }
-      }
-      b.input = input;
-      toolUses.push({ id: b.id, name: b.name, input });
-    }
+    // 半截 tool_use(无 content_block_stop 或 JSON 解析失败)不进 toolUses,并从 blocks 剔除(策略 A 写前丢弃)。
+    const completedIds = new Set(toolUses.map((t) => t.id));
+    const denseBlocks = blocks
+      .filter((b): b is ProviderBlock => b != null)
+      .filter((b) => b.type !== "tool_use" || completedIds.has(b.id));
 
-    return { blocks: denseBlocks, toolUses, usage };
+    return {
+      blocks: denseBlocks,
+      toolUses,
+      usage,
+      ...(stopReason !== undefined ? { stopReason } : {}),
+    };
   }
 }
