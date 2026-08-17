@@ -1869,5 +1869,119 @@ describe("AgentSession snapshot-store cut-point archive", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("max_tokens with thinking only auto-continues instead of done", async () => {
+    let round = 0;
+    const calls: ProviderMessage[][] = [];
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true, maxOutputTokens: 8192 },
+      async round(messages): Promise<ProviderRoundResult> {
+        calls.push(JSON.parse(JSON.stringify(messages)));
+        if (round === 0) {
+          round++;
+          return {
+            blocks: [{ type: "thinking", thinking: "planning Task 9…" }],
+            toolUses: [],
+            stopReason: "max_tokens",
+            usage: { inputTokens: 100, outputTokens: 8192 },
+          };
+        }
+        round++;
+        return {
+          blocks: [{ type: "text", text: "ok" }],
+          toolUses: [],
+          stopReason: "end_turn",
+          usage: { inputTokens: 120, outputTokens: 10 },
+        };
+      },
+    };
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+    });
+    const events: Array<{ type: string; text?: string }> = [];
+    await session.send("继续", (ev) => {
+      if (ev.type === "info") events.push({ type: "info", text: ev.text });
+      else if (ev.type === "user_message") events.push({ type: "user_message", text: ev.text });
+      else if (ev.type === "done" || ev.type === "error") events.push({ type: ev.type });
+      else events.push({ type: ev.type });
+    });
+    expect(calls.length).toBe(2);
+    const mid = calls[1];
+    expect(mid[mid.length - 1]).toEqual({
+      role: "user",
+      content:
+        "[续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
+    });
+    expect(events.filter((e) => e.type === "user_message")).toEqual([]);
+    expect(events.some((e) => e.type === "info" && e.text === "输出达上限,继续…")).toBe(true);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+  });
+
+  it("max_tokens continue hits limit then errors", async () => {
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true, maxOutputTokens: 100 },
+      async round(): Promise<ProviderRoundResult> {
+        return {
+          blocks: [{ type: "thinking", thinking: "still…" }],
+          toolUses: [],
+          stopReason: "max_tokens",
+          usage: { inputTokens: 1, outputTokens: 100 },
+        };
+      },
+    };
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({}).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+    });
+    const events: string[] = [];
+    await session.send("go", (ev) => events.push(ev.type));
+    expect(events).toContain("error");
+    expect(events).not.toContain("done");
+  });
+
+  it("complete tool_use does not auto-continue even if stopReason max_tokens", async () => {
+    const bash = vi.fn(() => ({ ok: true, content: "ok" }));
+    let rounds = 0;
+    const calls: ProviderMessage[][] = [];
+    const provider: ProviderClient = {
+      capabilities: { supportsVision: true, supportsThinking: true, maxOutputTokens: 8192 },
+      async round(messages): Promise<ProviderRoundResult> {
+        calls.push(JSON.parse(JSON.stringify(messages)));
+        rounds++;
+        if (rounds === 1) {
+          return {
+            blocks: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo hi" } }],
+            toolUses: [{ id: "t1", name: "Bash", input: { command: "echo hi" } }],
+            stopReason: "max_tokens",
+            usage: { inputTokens: 1, outputTokens: 8192 },
+          };
+        }
+        return { blocks: [{ type: "text", text: "done" }], toolUses: [], stopReason: "end_turn" };
+      },
+    };
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({ Bash: bash }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+    });
+    await session.send("run", () => {});
+    expect(bash).toHaveBeenCalled();
+    expect(rounds).toBe(2);
+    expect(calls[1][calls[1].length - 1]).not.toEqual({
+      role: "user",
+      content:
+        "[续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
+    });
+  });
 });
 

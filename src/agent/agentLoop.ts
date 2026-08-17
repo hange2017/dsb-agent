@@ -17,6 +17,13 @@ import { CompactionStats, type CompactionStatsSnapshot } from "./compactionStats
 import { estimateProviderSendTokens, type ProviderSendBreakdown } from "../stats/providerSendStats";
 import { isCompactedBlock } from "./contextCompactor";
 import type { ProviderRoundResult } from "./provider/types";
+import {
+  needsMaxTokensContinue,
+  kMaxTokensContinueUserText,
+  kMaxTokensInterruptedAssistantText,
+  kMaxTokensContinueInfoText,
+  kMaxTokensContinueLimit,
+} from "./maxTokensContinue";
 
 /** 一次 provider.round 的真实 usage(来自 API 响应 usage 字段;缓存字段按厂商字段名归一化)。 */
 export type ProviderRoundUsage = NonNullable<ProviderRoundResult["usage"]>;
@@ -558,6 +565,7 @@ export class AgentSession {
     this.abortController = new AbortController();
     const signal = this.abortController.signal;
     let terminal: { type: "done" } | { type: "error"; message: string } | undefined;
+    let maxTokensContinueCount = 0;
 
     try {
       for (let round = 0; round < maxRounds; round++) {
@@ -610,6 +618,7 @@ export class AgentSession {
 
         let result;
         let roundStart = 0;
+        let roundMaxTokens = 8192;
         let roundParallel: { mode: "read_safe" | "serial"; maxParallelTools: number } = {
           mode: "read_safe",
           maxParallelTools: 8,
@@ -631,6 +640,7 @@ export class AgentSession {
             lastInputTokens: this.contextManager.getLastInputTokens?.() ?? 0,
             windowTokensOverride: this.deps.windowTokensOverride,
           });
+          roundMaxTokens = prepared.maxTokens;
           roundParallel = {
             mode: prepared.toolParallelMode,
             maxParallelTools: prepared.maxParallelTools,
@@ -720,14 +730,38 @@ export class AgentSession {
             }
           }
         }
-        // 仅 thinking 且处理侧关闭时 persistBlocks 为空:勿 content:[](后续发送触发 API 400)
-        if (persistBlocks.length === 0) {
+        // 仅 thinking 且处理侧关闭时 persistBlocks 为空:可走续轮占位,否则勿写 content:[](后续发送触发 API 400)
+        const completeToolUseCount = toolUses.length;
+        const shouldContinue = needsMaxTokensContinue({
+          stopReason: result.stopReason,
+          outputTokens: result.usage?.outputTokens,
+          maxTokens: roundMaxTokens,
+          completeToolUseCount,
+        });
+
+        if (persistBlocks.length === 0 && !shouldContinue) {
           terminal = { type: "done" };
           return;
         }
-        this.messages.push({ role: "assistant", content: persistBlocks });
 
-        if (toolUses.length === 0) {
+        const assistantContent =
+          persistBlocks.length > 0
+            ? persistBlocks
+            : [{ type: "text" as const, text: kMaxTokensInterruptedAssistantText }];
+        this.messages.push({ role: "assistant", content: assistantContent });
+
+        if (completeToolUseCount === 0) {
+          if (shouldContinue) {
+            if (maxTokensContinueCount >= kMaxTokensContinueLimit) {
+              terminal = { type: "error", message: "连续输出超限次数过多" };
+              return;
+            }
+            maxTokensContinueCount += 1;
+            this.messages.push({ role: "user", content: kMaxTokensContinueUserText });
+            // 不 record / 不 user_message:续写不对 UI 发假用户气泡
+            onEvent({ type: "info", text: kMaxTokensContinueInfoText });
+            continue;
+          }
           terminal = { type: "done" };
           return;
         }
