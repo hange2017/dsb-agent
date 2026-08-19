@@ -115,8 +115,8 @@ export function normalizeThinkingConfig(t: Partial<AgentThinkingConfig> | undefi
 /** 归一化 5 项配置:非法项回退默认;targetPct 须满足 0 < target < trigger ≤ 1。 */
 export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): AgentBudgetConfig {
   const def: AgentBudgetConfig = {
-    windowTokens: 1000000,
-    budget: 150000,
+    windowTokens: 600000,
+    budget: 64000,
     split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     triggerPct: 0.75,
     targetPct: 0.5,

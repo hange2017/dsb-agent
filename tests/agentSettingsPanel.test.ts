@@ -14,8 +14,8 @@ import { normalizeConfig, normalizeSplit } from "../src/settings/agentSettingsPa
 import { handleMessage } from "../src/settings/agentSettingsPanel";
 
 const defaultConfig = () => ({
-  windowTokens: 1000000,
-  budget: 150000,
+  windowTokens: 600000,
+  budget: 64000,
   // 默认思考编排关闭 → split 归一化为两段(thinking 份额按 45:35 并入 compacted/tail)
   split: { compacted: 0.5625, thinking: 0, tail: 0.4375 },
   triggerPct: 0.75,
@@ -119,8 +119,8 @@ describe("normalizeConfig", () => {
       triggerPct: 0.75,
       targetPct: 0.5,
     });
-    expect(out.windowTokens).toBe(1000000);
-    expect(out.budget).toBe(150000);
+    expect(out.windowTokens).toBe(600000);
+    expect(out.budget).toBe(64000);
     // 默认思考编排关闭 → 默认三段 45/20/35 归一化为两段 56.25/0/43.75
     expect(out.split).toEqual({ compacted: 0.5625, thinking: 0, tail: 0.4375 });
   });
@@ -213,7 +213,7 @@ describe("agentSettingsPanel handleMessage", () => {
     expect(types).toContain("toast");
   });
 
-  it("rejects invalid budget with default 150000", async () => {
+  it("rejects invalid budget with default 64000", async () => {
     const { panel } = fakePanel();
     const updateBudget = vi.fn();
     const services = {
@@ -226,7 +226,7 @@ describe("agentSettingsPanel handleMessage", () => {
       panel as never,
       services,
     );
-    expect(updateBudget).toHaveBeenCalledWith({ ...defaultConfig(), budget: 150000 });
+    expect(updateBudget).toHaveBeenCalledWith({ ...defaultConfig(), budget: 64000 });
   });
 
   it("resets to defaults on reset_defaults", async () => {

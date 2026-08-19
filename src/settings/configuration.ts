@@ -67,12 +67,12 @@ export class Configuration {
   compactionThinkingEnabled(): boolean {
     return this.reader.getString("dsbAgent.compaction.thinking") === "true";
   }
-  /** 历史信息 token 总预算;缺省 150000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
+  /** 历史信息 token 总预算;缺省 64000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
   historyTokenBudget(): number {
     const raw = this.reader.getString("dsbAgent.compaction.historyTokenBudget");
-    if (!raw) return 150000;
+    if (!raw) return 64000;
     const v = Number(raw);
-    return Number.isFinite(v) && v >= 0 ? v : 150000;
+    return Number.isFinite(v) && v >= 0 ? v : 64000;
   }
 
   /** 默认预算比例(压缩块/thinking/tail)。 */
@@ -98,12 +98,12 @@ export class Configuration {
     return { compacted: c / sum, thinking: t / sum, tail: l / sum };
   }
 
-  /** 给大模型的输入最大长度(窗口);缺省 1000000(1M);0 = 跟随模型能力;>0 覆盖模型默认。非法值回退默认。 */
+  /** 给大模型的输入最大长度(窗口);缺省 600000;0 = 跟随模型能力;>0 覆盖模型默认。非法值回退默认。 */
   contextWindowTokens(): number {
     const raw = this.reader.getString("dsbAgent.contextWindowTokens");
-    if (!raw) return 1000000;
+    if (!raw) return 600000;
     const v = Number(raw);
-    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 1000000;
+    return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 600000;
   }
 
   /** 触发比例(每块 token ≥ 额定×该比例 → 触发压缩);缺省 0.75,(0,1] 有效。 */

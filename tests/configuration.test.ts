@@ -55,8 +55,8 @@ describe("Configuration", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "yes" : "") });
     expect(junk.compactionThinkingEnabled()).toBe(false);
   });
-  it("historyTokenBudget defaults to 150000 and accepts 0 (disabled)", () => {
-    expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(150000);
+  it("historyTokenBudget defaults to 64000 and accepts 0 (disabled)", () => {
+    expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(64000);
     const zero = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "0" : "") });
     expect(zero.historyTokenBudget()).toBe(0);
     const custom = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "20000" : "") });
@@ -64,9 +64,9 @@ describe("Configuration", () => {
   });
   it("historyTokenBudget rejects non-numeric and negative", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "abc" : "") });
-    expect(junk.historyTokenBudget()).toBe(150000);
+    expect(junk.historyTokenBudget()).toBe(64000);
     const negative = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "-5" : "") });
-    expect(negative.historyTokenBudget()).toBe(150000);
+    expect(negative.historyTokenBudget()).toBe(64000);
   });
   it("budgetSplit defaults to 45/20/35", () => {
     expect(new Configuration({ getString: () => "" }).budgetSplit()).toEqual({
@@ -123,18 +123,18 @@ describe("Configuration", () => {
 });
 
 describe("Configuration context window & trigger/target pct", () => {
-  it("contextWindowTokens defaults to 1000000 (1M) and accepts positive numbers", () => {
-    expect(new Configuration({ getString: () => "" }).contextWindowTokens()).toBe(1000000);
+  it("contextWindowTokens defaults to 600000 and accepts positive numbers", () => {
+    expect(new Configuration({ getString: () => "" }).contextWindowTokens()).toBe(600000);
     const cfg = new Configuration({ getString: (k) => (k === "dsbAgent.contextWindowTokens" ? "128000" : "") });
     expect(cfg.contextWindowTokens()).toBe(128000);
   });
 
   it("contextWindowTokens rejects invalid values (non-numeric / negative / zero)", () => {
     const mk = (v: string) => new Configuration({ getString: (k) => (k === "dsbAgent.contextWindowTokens" ? v : "") });
-    expect(mk("abc").contextWindowTokens()).toBe(1000000);
-    expect(mk("-5").contextWindowTokens()).toBe(1000000);
+    expect(mk("abc").contextWindowTokens()).toBe(600000);
+    expect(mk("-5").contextWindowTokens()).toBe(600000);
     expect(mk("0").contextWindowTokens()).toBe(0);
-    expect(mk("").contextWindowTokens()).toBe(1000000);
+    expect(mk("").contextWindowTokens()).toBe(600000);
   });
 
   it("compactionTriggerPct defaults to 0.75 and accepts (0,1]", () => {
