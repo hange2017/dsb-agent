@@ -5,6 +5,88 @@ DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);�
 ## [Unreleased]
 
 
+## [0.4.0] — 2026-09-15
+
+> 主线:**消灭多轮压缩后的「目标漂移」与「已存内容读不回来」**。核心手段是把任务目标从
+> 「最先被裁掉、且离当前回合最远」的位置,搬到「永不裁剪、且每轮都能看见」的位置。
+> 设计见 `.dsb/specs/2026-09-14-任务地图与需求轨保护-design.md`,实测见
+> `.dsb/docs/2026-09-14-压缩目标漂移修复与96k预算实测.md`。
+
+### 本版本亮点
+
+- **常驻「任务地图」(新模块 `taskMap.ts`)**:压缩块首段固定输出 `## 任务地图`,六段
+  =「目标 / 最新要求 / 近期需求 / 更早的需求 / 已做 / 结果」。地图轨**不参与裁剪**,因此
+  「目标是什么 / 干了什么 / 得到什么」在任意轮次都可回答;中期「目标澄清/修正」一旦进入
+  地图即**粘住**(累积式,不被滑动窗口挤出),不再随压缩消失。
+- **需求轨保护**:压缩超预算时,需求轨**最后才删**且**首条永不删**,只删中间行
+  (非需求轨仍按 seq 最新优先删以保 KV 前缀稳定)——目标不再是被优先丢弃的那个。
+- **任务锚进工具执行轮**:一轮工具跑完后消息尾部是 `tool_result`,原实现会**跳过注入**,
+  导致"决定下一步做什么"时看不到目标与计划;现改为把任务锚**追加在同一条 user 消息内**
+  (不新增 user 消息 → 不破坏角色交替),并对 `tool_result` 轮生效。
+- **修掉一处数据损坏**:`TodoWrite.content` / `MemoryWrite.body` 曾被瞬时参数省略机制
+  替换成占位标记(>200 字符即触发),并且**真的写进清单/记忆库**——模型看不到自己刚存了
+  什么,重写时又把标记复述回去,属**落盘级数据丢失**。现将这两字段移出精简表,并给执行层
+  补上与 `Write` 同款的占位标记防护。
+
+### 新增
+
+- **`src/agent/taskMap.ts`**(纯函数、确定性、无 `vscode` 依赖):
+  `buildTaskMap` / `taskMapLines` / `extractMapSectionItems` / `accumulateRecentDemands`;
+  同输入同输出,保证压缩块字节稳定、不破 KV 缓存前缀。
+- **地图常驻 + 每轮重建**:`ContextManager.buildResidentMap(parts, prevMap)` 于每次压缩重建
+  地图并置于压缩块首段;`compact()` 抽出 `pickTrimVictim` 实现需求轨两阶段收敛保护。
+- **真实「下一步」段**:`agentLoop.buildNextStepSection(pendingTodos)` 只接受
+  `TodoManager.list()` 中 `done=false` 的条目(去空白、≤3 条、空则不输出)。
+- **灰度开关** `dsbAgent.compaction.taskMapEnabled`(boolean,默认 `true`,仅显式 `false` 关闭)。
+- **运行时合成文本过滤(前缀感知)**:`isRuntimeContinueMessage` 在入轨前跳过 `[续写]` 提示,
+  `isRuntimeSyntheticText` 统一剥离 `- ` / `[rN] ` 前缀后比对(旧实现只 `startsWith` 会漏判
+  轨行 `- [rN] [续写] …`);地图构建与 `compact()` 两层过滤,避免续写提示/输出中断污染需求轨
+  并**永久合并**进压缩块。
+- **增强的压缩块回查提示**:`RECALL_HINT_LINE` 明确指引「需要更早原文 → `ContextRecall`;
+  当前目标见本块『需求』轨」;新增 `isRecallHintLine()` 兼容历史已落盘旧块(字节仍恒定)。
+- **`MemoryWrite` 回显强化**:tool_result 回显新条目 `name + description`;系统提示「持久记忆」
+  段改为「**动手前先 `MemoryRead` 读全文**」。
+
+### 修复
+
+- **瞬时参数省略标记的误伤与误写**:
+  - `TodoWrite.content` / `MemoryWrite.body` **移出** `TRANSIENT_FIELDS`(正文即语义主体);
+  - `isTransientSummaryText` 改为**形状校验**(长度 > 320 直接为假;仅当内容基本就是标记本身
+    才为真),消除"引用该标记的正常内容被误拒"——此前诊断文档写入与多处代码编辑因此被 `REFUSED`,
+    大粒度重构无法进行;
+  - 省略标记文案按工具给出**正确回读指引**(文件 → `Read`;记忆 → `MemoryRead`;清单 → `todo list`),
+    不再一律指向文件工具;
+  - 阈值调整:全局 200;`Write.contents` 16000;`StrReplace.new_string`/`old_string` 8000。
+- **执行层防护补齐**:`TodoWrite` / `MemoryWrite` 内容疑似占位标记时返回 `REFUSED`,从源头阻断
+  「照历史标记再写一遍」的污染落盘(`Write` / `StrReplace` 原已有此防护)。
+- **跨平台(Windows/Linux)行尾加固**:`extractMapSectionItems` 内先做 `\r` 归一化——
+  JS 正则的 `.` **不匹配 `\r`**(line terminator),`/^\s*-\s+(.*)$/` 对 CRLF 行会整条匹配失败,
+  使累积式「近期需求」**静默失效**(中期澄清不再粘住,即目标漂移回归)。
+  内部生成一律 `\n`(工程内无 `os.EOL`),但外部以 CRLF 另存的会话块(`*.block.json`)会触发;
+  与 `agentTemplates.ts` / `slashCommands.ts` 既有的 CRLF 归一化保持一致。
+- **地图不再冒充待办**:早期实现用「需求轨较早的中间需求」填 `### 下一步`,而历史需求**没有
+  完成度信息** → 会把**已完成**事项显示为"下一步",诱导重复劳动。现该段更名为「更早的需求」
+  (语义为历史需求,不含完成度暗示),真实待办只由任务锚注入。
+
+### 测试
+
+- 新增 `tests/taskMap.test.ts`(地图生成/去重/截断/段提取/累积粘住/CRLF 兼容);
+- `tests/contextManager.test.ts` 新增常驻地图、需求轨保护、轨道级合成文本清理等大量用例;
+- `tests/agentLoop.test.ts` 更新任务锚注入断言(工具轮注入、不新增 user 消息、`pendingTodos`);
+- `tests/toolUsePolicy.test.ts` / `tests/tools.test.ts` 按新行为改写断言(旧断言明确写了
+  "TodoWrite/MemoryWrite 会被精简""工具轮不注入清单",均已修正)。
+- **验证**:`tsc --noEmit` 0 错误;`vitest run` **110 文件 / 1175 项通过 / 1 跳过**。
+  关键用例均做**反证**(撤掉改动后如期失败再还原),避免"假绿"。
+
+### 文档
+
+- 新增 `.dsb/specs/2026-09-14-任务地图与需求轨保护-design.md`、
+  `.dsb/plans/2026-09-14-压缩目标漂移修复-plan.md`、
+  `.dsb/docs/2026-09-14-压缩目标漂移修复与96k预算实测.md`(含跨平台核查结论);
+- 同步 `.dsb/docs/project-overview.md`、`system-analysis/`(03-001 上下文压缩 / 04 技术债 /
+  06 性能成本 / README)、`.dsb/rules/transient-summary-avoidance.md`。
+
+
 ## [0.3.0] — 2026-08-19
 
 ### 本版本亮点

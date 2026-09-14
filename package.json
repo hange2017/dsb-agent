@@ -2,7 +2,7 @@
   "name": "dsb-agent",
   "displayName": "DSBAgent",
   "description": "基于 Anthropic Messages 兼容 API 的 VS Code 编码 Agent（DSBAgent；可对接任意兼容端点）",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "zhaoNingHan",
   "license": "MIT",
   "engines": {
@@ -219,6 +219,11 @@
           "minimum": 0,
           "maximum": 0.99,
           "description": "%configuration.dsbAgent.compaction.tailFoldRatio.description%"
+        },
+        "dsbAgent.compaction.taskMapEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.dsbAgent.compaction.taskMapEnabled.description%"
         },
         "dsbAgent.stats.enabled": {
           "type": "boolean",
