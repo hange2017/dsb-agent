@@ -55,6 +55,13 @@ describe("Configuration", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "yes" : "") });
     expect(junk.compactionThinkingEnabled()).toBe(false);
   });
+  it("compactionTaskMapEnabled defaults to true and only \"false\" disables it", () => {
+    expect(new Configuration({ getString: () => "" }).compactionTaskMapEnabled()).toBe(true);
+    const off = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "false" : "") });
+    expect(off.compactionTaskMapEnabled()).toBe(false);
+    const on = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "true" : "") });
+    expect(on.compactionTaskMapEnabled()).toBe(true);
+  });
   it("historyTokenBudget defaults to 64000 and accepts 0 (disabled)", () => {
     expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(64000);
     const zero = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "0" : "") });

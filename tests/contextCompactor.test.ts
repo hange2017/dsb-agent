@@ -14,6 +14,7 @@ import {
   isThinkingBlock,
   mergeThinkingBlocks,
   estimateThinkingChars,
+  truncateParts,
   trimThinkingBlock,
   type ThinkingBlockParts,
 } from "../src/agent/contextCompactor";
@@ -289,5 +290,46 @@ describe("thinking block lenient parsing", () => {
   it("parses trace lines without the leading '- ' prefix", () => {
     const parts = parseThinkingBlock("[thinking]\n## 正确\n[r2] 链路:a");
     expect(parts.correct).toEqual(["[r2] 链路:a"]);
+  });
+});
+
+describe("任务地图轨 (P2-3): 可选, 空则字节与旧版一致, 永不参与截断", () => {
+  const mapAxis = ["## 任务地图", "**目标:** 修复多轮迷失目标", "### 更早的需求", "- P2-3 块首地图"];
+
+  it("无 map 时块内不出现任务地图段 (字节与旧版一致)", () => {
+    const block = buildCompactedBlock({ demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
+    expect(block).not.toContain("任务地图");
+  });
+
+  it("有 map 时置于块首段 (紧跟 [compacted], 在需求轨之前) 且标题只出现一次", () => {
+    const block = buildCompactedBlock({ map: mapAxis, demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
+    expect(block).toContain("## 任务地图");
+    expect(block.split("## 任务地图").length - 1).toBe(1);
+    expect(block.indexOf("## 任务地图")).toBeLessThan(block.indexOf("## 需求"));
+    expect(block.indexOf("[compacted]")).toBeLessThan(block.indexOf("## 任务地图"));
+  });
+
+  it("build→parse→build 幂等 (地图含自身标题与 ### 子标题)", () => {
+    const parts = { map: mapAxis, demands: ["- [r1] a"], conclusions: ["- [r3] c"], explanations: [], ledger: ["- [r2] Read: a"] };
+    const block = buildCompactedBlock(parts);
+    const parsed = parseCompactedBlock(block);
+    expect(parsed.map).toEqual(mapAxis);
+    expect(parsed.demands).toEqual(["- [r1] a"]);
+    expect(buildCompactedBlock(parsed)).toBe(block);
+  });
+
+  it("增量合并: next 无地图时沿用 prev 地图; next 有地图时以 next 为准", () => {
+    const prev = { map: mapAxis, demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] };
+    const nextNoMap = { demands: ["- [r5] b"], conclusions: [], explanations: [], ledger: [] };
+    expect(mergeCompactedTracks(prev, nextNoMap).map).toEqual(mapAxis);
+    const nextMap = { map: ["## 任务地图", "**目标:** 新目标"], demands: [], conclusions: [], explanations: [], ledger: [] };
+    expect(mergeCompactedTracks(prev, nextMap).map).toEqual(["## 任务地图", "**目标:** 新目标"]);
+  });
+
+  it("truncateParts 原样保留地图, 只截断其它轨", () => {
+    const long = "y".repeat(500);
+    const out = truncateParts({ map: mapAxis, demands: [long], conclusions: [], explanations: [], ledger: [] }, 100);
+    expect(out.map).toEqual(mapAxis);
+    expect(out.demands[0].length).toBe(101);
   });
 });

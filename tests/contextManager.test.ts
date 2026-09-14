@@ -1276,3 +1276,271 @@ describe("ContextManager compaction events", () => {
     expect(content).toContain("- [r2] 新需求X");
   });
 });
+
+describe("ContextManager 任务地图(P2 常驻地图)", () => {
+  it("taskMapEnabled: 块首含地图;目标=首条需求、最新要求=末条需求(目标漂移不丢)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "最初目标:修压缩" },
+      { role: "user", content: "中间需求一" },
+      { role: "user", content: "中间需求二" },
+      { role: "user", content: "澄清:其实要保住地图" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    expect(content).toContain("## 任务地图");
+    // 地图在块首段:位于「需求」轨之前
+    expect(content.indexOf("## 任务地图")).toBeLessThan(content.indexOf("## 需求"));
+    const map = cm.getResidentMap();
+    expect(map.some((l) => l.includes("**目标:** 最初目标"))).toBe(true);
+    // 关键:落在需求轨中间的「目标澄清」也必须常驻,否则多轮后会漂移
+    expect(map.some((l) => l.includes("**最新要求:** 澄清"))).toBe(true);
+    // 中间需求进「更早的需求」,且不与目标/最新要求重复;**不得**冒充「下一步」
+    expect(map.some((l) => l.includes("中间需求一"))).toBe(true);
+    expect(map.some((l) => l.includes("### 下一步"))).toBe(false);
+    const goals = map.filter((l) => l.includes("**目标:**") || l.includes("**最新要求:**"));
+    expect(goals).toHaveLength(2);
+  });
+
+  it("更早的需求: 需求轨较早的中间需求落入该段(语义为历史需求, 非待办)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    // 8 条需求:首条(目标)+ 6 条中间 + 末条(最新要求)。keepTail=4 → 中间 3 条进「近期需求」,
+    // 更早的 3 条进「更早的需求」(取最新 2 条)。
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "最初目标:修压缩" },
+      { role: "user", content: "较早需求甲" },
+      { role: "user", content: "较早需求乙" },
+      { role: "user", content: "较早需求丙" },
+      { role: "user", content: "近期需求甲" },
+      { role: "user", content: "近期需求乙" },
+      { role: "user", content: "近期需求丙" },
+      { role: "user", content: "最新要求:保住地图" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    await cm.compact(msgs);
+    const map = cm.getResidentMap();
+    const joined = map.join("\n");
+    expect(joined).toContain("### 近期需求");
+    expect(joined).toContain("### 更早的需求");
+    // 段序:近期需求在更早的需求之前
+    expect(joined.indexOf("### 近期需求")).toBeLessThan(joined.indexOf("### 更早的需求"));
+    // 「更早的需求」段内的条目落在较早需求区
+    const idx = map.findIndex((l) => l.includes("### 更早的需求"));
+    const seg = map.slice(idx, idx + 4).join("\n");
+    expect(seg).toContain("较早需求");
+    // 关键:绝不以「下一步」冒充待办(块内无 todo 信息)
+    expect(joined).not.toContain("### 下一步");
+  });
+
+  it("taskMapEnabled 缺省(false):不生成地图,getResidentMap 为空(字节与旧版一致)", async () => {
+    const cm = new ContextManager({ windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" });
+    const msgs: ProviderMessage[] = Array.from({ length: 8 }, (_, i) => ({ role: "user", content: `m${i}` }));
+    const out = await cm.compact(msgs);
+    expect(out[0].content as string).not.toContain("任务地图");
+    expect(cm.getResidentMap()).toEqual([]);
+  });
+
+  it("中期澄清落在需求轨中间 → 进地图「近期需求」段(不随中间行被裁)", async () => {
+    // 第 15 轮才出现的澄清落在中间:既非首条(目标)也非末条(最新要求)。
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "最初目标:修压缩" },
+      { role: "user", content: "中间需求一" },
+      { role: "user", content: "中间需求二" },
+      { role: "user", content: "澄清:其实要保住地图" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    await cm.compact(msgs);
+    const map = cm.getResidentMap();
+    expect(map).toContain("### 近期需求");
+    // 关键:澄清必须常驻(否则多轮后目标漂移)
+    expect(map.some((l) => l.includes("澄清:其实要保住地图"))).toBe(true);
+    // 近期需求段位于地图内、且整段随地图永不参与裁剪
+    expect(map.indexOf("### 近期需求")).toBeGreaterThan(map.indexOf("**目标:**"));
+  });
+
+  it("裁剪保护:极小预算下首条需求(目标)免裁,只削中间", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+      historyTokenBudget: 2000, // 极紧预算:块必须裁剪才能收敛
+    });
+    // 20 条长需求 → 按预算裁剪;首条(目标)是硬保护(软保护放开后仍免裁)
+    const long = "需求正文" + "细节".repeat(120);
+    const msgs: ProviderMessage[] = Array.from({ length: 20 }, (_, i) => ({
+      role: "user",
+      content: `需求${i}:${long}`,
+    }));
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    // 首条需求(最初目标)在任何预算下都不得被裁掉 → 目标不丢
+    expect(content).toContain("需求0:");
+    // 软保护阶段:末尾需求(最新要求)优先于中间行被保留;块内裁剪只削中间
+    const demandLines = content.split("\n").filter((l) => /^-\s*\[r\d+\]\s*需求\d+:/.test(l));
+    expect(demandLines.length).toBeGreaterThan(0);
+    expect(demandLines[0]).toContain("需求0:");
+  });
+
+  it("运行时「续写提示」不进需求轨(否则会顶掉地图的最新要求/更早的需求)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    // 真实需求 A → 续写提示(运行时合成) → 真实澄清 B(真正的最新要求)
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "需求A:修压缩" },
+      {
+        role: "user",
+        content:
+          "[续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
+      },
+      { role: "user", content: "澄清B:其实重点是保住地图" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    // 续写提示不得出现在任何轨(尤其需求轨)
+    expect(content).not.toContain("[续写]");
+    expect(content).not.toContain("上一轮输出因长度上限中断");
+    // 地图「最新要求」= 真正的最后一条用户需求 B,而非续写提示
+    const map = cm.getResidentMap();
+    expect(map.some((l) => l.includes("澄清B:其实重点是保住地图"))).toBe(true);
+    expect(map.some((l) => l.includes("[续写]"))).toBe(false);
+  });
+
+  it("历史遗留的续写污染条目会被地图剔除(累积式不粘住垃圾)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    // 第一轮:旧版本 bug 已把 [续写] 写进地图「近期需求」段(prevMap 里就有)
+    const buggyPrevMap = [
+      "## 任务地图",
+      "**目标:** 修压缩",
+      "### 近期需求",
+      "- [续写] 上一轮输出因长度上限中断",
+    ];
+    // 通过连续压缩让 prevMap 从上一轮块中解析出来
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "需求A:修压缩" },
+      { role: "user", content: "需求B:保住地图" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    await cm.compact(msgs);
+    // 模拟:把上一轮地图(含污染行)喂给本轮重建
+    const rebuilt = (cm as unknown as { buildResidentMap: (p: unknown, prev: string[]) => string[] })
+      .buildResidentMap(
+        { demands: ["- [r1] 需求A:修压缩", "- [r2] 需求B:保住地图"], conclusions: [], explanations: [], ledger: [], map: [] },
+        buggyPrevMap,
+      );
+    expect(rebuilt.some((l) => l.includes("[续写]"))).toBe(false);
+  });
+
+  it("轨行形态 `- [rN] [续写] …` 也被剔除(前缀感知判定;旧版只比裸文本会漏判)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    // 关键:历史落盘的轨行带 `- [rN] ` 编号前缀,裸 `startsWith("[续写]")` 匹配不到 → 会残留。
+    const rebuilt = (cm as unknown as { buildResidentMap: (p: unknown, prev: string[]) => string[] })
+      .buildResidentMap(
+        {
+          demands: [
+            "- [r1] 需求A:修压缩",
+            "- [r2] [续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
+            "- [r3] 澄清C:重点是保住地图",
+          ],
+          conclusions: ["- [r4] [输出中断]", "- [r5] 真实结论:地图已生效"],
+          explanations: [],
+          ledger: [],
+          map: [],
+        },
+        ["## 任务地图", "**目标:** 修压缩", "### 近期需求", "- [r6] [续写] 更早的遗留污染"],
+      );
+    // 三种形态都不得出现在地图:目标/最新要求/近期需求/更早的需求/结果
+    expect(rebuilt.some((l) => l.includes("[续写]"))).toBe(false);
+    expect(rebuilt.some((l) => l.includes("上一轮输出因长度上限中断"))).toBe(false);
+    expect(rebuilt.some((l) => l.includes("[输出中断]"))).toBe(false);
+    // 真实需求仍在(没有把整段过滤掉)
+    expect(rebuilt.some((l) => l.includes("需求A:修压缩"))).toBe(true);
+    expect(rebuilt.some((l) => l.includes("澄清C:重点是保住地图"))).toBe(true);
+  });
+
+  it("旧块「需求/结论」轨里的历史合成行会被一次性清除(不再随 merge 永久残留)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    // 构造「旧代码产出的」压缩块:需求轨/结论轨里混着历史合成行(现场:r125/r129)。
+    const polluted = buildCompactedBlock({
+      demands: [
+        "- [r1] 真实需求A",
+        "- [r2] [续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
+        "- [r3] 真实需求B",
+      ],
+      conclusions: ["- [r4] [输出中断]", "- [r5] 真实结论:地图已生效"],
+      explanations: [],
+      ledger: ["- [r6] ⤷ 工具结果:OK"],
+    });
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: polluted },
+      { role: "user", content: "新需求C" },
+      { role: "user", content: "tail0" },
+      { role: "user", content: "tail1" },
+      { role: "user", content: "tail2" },
+      { role: "user", content: "tail3" },
+    ];
+    const out = await cm.compact(msgs);
+    const content = out[0].content as string;
+    // 合成行彻底消失(不再只在「任务地图」段被滤掉,而是四条轨全清)
+    expect(content).not.toContain("[续写]");
+    expect(content).not.toContain("[输出中断]");
+    expect(content).not.toContain("上一轮输出因长度上限中断");
+    // 真实内容不受影响
+    expect(content).toContain("真实需求A");
+    expect(content).toContain("真实需求B");
+    expect(content).toContain("真实结论:地图已生效");
+    expect(content).toContain("新需求C");
+  });
+});

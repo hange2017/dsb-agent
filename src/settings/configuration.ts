@@ -128,6 +128,11 @@ export class Configuration {
     return Number.isFinite(v) && v >= 0 && v < 1 ? v : 0.35;
   }
 
+  /** 常驻任务地图开关(P2):每次压缩重建「目标/最新要求/近期需求/更早的需求/已做/结果」并置于块首、永不裁剪;「下一步」由任务锚按真实待办注入。缺省 true,仅 "false" 关闭。 */
+  compactionTaskMapEnabled(): boolean {
+    return this.reader.getString("dsbAgent.compaction.taskMapEnabled") !== "false";
+  }
+
   /** 统计总开关:false 关闭后不再记录任何统计事件(StatsStore 不落盘);缺省 true。 */
   statsEnabled(): boolean {
     return this.reader.getString("dsbAgent.stats.enabled") !== "false";

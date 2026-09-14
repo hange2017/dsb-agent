@@ -282,8 +282,15 @@ export function extractKeyLines(output: string, ok: boolean, opts: KeyLineOption
   return [...errLines, ...rest].join("\n");
 }
 
-/** 合并块四个轨道(均应为已格式化行) */
+/** 合并块各轨道(均应为已格式化行) */
 export interface CompactBlockParts {
+  /**
+   * 任务地图(可选,视为「块首段的永久地图」):目标/最新要求/近期需求/更早的需求/已做/结果。
+   * 不含「下一步」(块内无法访问 todo,真实待办由 agentLoop 的任务锚注入)。
+   * 不可删(裁剪时不参与);为 undefined 或空数组时整段不输出,
+   * 保证未启用地图的压缩块字节与旧版完全一致(缓存前缀不受影响)。
+   */
+  map?: string[];
   demands: string[];
   conclusions: string[];
   explanations: string[];
@@ -296,13 +303,31 @@ export function parseCompactedBlock(content: string): CompactBlockParts {
   const lines = (content ?? "").split("\n");
   let current: keyof CompactBlockParts | null = null;
   for (const line of lines) {
-    const heading = line.match(/^##\s+(需求|结论|说明|工具履历)\s*$/);
+    const heading = line.match(/^##\s+(需求|结论|说明|工具履历|任务地图)\s*$/);
     if (heading) {
-      current = heading[1] === "需求" ? "demands" : heading[1] === "结论" ? "conclusions" : heading[1] === "说明" ? "explanations" : "ledger";
+      if (heading[1] === "任务地图") {
+        // 地图段含自身标题行,原样收集(含 `**目标:**` 与 `### 已做` 等行),
+        // 使 build→parse→build 幂等;`### 子标题` 不匹配上面的 `##` 正则,不会被误判。
+        current = "map";
+        parts.map = [...(parts.map ?? []), line];
+        continue;
+      }
+      current =
+        heading[1] === "需求"
+          ? "demands"
+          : heading[1] === "结论"
+            ? "conclusions"
+            : heading[1] === "说明"
+              ? "explanations"
+              : "ledger";
       continue;
     }
-    if (current && line.trim() !== "" && line !== "[compacted]" && line !== "[前文摘要]" && line !== RECALL_HINT_LINE) {
-      parts[current].push(line);
+    if (current && line.trim() !== "" && line !== "[compacted]" && line !== "[前文摘要]" && !isRecallHintLine(line)) {
+      if (current === "map") {
+        parts.map = [...(parts.map ?? []), line];
+      } else {
+        parts[current].push(line);
+      }
     }
   }
   return parts;
@@ -322,6 +347,7 @@ export function mergeCompactedTracks(prev: CompactBlockParts, next: CompactBlock
     return out;
   };
   return {
+    map: next.map && next.map.length > 0 ? next.map : prev.map,
     demands: merge(prev.demands, next.demands),
     conclusions: merge(prev.conclusions, next.conclusions),
     explanations: merge(prev.explanations, next.explanations),
@@ -338,17 +364,29 @@ function track(title: string, lines: string[], includeEmptyTitle = true): string
 }
 
 /**
- * 压缩块尾部固定提示行(恒输出,字节稳定):引导模型对压缩摘要行主动调用 ContextRecall 回查原文。
+ * 压缩块尾部固定提示行(恒输出,字节稳定):引导模型对压缩摘要行主动调用 ContextRecall 回查原文,
+ * 并显式指向「需求」轨(目标锚),降低「多轮迷失目标」概率。
  * 注意:内容固定不变,否则每次压缩重建都会改变块尾字节 → 缓存前缀断裂。
- * 保持最短纯 ASCII(约 10 tokens):固定开销越小,极低预算下可保留的业务行越多。
  */
-export const RECALL_HINT_LINE = "(hint: ContextRecall(seq=n) → [r{n}])";
+export const RECALL_HINT_LINE =
+  "(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))";
+
+/** 旧版提示行(历史会话已落盘的块):解析时同样跳过,避免被当成业务行。 */
+export const LEGACY_RECALL_HINT_LINE = "(hint: ContextRecall(seq=n) → [r{n}])";
+
+/** 是否为压缩块提示行(当前或历史版本)。 */
+export function isRecallHintLine(line: string): boolean {
+  return line === RECALL_HINT_LINE || line === LEGACY_RECALL_HINT_LINE;
+}
 
 /** 构建合并压缩块(带 [compacted] 标记) */
 export function buildCompactedBlock(parts: CompactBlockParts): string {
   const sections = [
     "[前文摘要]",
     "[compacted]",
+    // 任务地图置于块首段:压缩/裁剪永不删(裁剪候选集不含 map 轨),
+    // 空地图不输出任何字节 → 未启用地图的块与旧版完全一致。
+    ...(parts.map ?? []),
     ...track("需求", parts.demands),
     ...track("结论", parts.conclusions),
     ...track("说明", parts.explanations),
@@ -495,6 +533,8 @@ export function truncateLongLines(lines: string[], maxLine = 240): string[] {
 /** 把多轨行统一截断(供块超限时的兜底)。 */
 export function truncateParts(parts: CompactBlockParts, maxLine = 240): CompactBlockParts {
   return {
+    // 任务地图原样保留(行已由 taskMap 裁剪到 ≤160),不参与截断/裁剪。
+    ...(parts.map ? { map: parts.map } : {}),
     demands: truncateLongLines(parts.demands, maxLine),
     conclusions: truncateLongLines(parts.conclusions, maxLine),
     explanations: truncateLongLines(parts.explanations, maxLine),

@@ -227,6 +227,15 @@ describe("ToolExecutor", () => {
     const listed = await exec.execute("TodoWrite", { op: "list" }, { workspaceRoot: tmp });
     expect(listed.content).toBe(updated.content);
   });
+
+  it("TodoWrite refuses transient summary marker content", async () => {
+    const marker = "[TRANSIENT-SUMMARY field=content chars=999] 瞬时参数省略标记:禁止写入文件";
+    const r = await exec.execute("TodoWrite", { op: "add", content: marker }, { workspaceRoot: tmp });
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("REFUSED");
+    const listed = await exec.execute("TodoWrite", { op: "list" }, { workspaceRoot: tmp });
+    expect(listed.content).not.toContain("[TRANSIENT-SUMMARY");
+  });
 });
 
 describe("Memory tools (executor routes)", () => {
@@ -244,6 +253,13 @@ describe("Memory tools (executor routes)", () => {
     expect(d.ok).toBe(true);
     const l2 = await exec.execute("MemoryList", {}, { workspaceRoot: tmp });
     expect(l2.content).toContain("(no memories)");
+  });
+
+  it("MemoryWrite refuses transient summary marker body", async () => {
+    const marker = "[TRANSIENT-SUMMARY field=body chars=999] 瞬时参数省略标记:禁止写入文件";
+    const r = await exec.execute("MemoryWrite", { name: "m1", description: "d", body: marker }, { workspaceRoot: tmp });
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("REFUSED");
   });
 
   it("MemoryRead of a missing memory reports not found", async () => {

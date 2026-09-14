@@ -1,6 +1,12 @@
 import type { ProviderMessage, ProviderUserContent } from "./provider/types";
 import { estimateMessageTokens, estimateTokens } from "../stats/providerSendStats";
 import {
+  accumulateRecentDemands,
+  extractMapSectionItems,
+  RECENT_DEMANDS_TITLE,
+  taskMapLines,
+} from "./taskMap";
+import {
   classifyAssistantText,
   summarizeToolUse,
   extractKeyLines,
@@ -50,6 +56,34 @@ function isThinkingMessage(msg: ProviderMessage): boolean {
 function isLegacySummaryMessage(msg: ProviderMessage): boolean {
   return msg.role === "user" && typeof msg.content === "string" && msg.content.startsWith("[前文摘要]");
 }
+
+/**
+ * 运行时合成的「续写提示」消息(agentLoop 在 max_tokens 中断后以 user 文本注入)。
+ * 位置:src/agent/maxTokensContinue.ts → kMaxTokensContinueUserText。
+ * 它**不是用户需求**:不得进入需求轨(否则会占据地图「最新要求/更早的需求」,反而污染目标)。
+ */
+const CONTINUE_HINT_PREFIX = "[续写]";
+export function isRuntimeContinueMessage(msg: ProviderMessage): boolean {
+  return (
+    msg.role === "user" &&
+    typeof msg.content === "string" &&
+    msg.content.trim().startsWith(CONTINUE_HINT_PREFIX)
+  );
+}
+
+/** 文本是否为「运行时合成」行(续写提示/输出中断占位):用于剔除地图中历史遗留的污染条目。 */
+export function isRuntimeSyntheticText(text: string): boolean {
+  // 兼容两种形态:裸文本(`[续写] …`),以及压缩块轨行(`- [rN] [续写] …` 带编号前缀)。
+  // 注意:历史落盘的需求/结论轨行都带 `- [rN] ` 前缀,若只比裸文本会漏判 → 污染行残留在地图。
+  const t = text
+    .trim()
+    .replace(/^\s*(?:[-*]\s*)?(?:\[r\d+\]\s*)?/, "")
+    .trim();
+  return t.startsWith(CONTINUE_HINT_PREFIX) || t === INTERRUPTED_ASSISTANT_TEXT;
+}
+
+/** 运行时合成的「输出中断」占位 assistant 文本(不含任何用户语义)。 */
+export const INTERRUPTED_ASSISTANT_TEXT = "[输出中断]";
 
 function toolResultText(content: ProviderUserContent): string {
   if (typeof content === "string") return content;
@@ -126,7 +160,31 @@ export interface ContextManagerOptions {
    * 仅当 head[0] 无实际压缩块时生效;缺省不注入。
    */
   presetCompactedBlock?: string;
+  /**
+   * 任务地图(P2):true 时压缩块首段插入 `## 任务地图`
+   * (目标/最新要求/近期需求/更早的需求/已做/结果;「下一步」由任务锚注入),
+   * 裁剪时永不删;缺省 false(块字节与旧版一致,便于回退与灰度)。
+   */
+  taskMapEnabled?: boolean;
 }
+
+/** 可被压缩裁掉的轨道(map 除外:地图永不删)。 */
+type TrimTrack = "demands" | "conclusions" | "explanations" | "ledger";
+
+/**
+ * 常驻地图「近期需求」条数(需求轨中间最近 N 条)。
+ * 中期「目标澄清/修正」常落在需求轨中间:既非首条(goal)也非末条(latestGoal),
+ * 若只靠两条兜底,第 15 轮的澄清一旦被裁就会「目标漂移」。N 条中间需求随地图常驻。
+ */
+const RESIDENT_MAP_RECENT_DEMANDS = 3;
+
+/**
+ * 需求轨**免裁保护**条数:首条 + 末尾 K 条。
+ * 首条 = 最初目标;末尾 = 最新要求(含用户中途修正)。
+ * K = 地图「近期需求」条数 + 1:地图取的是「中间段」最近 N 条,而保护取「末尾段」,
+ * 两者错开一位,故多保护 1 条即可保证「凡进入地图的中间需求都在保护窗口内」。
+ */
+const DEMAND_KEEP_TAIL = RESIDENT_MAP_RECENT_DEMANDS + 1;
 
 /** A5:从消息列表内容中提取 `[r{n}]` 序号(保持出现顺序)。 */
 function extractSeqsFromMessages(messages: ProviderMessage[]): number[] {
@@ -153,6 +211,8 @@ export class ContextManager {
   private nextSeq = 1;
   /** thinking 压缩开关(可热更新;plan/ask 模式关闭)。 */
   private thinkingEnabled: boolean;
+  /** 常驻任务地图(P2-3/P2-4):最近一次压缩生成的块首地图,供任务锚每轮顶部复用。 */
+  private residentMap: string[] = [];
   /** thinking 压缩发生时的回调(成功或失败均触发,用于成本统计);缺省不回调。 */
   onThinkingCompaction?: () => void;
 
@@ -198,6 +258,14 @@ export class ContextManager {
   /** 热更新 thinking 压缩开关(plan/ask 模式关闭);影响后续 compact。 */
   setThinkingEnabled(enabled: boolean): void {
     this.thinkingEnabled = enabled;
+  }
+
+  /**
+   * 常驻任务地图(P2-4):最近一次压缩写入块首的地图行;未压缩或未开启时返回 []。
+   * 供任务锚每轮顶部复用(与压缩块内地图同源,字节稳定)。
+   */
+  getResidentMap(): string[] {
+    return this.residentMap;
   }
 
   track(usage?: { inputTokens?: number; outputTokens?: number }): number {
@@ -373,11 +441,29 @@ export class ContextManager {
       assertNoSeqOverlap(prevTrackLines, freshTrackLines, "轨道增量合并");
     }
     const merged = prev ? mergeCompactedTracks(prev, parts) : parts;
+    // 一次性清理:历史落盘的「运行时合成」轨行(`- [r{N}] [续写] …` / `[输出中断]`)。
+    // 新消息已在 stratify 入轨前被 isRuntimeContinueMessage 拦截;此处清除**旧会话遗留** ——
+    // 它们被 mergeCompactedTracks 一路向前合并,若不显式清掉会永久留在「需求」轨里,
+    // 反复向模型复述"上一轮输出中断"这类与任务无关的噪声(现场:r125/r129 两行)。
+    // 稳态下四条轨本就无合成行 → 过滤结果与输入同一引用(字节不变),仅在首次清理时改动一次。
+    const purged: CompactBlockParts = {
+      ...merged,
+      demands: merged.demands.filter((l) => !isRuntimeSyntheticText(l)),
+      conclusions: merged.conclusions.filter((l) => !isRuntimeSyntheticText(l)),
+      explanations: merged.explanations.filter((l) => !isRuntimeSyntheticText(l)),
+      ledger: merged.ledger.filter((l) => !isRuntimeSyntheticText(l)),
+    };
+    // P2:任务地图作为块首段常驻(永不裁剪);关闭时块字节与旧版完全一致。
+    const withMap: CompactBlockParts = this.opts.taskMapEnabled
+      ? { ...purged, map: this.buildResidentMap(purged, prev?.map ?? this.residentMap) }
+      : purged;
+    // 常驻地图缓存:供任务锚每轮顶部读取(与压缩块内地图同源,字节稳定)。
+    this.residentMap = withMap.map ?? [];
     const fitted = budget
-      ? await this.ensureBlockFits(merged, Math.max(1, Math.floor(budget.compactedTokens * this.targetPct)))
-      : await this.ensureBlockFits(merged);
+      ? await this.ensureBlockFits(withMap, Math.max(1, Math.floor(budget.compactedTokens * this.targetPct)))
+      : await this.ensureBlockFits(withMap);
     // 压缩块收缩上报:实际发生收缩(after < before)才记录
-    const beforeBlockTokens = estimateTokens(buildCompactedBlock(merged));
+    const beforeBlockTokens = estimateTokens(buildCompactedBlock(withMap));
     const afterBlockTokens = estimateTokens(buildCompactedBlock(fitted));
     if (afterBlockTokens < beforeBlockTokens) {
       this.emitCompaction({
@@ -683,25 +769,112 @@ export class ContextManager {
     return this.trimTracksToBudget(truncated, budgetTokens);
   }
 
-  /** 按 seq 最新(尾部)优先删除轨道行,直到压缩块 token ≤ 预算。只删尾部,稳定段前缀字节不变。 */
+  /**
+   * 收缩轨道行直到压缩块 token ≤ 预算。删除顺序:
+   * 结论/说明/履历轨按 seq 最新优先(删块尾,稳定段前缀字节不变);
+   * 需求轨最后才动,且保护首条与最近 3 条,只删中间 —— 目标不被压缩丢弃。
+   */
   private trimTracksToBudget(parts: CompactBlockParts, budgetTokens: number): CompactBlockParts {
     let current = parts;
     let guard = 0;
-    while (this.blockTokens(current) > budgetTokens && guard < 1000) {
-      guard++;
-      const all: Array<{ track: keyof CompactBlockParts; line: string; seq: number }> = [];
-      for (const track of ["demands", "conclusions", "explanations", "ledger"] as const) {
-        for (const line of current[track]) all.push({ track, line, seq: rSeq(line) });
+    // 两阶段:① 软保护(首条 + 末尾 N 条需求免裁)——尽量保住「中期目标澄清」;
+    // ② 仍超预算则放开软保护(仅首条免裁)——极端预算下必须能收敛,否则块无界膨胀。
+    for (const softProtect of [true, false]) {
+      while (this.blockTokens(current) > budgetTokens && guard < 1000) {
+        guard++;
+        const victim = this.pickTrimVictim(current, softProtect);
+        if (!victim) break;
+        current = {
+          ...current,
+          [victim.track]: current[victim.track].filter((l) => l !== victim.line),
+        };
       }
-      if (all.length === 0) break;
-      all.sort((a, b) => b.seq - a.seq); // 删尾部:优先删最新 seq,稳定段(旧行)字节不变
-      const victim = all[0];
-      current = {
-        ...current,
-        [victim.track]: current[victim.track].filter((l) => l !== victim.line),
-      };
+      if (this.blockTokens(current) <= budgetTokens) break;
     }
     return current;
+  }
+
+  /**
+   * 生成常驻任务地图(确定性):从合并后的轨道推导
+   * 「目标/最新要求/近期需求/更早的需求/已做/结果」,置于压缩块首段且永不被裁剪。
+   *  - 目标    = 「需求」轨首条(最初需求,受 P0-a 保护);
+   *  - 最新要求 = 「需求」轨末条(覆盖多轮中的目标澄清/修正,避免只记住最初目标);
+   *  - 每次压缩都会用当前轨道重建地图 → 澄清一旦进来即常驻,不再随中间行被裁掉。
+   * 注意:**不生成「下一步」段** —— 压缩块无法访问 todo,用历史需求冒充待办会把
+   * 已完成事项显示为下一步;真实「下一步」由 agentLoop 的任务锚注入(见 buildTaskAnchor)。
+   */
+  private buildResidentMap(parts: CompactBlockParts, prevMap: string[] = []): string[] {
+    // 过滤历史遗留的「运行时合成」行(`- [rN] [续写] …` / `[输出中断]`):
+    // 旧会话压缩块已持久化这些行,且经 mergeCompactedTracks 不断向前合并;若不过滤,
+    // 它们会占据地图「目标/最新要求/近期需求/更早的需求」位 → 目标语义反被污染。
+    const demands = parts.demands.filter((l) => !isRuntimeSyntheticText(l));
+    const goal = demands[0];
+    // 最新要求:最近一条需求(常驻一行,避免「中期目标澄清」被裁后目标漂移)。
+    const latestGoal = demands.length > 1 ? demands[demands.length - 1] : undefined;
+    // 已做/结果/更早的需求取各轨「最新」若干条(与块尾提示行一致:需要细节 → ContextRecall)。
+    const latest = (lines: string[], n: number): string[] =>
+      n <= 0 ? [] : lines.filter((l) => !isRuntimeSyntheticText(l)).slice(-n);
+    // 受裁保护的末尾 keepTail 条(与 pickTrimVictim 同源);去掉末条(latestGoal)后即为
+    // 「受保护的中间需求」→ 放进地图「近期需求」段,保证进了地图的行永远不会被裁。
+    const keepTail = Math.min(DEMAND_KEEP_TAIL, Math.max(0, demands.length - 1));
+    const protectedMiddle =
+      keepTail > 1 ? demands.slice(demands.length - keepTail, demands.length - 1) : [];
+    // 累积式「近期需求」:候选 = 本轮受保护的中间需求;并叠加**上一轮地图里已有的条目**。
+    // 关键:中期「目标澄清/修正」一旦进入地图即粘住——即便它随后被更新的需求挤出滑动窗口、
+    // 甚至被裁出需求轨,地图(永不参与裁剪)仍保留它,下次重建也不会丢。这是「中期澄清
+    // 仍可能被压缩删掉」的最后一道保险。
+    const prevRecent = extractMapSectionItems(prevMap, RECENT_DEMANDS_TITLE).filter(
+      (x) => !isRuntimeSyntheticText(x),
+    );
+    const recentDemands = accumulateRecentDemands(
+      prevRecent,
+      protectedMiddle,
+      RESIDENT_MAP_RECENT_DEMANDS,
+    );
+    // 更早的中间需求(不受保护,仍可被裁):作为「更早的需求」段的来源,与近期需求不重复。
+    // 注意:**不得**把历史需求冒充成「下一步」—— 无完成度判定会把已完成事项显示为待办,
+    // 诱导模型重复劳动;真正的「下一步」由任务锚用 TodoManager 的 pending 项生成。
+    const olderMiddle = demands.slice(1, Math.max(1, demands.length - keepTail));
+    return taskMapLines({
+      goal,
+      latestGoal,
+      recentDemands,
+      did: latest(parts.ledger, 3),
+      results: latest(parts.conclusions, 3),
+      earlierDemands: latest(olderMiddle, 2),
+    });
+  }
+
+  /**
+   * 选择要压缩删除的轨道行(替代原先「一律删最新 seq」):
+   *  - 非 demands 轨:照旧按 seq 最新优先删(块尾先动,稳定段前缀字节不变);
+   *  - demands 轨:最后才动,且**首条(最初目标)与末尾 N 条(最新要求/近期澄清)免裁**,只删中间。
+   * 返回 undefined 表示无可删行(仅剩受保护的需求,预算已无法再降)。
+   */
+  private pickTrimVictim(
+    parts: CompactBlockParts,
+    softProtectDemands = true,
+  ): { track: TrimTrack; line: string } | undefined {
+    const others: Array<{ track: TrimTrack; line: string; seq: number }> = [];
+    for (const track of ["conclusions", "explanations", "ledger"] as const) {
+      for (const line of parts[track]) others.push({ track, line, seq: rSeq(line) });
+    }
+    if (others.length > 0) {
+      others.sort((a, b) => b.seq - a.seq);
+      return { track: others[0].track, line: others[0].line };
+    }
+    // 非需求轨已空:动需求轨。
+    // 软保护开:首条(最初目标) + 末尾 N 条(最新要求 + 近期澄清)免裁,只删中间;
+    // 软保护关(极端预算兜底):仅首条免裁,其余按 seq 最新优先删 —— 必须能收敛。
+    const demands = parts.demands;
+    const keepTail = softProtectDemands
+      ? Math.min(DEMAND_KEEP_TAIL, Math.max(0, demands.length - 1))
+      : 0;
+    const middle = demands.slice(1, demands.length - keepTail);
+    if (middle.length === 0) return undefined;
+    let victimLine = middle[0];
+    for (const line of middle) if (rSeq(line) > rSeq(victimLine)) victimLine = line;
+    return { track: "demands", line: victimLine };
   }
 
   /**
@@ -753,6 +926,9 @@ export class ContextManager {
             pushChunk({ type: "conclusion", role: "user", summary: makeSummary("conclusion", text), content: text }, seq);
             continue;
           }
+          // 运行时续写提示不是用户需求:跳过需求轨(否则会顶掉「最新要求/更早的需求」,污染目标定位)。
+          // 仍写入 view(供 thinking 上下文),但不进 demands / 冷存储 demand 块。
+          if (isRuntimeContinueMessage(msg)) continue;
           demands.push(`- [r${seq}] ${text}`);
           pushChunk({ type: "demand", role: "user", summary: makeSummary("demand", text), content: text }, seq);
           continue;
@@ -774,7 +950,7 @@ export class ContextManager {
       const text = textParts.join("\n").trim();
       const thinking = thinkingBlocks.join("\n\n").trim();
       view.push({ seq, role: "assistant", text, thinking: thinking || undefined });
-      if (text) {
+      if (text && text !== INTERRUPTED_ASSISTANT_TEXT) {
         const { conclusion, explanation } = classifyAssistantText(text, toolUses.length > 0);
         for (const para of conclusion) {
           conclusions.push(`- [r${seq}] ${para}`);

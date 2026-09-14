@@ -424,9 +424,9 @@ export class ToolExecutor {
           const oldString = asString(input.old_string, "old_string");
           const newString = asString(input.new_string, "new_string");
           if (isTransientSummaryText(newString) || isTransientSummaryText(oldString)) {
-            return errorResult(`REFUSED: old_string/new_string 疑似瞬时参数省略标记,拒绝修改 ${filePath}。
-上下文中的省略标记不是真实内容,禁止复述或写入文件。
-请先用 Read 读取真实内容(长文件请分段 offset/limit),再以完整内容重试。`);
+            return errorResult(`REFUSED: old_string/new_string 疑似工具参数的历史回显标记,拒绝修改 ${filePath}。
+该标记不是对话正文、也不是真实锚点,禁止复述。
+请先 Read ${filePath}(长文件分段)取回真实锚点原文,再重试编辑。`);
           }
           const full = resolveWorkspacePath(root, filePath); // 逃逸保持红:在 try 外抛
           this.checkpoints?.snapshot(full); // 快照失败也必须红(真实失败,非「无匹配」)
@@ -479,6 +479,13 @@ export class ToolExecutor {
         }
         case "TodoWrite": {
           const op = asString(input.op, "op");
+          // 防护:拒绝把「瞬时参数省略标记」当清单内容写入(模型从历史读到标记后复述)。
+          if (isTransientSummaryText(typeof input.content === "string" ? input.content : "")) {
+            return errorResult(
+              `REFUSED: content 疑似瞬时参数省略标记,拒绝写入清单。
+请用 TodoWrite(op="list") 查看清单真实状态后重试。`
+            );
+          }
           if (op === "list") return { ok: true, content: this.todo.toPromptBlock() };
           // add/update 后返回「最新完整清单」作为 tool_result:清单状态经由消息尾部
           // (tool_result)传播给模型,无需再注入 system / 追加伪 user 消息,
@@ -564,6 +571,13 @@ export class ToolExecutor {
         }
         case "MemoryWrite": {
           const name = asString(input.name, "name");
+          // 防护:拒绝把省略标记当记忆正文写入(历史回声导致的记忆数据损坏)。
+          if (isTransientSummaryText(typeof input.body === "string" ? input.body : "")) {
+            return errorResult(
+              `REFUSED: body 疑似瞬时参数省略标记,拒绝写入记忆 ${name}。
+请用 MemoryRead 读回该条真实内容后重试。`
+            );
+          }
           const description = asString(input.description, "description");
           const body = asString(input.body, "body");
           // pinned 显式布尔才覆盖;缺省走 write() 的继承语义(新条目 false,更新保留旧值)
@@ -576,7 +590,7 @@ export class ToolExecutor {
           // 启发式相似检测:写入前比对既有条目,返回候选提示(同名更新不算重复)。
           // 让 agent 在"新增重复条目"与"覆盖/合并既有条目"之间做判断。
           const similar = findSimilarMemories(store.list(), name, description);
-          let content = `Memory written: ${e.name} (scope: ${scope === "global" ? "global" : "project"})`;
+          let content = `Memory written: ${e.name} (scope: ${scope === "global" ? "global" : "project"})\n- description: ${e.description}`;
           if (similar.length > 0) {
             content +=
               "\n\n⚠ 检测到相似记忆(可能重复,建议核对后合并或复用既有条目,而非新增堆积):\n" +

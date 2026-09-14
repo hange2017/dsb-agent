@@ -1,21 +1,22 @@
 # DSBAgent — 项目总体框架
 
 > 生成时间:2026-08-16(最近一周工作同步后重写;08-16 同步交互式追加 / 滚动冻结 / 轮次导航)
-> 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 115 个 .ts、webview 15 个文件、tests 107 个测试文件 / 1090 项)
+> 更新:2026-09-15(三补:地图「下一步」不再冒充待办 → 改「更早的需求」;任务锚按真实未完成 todo 注入 `### 下一步`)
+> 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 117 个 .ts、webview 16 个文件、tests 110 个测试文件 / 1175 项)
 
 ## 项目简介
 
 DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Agent(开源,非官方;操作方式参考主流编码 Agent 工具)。可对接任意 Anthropic Messages 兼容 `baseUrl`(内置 DeepSeek 等预设,默认端点可在设置中修改)。对话、工具执行、记忆、上下文压缩、冷存储归档等能力全部本地化,密钥存 VS Code SecretStorage,扩展自身不收集遥测。
 
-**技术栈**:TypeScript + VS Code Extension API(引擎层不依赖 `vscode` 模块,便于单测);esbuild 打包(`dist/extension.js` + `dist/webview/`);Vitest 测试(107 文件 / 1090 tests)。
+**技术栈**:TypeScript + VS Code Extension API(引擎层不依赖 `vscode` 模块,便于单测);esbuild 打包(`dist/extension.js` + `dist/webview/`);Vitest 测试(110 文件 / 1166 tests)。
 
 ## 顶层目录
 
 ```
 ./ — 根(README.en.md / README / CHANGELOG / LICENSE / package.json / esbuild.mjs / .gitattributes)
-├── src/          引擎 + 扩展宿主(115 个 .ts)
-├── webview/      Agent 聊天面板与各设置面板前端(15 个文件,esbuild 产物进 dist/webview)
-├── tests/        单元测试(107 个测试文件,1090 项)
+├── src/          引擎 + 扩展宿主(117 个 .ts)
+├── webview/      Agent 聊天面板与各设置面板前端(16 个文件,esbuild 产物进 dist/webview)
+├── tests/        单元测试(110 个测试文件,1166 项)
 ├── resources/    打包资源(原创图标 resources/icon.png,128×128)
 ├── scripts/      构建/安装/分析脚本(generate-third-party-notices.mjs、install-extension.sh、analyze-cache-prefix.py、analyze-compaction-snowball.py、analyze-compaction-cost.py)
 ├── benchmark/    打榜评测(SWE-bench headless CLI 包装、T3 实例准备脚本、smoke 测试)
@@ -49,15 +50,31 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 ### 3. 引擎核心 — `src/agent/`(不依赖 vscode 模块,可单测)
 - `agentLoop.ts`:Agent 主循环(模型调用 → 工具执行 → 上下文管理 → 压缩判定),`deps` 注入全部依赖,事件通过 `onEvent` 外发(含 `compaction_stats`)。
   - **缓存前缀稳定性(P0-P3)**:todo 移出 system 注入请求尾部(P0);trim 类 tool_result 写前定型(P1);trim 类 tool_use/thinking 写前定型 + thinkingPolicy 幂等保护(P3)——保证 messages 前缀字节跨轮稳定,最大化缓存命中。
+  - **任务锚(task anchor,2026-09-14)**:`buildTaskAnchor(todoBlock, mapLines, pendingTodos)` / `injectTodoIntoMessages(messages, todoBlock, { anchorOnToolResult, mapLines, pendingTodos })` 把「固定提示 + 下一步 + 常驻任务地图 + 最新清单 + 回查入口」注入本轮请求(仅请求视图,不进持久历史)。`### 下一步` 段(`buildNextStepSection`)由**真实未完成待办**生成(调用方只传 `done=false` 项),无未完成项时不输出。**工具执行轮也可见**(尾部为 tool_result 时把锚作为 text 块追加在同一条 user 消息内,不新增 user 消息 → 不破角色交替);绝不挂 system 后缀(避免前缀全 miss)。
   - **交互式追加队列**:busy 期间 `append(text)` 把新消息排入 `pendingAppends`,下一轮发送前注入消息尾部并发出 `user_message` 事件(只 push 不改写既有消息 → 前缀字节稳定;空闲时追加按钮隐藏,走普通发送)。
   - **thinking 处理侧开关**:thinking 剥离不进历史/压缩/脉络(可整体关闭)。
 - `contextManager.ts` / `contextCompactor.ts`:上下文组装、压缩(触发比例 `dsbAgent.compaction.triggerRatio` 默认 0.75)、压缩块 `[compacted]` 摘要、thinking 独立压缩。
   - **P2 压缩块 append-only**:只增尾部/只删尾部、标题恒输出、re-summarize 只动尾部新增行——稳定段前缀字节恒定,根治压缩后缓存雪崩。
-  - **回查提示行**:压缩块尾部恒输出 `RECALL_HINT_LINE`(固定 ASCII ~10 tokens),引导模型主动 ContextRecall 回查原文。
+  - **常驻任务地图(P2,2026-09-14)**:压缩块首段置 `## 任务地图`(map 轨,**裁剪候选不含它 → 永不删**),`buildResidentMap(parts, prevMap)` 从需求轨/结论轨/履历轨确定性推导**六段**(目标/最新要求/近期需求/更早的需求/已做/结果;`### 下一步` 不在此生成——块内访问不到 todo,由任务锚按真实待办注入);
+    - `map.goal` = 需求轨首条(受保护);
+    - `map.latestGoal` = 需求轨末条 → 常驻 `**最新要求:**` 行,**覆盖多轮中的「目标澄清/修正」**,避免只记住最初目标;
+    - 「近期需求」**累积式**(`extractMapSectionItems` + `accumulateRecentDemands`):中期澄清一旦进地图即**粘住**,不随需求轨中间行被裁掉;
+    - 「更早的需求」(`EARLIER_DEMANDS_TITLE`)= 需求轨较早的中间需求(取最近 2 条):**语义是历史需求,不宣称是待办**;
+    - 灰度开关 `dsbAgent.compaction.taskMapEnabled`(默认 true);关闭时块字节与旧版完全一致。
+  - **需求轨保护(P0-a)**:`pickTrimVictim` 取代「一律删最大 seq」——非需求轨仍按 seq 最新优先删(稳定段前缀字节不变);**需求轨最后才动且首条永不删**,只删中间;两阶段收敛(软保护→放开)。
+  - **运行时合成文本不入语义轨(2026-09-14)**:`maxTokensContinue` 注入的续写提示(`isRuntimeContinueMessage`,判 `[续写]` 前缀)与 `[输出中断]` 占位(`INTERRUPTED_ASSISTANT_TEXT`)在入轨前跳过;`isRuntimeSyntheticText` **前缀感知**(先剥可选的 `[-*] ` 与 `[r{N}] ` 前缀,兼容轨行 `- [r2] [续写] …`)。
+    - **两层清理**:①`buildResidentMap` 对 `demands` 与 `latest()` 统一过滤 → 地图六段全净;②`compact()` 合并后对**四条轨**(demands/conclusions/explanations/ledger)一次性过滤 → 清除旧会话遗留的轨行垃圾(否则 `mergeCompactedTracks` 会把它永久合并进「需求」轨,每轮复述"上一轮输出中断")。
+    - 稳态下过滤结果与输入一致 → 字节不变;仅在首次清理时改动一次。
+  - **回查提示行**:压缩块尾部恒输出 `RECALL_HINT_LINE`(`(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))`,字节恒定),引导模型主动 ContextRecall 回查原文。
   - **thinking 预算归一化**:思考编排关闭时 split 配置层归一化为两段(compacted+tail)。
 - `compactionStats.ts`:压缩成本统计(滑动窗口 100,`windowSeries` 趋势序列,供 UI 徽章/迷你柱状图)。
 - `archivePolicy.ts`:老会话完整历史归档到冷存储(压缩时引用,`dsbAgent.contextBrowse` 可浏览)。
-- `toolUsePolicy.ts`:工具参数瞬时化策略(`TRANSIENT_FIELDS` 忽略瞬时参数,降 token;瞬态字段按「工具.字段」细分阈值:Write.contents 2000 / StrReplace.new_string 1000);`toolResultPolicy.ts` 工具结果精简(Bash/Grep 完整输出保留,trim 阈值 4000/100/12000;thinking 精简阈值 400、最近保留 15)。
+- `toolUsePolicy.ts`:工具参数瞬时化策略(降 token);瞬态字段按「工具.字段」细分阈值:**全局 200**,`Write.contents` **16000**、`StrReplace.new_string` / `StrReplace.old_string` **8000**(正文即工作产物,写普通文件原文完整留存);正文类字段精简时保留**头尾预览**(`TRANSIENT_PREVIEW_FIELDS`)而非抽象标记;`StrReplace.old_string` 归**锚点档**(不可重建,写前定型阶段不精简)。
+  - **`TodoWrite.content` / `MemoryWrite.body` 已移出精简表**(正文即语义主体 → 修复「模型看不到自己存了什么」的数据损坏)。
+  - **`isTransientSummaryText` 改形状校验**:须匹配 `^[TRANSIENT-SUMMARY field=… chars=<数字>]`(或 ≤320 字符的旧式标记),消除「引用该标记的正常文档/编辑被误拒」。
+  - **`TOOL_USE_KEEP_RECENT_COUNT=8`**:最近 8 条**已消费** tool_use 一律不精简(「已消费」≠ 垃圾,与 thinking 的 15 条对齐)。
+- `toolResultPolicy.ts` 工具结果精简(Bash/Grep 完整输出保留,trim 阈值 4000/100/12000;thinking 精简阈值 400、最近保留 15)。
+- `taskMap.ts`:常驻任务地图(纯函数、确定性,同输入必同输出 → 字节稳定可缓存)。`buildResidentMap` 由轨道推导六段:`**目标:**`(需求轨首条)/`**最新要求:**`(需求轨末条,覆盖多轮澄清)/`### 近期需求`(累积式)/`### 更早的需求`(较早中间需求,**不宣称是待办**)/`### 已做`(ledger 最近 3)/`### 结果`(conclusions 最近 3);每段 ≤3 行、单行 ≤160 字符(clip)。`next`(「下一步」)保留给**任务锚**用真实未完成待办生成,**压缩块内不输出**(块内访问不到 todo,用历史需求冒充待办会把已完成事项显示为「下一步」→ 诱导重复劳动)。含 `extractMapSectionItems`(从上一轮地图取段)、`accumulateRecentDemands`(累积合并去重)、`EARLIER_DEMANDS_TITLE`。
 - `modePolicy.ts` / `thinkingPolicy.ts`:运行模式与 thinking 控制;`permission.ts` / `permissionRules.ts` / `capabilityGate.ts`:权限门禁与能力门(修复孤儿/缺 id tool_use 配对、禁止 todo 并入 tool_result)。
 - `systemPrompt.ts` / `agentTemplates.ts`:系统提示组装、子代理模板解析。
 - `subagentRunner.ts`:子代理执行;`workflow.ts`:多阶段工作流;`worktree.ts`:Git worktree 隔离。
@@ -138,9 +155,34 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ## 测试与验证
 
-- 单测:`npx vitest run`(107 文件 / 1090 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(108 文件 / ~11MB,内置多平台 ripgrep)。
+- 单测:`npx vitest run`(110 文件 / 1166 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(108 文件 / ~11MB,内置多平台 ripgrep)。
 - CI:`.github/workflows/ci.yml`(typecheck → vitest → vsce package,**windows/macos/ubuntu 三平台矩阵** + Marketplace/Open VSX/GitHub Release 发布 job)。
 - 引擎层(src/ 非 webview)不依赖 `vscode` 模块,全部逻辑可脱离宿主单测。
+
+## 近期工作重点(2026-09-14:压缩「目标漂移」修复)
+
+> 用户核心诉求:分轨压缩导致多轮后「含混模糊、迷失目标」;虽有本地保存,模型在需要时并未真正回读。
+> 本轮把「目标」从「最先被丢弃、离当前回合最远」的位置,搬到「永不裁剪、每轮可见」的位置。
+
+1. **常驻任务地图(新模块 `taskMap.ts`)**:压缩块首段 `## 任务地图`,六段(目标/最新要求/近期需求/更早的需求/已做/结果),
+   `map 轨永不参与裁剪`;`latestGoal` 覆盖多轮「目标澄清/修正」;「近期需求」累积式(澄清进地图即粘住)。
+   地图**不含「下一步」**——块内访问不到 todo;真实待办由任务锚注入(见第 3 点),避免把已完成事项显示为待办。
+2. **需求轨保护(`pickTrimVictim`)**:裁剪不再「一律删最新 seq」;需求轨最后才动、首条永不删。
+3. **任务锚(工具执行轮可见)**:`buildTaskAnchor` + `injectTodoIntoMessages` 的 `anchorOnToolResult` 分支——
+   尾部为 tool_result 时把锚追加在同一条 user 消息内(不新增 user、不破角色交替)。
+4. **运行时合成文本过滤**:`[续写]` / `[输出中断]` 不入需求轨/结论轨;**前缀感知判定**(兼容轨行 `- [rN] [续写] …` 形态)在重建地图时剔除全部历史遗留污染条目(覆盖地图五段所有来源)。
+5. **省略机制修正**:`TodoWrite.content`/`MemoryWrite.body` 移出精简表;阈值放宽(Write.contents 16000、StrReplace 16000/8000);
+   `isTransientSummaryText` 改形状校验(消除误拒);`TOOL_USE_KEEP_RECENT_COUNT=8`。
+6. **预算实测与权衡**:阶段 C(96k / 3:7)每轮成本 +45.8%(成本指数)/ +62.9%($),主因 tail ×2.15 —— 见 06 与工作日志。
+7. **验证**:`tsc` 0 错、`vitest` 1166 passed(110 文件 / 含前缀感知 + 轨级清理用例,后者经反证);已编译安装(0.3.0),需重载窗口生效。
+
+### 文档落点
+
+- 计划:`.dsb/plans/2026-09-14-压缩目标漂移修复-plan.md`
+- 设计:`.dsb/specs/2026-09-14-任务地图与需求轨保护-design.md`
+- 日志 + 实测:`.dsb/docs/2026-09-14-压缩目标漂移修复与96k预算实测.md`
+- 深挖:`system-analysis/03-module-deepdives/001-context-compaction.md`;成本:`system-analysis/06-performance-cost.md`
+- 规则:`.dsb/rules/transient-summary-avoidance.md`
 
 ## 近期工作重点(2026-08-10 ~ 2026-08-15)
 

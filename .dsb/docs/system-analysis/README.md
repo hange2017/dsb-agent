@@ -26,10 +26,10 @@
 |---|------|------|------|------|
 | 1 | 整体架构分析 | `01-architecture.md` | ✅ 已完成 | ✅ 职责四层 + 引擎/宿主二分 + 依赖图 + 数据流全链路 + 关键决策 + 概念对照 |
 | 2 | 演进方向 | `02-evolution-roadmap.md` | ✅ 已完成 | 演进方向 A-D + 优先级排序(2026-08-16) |
-| 3 | 模块级 deep-dive | `03-module-deepdives/` | 🔄 进行中 | 001 压缩子系统完成;其余待补 |
+| 3 | 模块级 deep-dive | `03-module-deepdives/` | 🔄 进行中 | 001 压缩子系统完成(**2026-09-14 增补任务地图/需求轨保护**)；其余待补 |
 | 4 | 健康度/技术债 | `04-tech-debt.md` | ✅ 已完成 | 逐模块评分 + 高风险区 + 问题清单(2026-08-17) |
 | 5 | 数据与存储 | `05-data-storage.md` | ✅ 已完成 | 会话/冷存储/记忆/快照/统计/导出(2026-08-17) |
-| 6 | 性能与成本 | `06-performance-cost.md` | ✅ 已完成 | 命中基线/压缩成本/token 优化/优化机会(2026-08-17) |
+| 6 | 性能与成本 | `06-performance-cost.md` | ✅ 已完成 | 命中基线/压缩成本/token 优化/优化机会(2026-08-17);**2026-09-14 增阶段 C 96k/3:7 实测** |
 | 7 | 统计体系 | `07-stats-system.md` | ✅ 已完成 | 事件/聚合/口径规则/脚本(2026-08-17) |
 | 8 | 测试体系 | `08-testing.md` | ✅ 已完成 | 规模/分层/关键测试/盲区(2026-08-17) |
 | 9 | benchmark/打榜 | `09-benchmark.md` | ✅ 已完成 | 架构/路线图/卖点/行动项(2026-08-17) |
@@ -41,3 +41,8 @@
 - 项目总体框架(能力清单):[.dsb/docs/project-overview.md](../project-overview.md)
 - 缓存前缀稳定性规则:[.dsb/rules/cache-prefix-stability.md](../../rules/cache-prefix-stability.md)
 - 系统概念词典:[.dsb/docs/2026-08-16-system-concepts.md](../2026-08-16-system-concepts.md)
+- 压缩目标漂移修复(2026-09-14):
+  - 工作日志 + 96k 预算实测:[.dsb/docs/2026-09-14-压缩目标漂移修复与96k预算实测.md](../2026-09-14-压缩目标漂移修复与96k预算实测.md)
+  - 实施计划:[.dsb/plans/2026-09-14-压缩目标漂移修复-plan.md](../../plans/2026-09-14-压缩目标漂移修复-plan.md)
+  - 设计说明:[.dsb/specs/2026-09-14-任务地图与需求轨保护-design.md](../../specs/2026-09-14-任务地图与需求轨保护-design.md)
+- 瞬时参数省略避让规则:[.dsb/rules/transient-summary-avoidance.md](../../rules/transient-summary-avoidance.md)

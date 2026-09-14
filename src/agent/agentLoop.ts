@@ -42,6 +42,7 @@ import {
   planToolUseTrim,
   buildStrReplaceOldStringArchiveChunk,
   withOldStringRecallMarker,
+  TOOL_USE_KEEP_RECENT_COUNT,
 } from "./toolUsePolicy";
 import {
   findConsumedThinking,
@@ -95,33 +96,83 @@ const FALLBACK_SUMMARY = "已省略前文对话。";
 /** todo 注入:能并入普通 user 则改 messages 尾部;否则不注入(绝不进 system、绝不追加伪 user)。 */
 export type TodoInjection = ProviderMessage[];
 
+/** 任务锚固定提示:字节恒定,跨轮可缓存;提醒目标/清单位置与历史回查入口。 */
+export const TASK_ANCHOR_HINT =
+  "〔任务锚〕按下面清单继续推进;需要更早的历史原文时,用 ContextRecall(seq=n) 回查压缩块中的 [r{n}] 行。";
+
 /**
- * 把最新任务清单(todo)注入到本轮请求。
- * 目的:变化点尽量落在消息尾部——能并入普通 user 时合并,todo 之前的前缀跨轮稳定可缓存。
- * - 尾部已是普通 user(非 tool_result)时合并进去(首轮常见路径)。
- * - 尾部为 assistant / tool_result / 空:不注入,原样返回。绝不追加独立 user 消息
- *   (模型会把每轮清单当成「用户又发了一句」反复复述;且 tool_result 后的 user 只能含
- *   tool_result,否则 API 400);绝不挂 system 后缀(todo 是会话内动态内容,system 字节
- *   变化 = tools + messages 前缀全 miss,违反缓存前缀稳定性规则 1)。
- *   清单最新状态改由 TodoWrite 的 tool_result(消息尾部)传播。
- * - 不修改入参数组;todo 本身不进持久历史。
+ * 「下一步」段固定标题:由**真实未完成待办**生成(非历史需求)。
+ * 单独成段是为了让模型每轮都能一眼看到"还没做什么",而不必自行从清单里筛 `- [ ]`。
  */
-export function injectTodoIntoMessages(messages: ProviderMessage[], todoBlock: string): TodoInjection {
+export const NEXT_STEP_TITLE = "### 下一步";
+
+/** 下一步最多列出的条目数(超出只影响显示,不影响清单本身)。 */
+const NEXT_STEP_MAX_ITEMS = 3;
+
+/**
+ * 由「未完成待办」的内容生成 `### 下一步` 段;无未完成项返回空串。
+ * 只接受**pending**项的文本(调用方负责过滤 done),故不存在"把已完成当待办"的风险。
+ */
+export function buildNextStepSection(pending: string[] | undefined): string {
+  const items = (pending ?? [])
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter((s) => s !== "")
+    .slice(0, NEXT_STEP_MAX_ITEMS);
+  if (items.length === 0) return "";
+  return [NEXT_STEP_TITLE, ...items.map((s) => `- ${s}`)].join("\n");
+}
+
+/**
+ * 组合任务锚文本(固定提示 + 下一步 + 最新清单)。mapLines 可选:非空时前置常驻任务地图(P2-4)。
+ * `pendingTodos` 为**未完成**待办的文本(通常取 TodoManager.list() 里 done=false 的 content);
+ * 有值时注入 `### 下一步` —— 这是锚里唯一宣称"待办"的地方,且来源是真实 todo 状态。
+ */
+export function buildTaskAnchor(
+  todoBlock: string,
+  mapLines?: string[],
+  pendingTodos?: string[],
+): string {
+  const map = mapLines && mapLines.length > 0 ? `${mapLines.join("\n")}\n` : "";
+  const next = buildNextStepSection(pendingTodos);
+  return `${TASK_ANCHOR_HINT}\n${next ? `${next}\n` : ""}${map}${todoBlock}`;
+}
+
+/**
+ * 把最新任务清单(todo)作为「任务锚」注入本轮请求(仅请求视图,不进持久历史)。
+ * 目的:让模型在**每一轮**(含工具执行轮)都能看到当前计划与历史回查入口,
+ * 修复「工具轮里看不到计划 → 多轮迷失目标」。
+ * 变化点尽量落在消息尾部,锚之前的前缀跨轮稳定可缓存。
+ * - 尾部为普通 user 字符串:并入其 content 前部(首轮常见路径)。
+ * - 尾部为 user block 数组(非 tool_result):最前面插入 text 块。
+ * - 尾部为 tool_result 的 user:在同一 user 消息的 tool_result **之后**追加 text 块
+ *   (Anthropic 允许 tool_result 后跟 text;不追加独立 user 消息,避免角色不交替导致 400)。
+ *   兼容性兜底:opts.anchorOnToolResult === false 时该分支回退为不注入。
+ * - 尾部为 assistant / 空:不注入,原样返回。
+ * - 绝不挂 system 后缀(system 字节变化会让 tools + messages 前缀全 miss)。
+ * - 不修改入参数组。
+ */
+export function injectTodoIntoMessages(
+  messages: ProviderMessage[],
+  todoBlock: string,
+  opts?: { anchorOnToolResult?: boolean; mapLines?: string[]; pendingTodos?: string[] },
+): TodoInjection {
   if (todoBlock.length === 0) return messages;
   const last = messages[messages.length - 1];
-  // 尾部为 assistant / 空:不注入
   if (!last || last.role !== "user") return messages;
-  // tool_result 消息必须保持纯净(仅 tool_result 块),否则 DeepSeek/Anthropic 报 400
-  if (typeof last.content !== "string" && last.content.some((b) => b.type === "tool_result")) {
-    return messages;
-  }
-  const merged = messages.slice(0, -1);
+  const anchor = buildTaskAnchor(todoBlock, opts?.mapLines, opts?.pendingTodos);
   const content = last.content;
+  const merged = messages.slice(0, -1);
   if (typeof content === "string") {
-    merged.push({ role: "user", content: `${todoBlock}\n\n${content}` });
-  } else {
-    merged.push({ role: "user", content: [{ type: "text" as const, text: todoBlock }, ...content] });
+    merged.push({ role: "user", content: `${anchor}\n\n${content}` });
+    return merged;
   }
+  const isToolResultMsg = content.some((b) => b.type === "tool_result");
+  if (isToolResultMsg) {
+    if (opts?.anchorOnToolResult === false) return messages;
+    merged.push({ role: "user", content: [...content, { type: "text" as const, text: anchor }] });
+    return merged;
+  }
+  merged.push({ role: "user", content: [{ type: "text" as const, text: anchor }, ...content] });
   return merged;
 }
 
@@ -167,6 +218,10 @@ export class AgentSession {
       agentPersist?: (snap: { messages: ProviderMessage[]; compactedBlock?: string }) => void;
       /** 可选冷存储:自建 ContextManager 时注入,压缩过程写入原文供 ContextRecall 回查。 */
       contextStore?: ContextStore;
+      /** 工具执行轮是否也注入任务锚(默认 true);个别兼容端点若拒绝 tool_result 后跟 text,可置 false 回退。 */
+      todoAnchorOnToolResult?: boolean;
+      /** P2:是否启用常驻任务地图(压缩块首段 + 任务锚顶部);默认 true,显式 false 可回退旧行为。 */
+      taskMapEnabled?: boolean;
       /** 冷存储按会话隔离;缺省 "default"。 */
       sessionId?: string;
       /** 压缩触发阈值(0~1);缺省 DEFAULT_TRIGGER_RATIO。 */
@@ -248,6 +303,8 @@ export class AgentSession {
       targetPct: this.deps.targetPct,
       tailFoldRatio: this.deps.tailFoldRatio,
       presetCompactedBlock: this.deps.compactedPreset,
+      // P2:默认开启常驻任务地图(压缩块首段 + 任务锚顶部);显式传 false 可回退。
+      taskMapEnabled: this.deps.taskMapEnabled !== false,
     });
     this.hooks = this.deps.hooks;
     // SessionStart:会话创建时触发(构造器为同步,fire-and-forget;失败由 fireHook 吞掉)。
@@ -428,7 +485,12 @@ export class AgentSession {
     try {
       const targets = findConsumedToolUses(this.messages);
       if (targets.length === 0) return;
-      for (const { index, blockIndex } of targets) {
+      // 近期窗口:最近 N 条已消费 tool_use 一律不精简(对齐 thinking 的 THINKING_KEEP_RECENT_COUNT)。
+      // 「已消费」只说明又过了一轮,被消费的内容往往正是刚支撑完当前任务的工作集,不是垃圾。
+      const rankFromLatest = targets.length - 1;
+      for (let t = 0; t < targets.length; t++) {
+        if (rankFromLatest - t < TOOL_USE_KEEP_RECENT_COUNT) continue;
+        const { index, blockIndex } = targets[t];
         const msg = this.messages[index];
         if (msg.role !== "assistant") continue;
         const block = msg.content[blockIndex];
@@ -628,11 +690,18 @@ export class AgentSession {
           this.trimConsumedToolUses();
           this.trimConsumedThinking();
           await this.trimConsumedToolResults();
-          // 仅有未完成项时注入清单;能并入普通 user 则改消息尾部,否则不注入。
+          // 仅有未完成项时注入任务锚(清单 + 回查提示):并入尾部 user / tool_result 消息之后。
           // 全完成不注入,避免模型反复 TodoWrite;清单最新状态由 TodoWrite 的
           // tool_result(消息尾部)传播——绝不进 system(todo 动态内容会打断前缀)。
           const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : null;
-          const requestMessages = todoBlock ? injectTodoIntoMessages(this.messages, todoBlock) : this.messages;
+          const requestMessages = todoBlock
+            ? injectTodoIntoMessages(this.messages, todoBlock, {
+                anchorOnToolResult: this.deps.todoAnchorOnToolResult !== false,
+                mapLines: this.contextManager.getResidentMap(),
+                // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
+                pendingTodos: this.todo.list().filter((i) => !i.done).map((i) => i.content),
+              })
+            : this.messages;
           const roundSystem = `${systemPrompt}${modeSeg ? `\n\n${modeSeg}` : ""}`;
           const prepared = prepareRound({
             caps: provider.capabilities,
@@ -719,7 +788,10 @@ export class AgentSession {
         // 根治「消费后中部改写 → 前缀断裂」。工具执行用 toolUses(独立对象),不受定型影响。
         for (const b of persistBlocks) {
           if (b.type === "tool_use") {
-            const plan = planToolUseTrim(b.name, b.input);
+            // 锚点档(StrReplace.old_string)不可重建(替换后盘上无副本),写前不定型 ——
+            // 原文先进入历史,模型下一轮才能看到真实锚点;待其跌出近期窗口后,
+            // 再由 trimConsumedToolUses 精简为预览 + [r{seq}]。
+            const plan = planToolUseTrim(b.name, b.input, { skipAnchorFields: true });
             if (plan.action === "trim" && plan.trimmedInput !== undefined) {
               b.input = plan.trimmedInput as Record<string, unknown>;
             }

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages } from "../src/agent/agentLoop";
+import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages, TASK_ANCHOR_HINT, buildNextStepSection, NEXT_STEP_TITLE } from "../src/agent/agentLoop";
 import { CompactionStats } from "../src/agent/compactionStats";
 import { PermissionManager } from "../src/agent/permission";
 import { PermissionRules } from "../src/agent/permissionRules";
@@ -1177,6 +1177,8 @@ describe("AgentSession compaction events wiring", () => {
       initialHistory: history,
       triggerRatio: 0, // 立即触发窗口兜底压缩
       historyTokenBudget: 1000, // 预算模式:压缩前 head(5 条×50) > 压缩后块(≈219)
+      // 本用例只验证压缩事件接线与 head/tail 切分;任务地图会改变块骨架 token,故显式关闭。
+      taskMapEnabled: false,
       onCompaction: (ev) => events.push(ev),
     });
     await session.send("hello", () => {});
@@ -1361,12 +1363,13 @@ describe("AgentSession toolUse tail trimming", () => {
     return { session, calls };
   }
 
-  it("replaces consumed Write contents with transient summary, keeping path", async () => {
+  it("keeps recent consumed Write intact (recency window: 已消费≠低价值)", async () => {
+    // 近期窗口内(默认 8)已消费 tool_use 一律不精简:刚被消费的正是支撑当前任务的工作集。
     const initialHistory: ProviderMessage[] = [
       { role: "user", content: "写文件" },
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
+        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(9000) } }],
       },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "Wrote src/foo.ts" }] }] },
       { role: "assistant", content: [{ type: "text", text: "写完了" }] },
@@ -1378,6 +1381,37 @@ describe("AgentSession toolUse tail trimming", () => {
     const assistantMsg = sent.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
     const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
     expect(block.input.path).toBe("src/foo.ts");
+    expect(block.input.contents).toBe("内容".repeat(9000)); // 原文保留,未被精简
+    expect(block.id).toBe("t1");
+  });
+
+  it("trims old consumed Write beyond recency window keeping path", async () => {
+    // 跌出近期窗口(KEEP_RECENT=8)后,已消费 tool_use 才被精简为瞬时摘要,语义参数保留。
+    const filler: ProviderMessage[] = [];
+    for (let i = 0; i < 9; i++) {
+      filler.push(
+        { role: "assistant", content: [{ type: "tool_use", id: `f${i}`, name: "Read", input: { path: `f${i}.ts` } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: `f${i}`, content: [{ type: "text", text: "ok" }] }] },
+        { role: "assistant", content: [{ type: "text", text: `好了${i}` }] },
+      );
+    }
+    const initialHistory: ProviderMessage[] = [
+      { role: "user", content: "写文件" },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(9000) } }],
+      },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "Wrote src/foo.ts" }] }] },
+      { role: "assistant", content: [{ type: "text", text: "写完了" }] },
+      ...filler,
+    ];
+    const { session, calls } = sessionDeps(initialHistory);
+    await session.send("继续", () => {});
+
+    const sent = calls[0]!.messages;
+    const assistantMsg = sent.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use" && b.id === "t1"));
+    const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use" && b.id === "t1");
+    expect(block.input.path).toBe("src/foo.ts");
     expect(block.input.contents).toContain("[TRANSIENT-SUMMARY");
     expect(block.id).toBe("t1");
   });
@@ -1387,7 +1421,7 @@ describe("AgentSession toolUse tail trimming", () => {
       { role: "user", content: "写文件" },
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
+        content: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(9000) } }],
       },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "Wrote src/foo.ts" }] }] },
     ];
@@ -1397,7 +1431,7 @@ describe("AgentSession toolUse tail trimming", () => {
     const sent = calls[0]!.messages;
     const assistantMsg = sent.find((m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "tool_use"));
     const block = (assistantMsg!.content as any[]).find((b) => b.type === "tool_use");
-    expect(block.input.contents).toBe("内容".repeat(1100));
+    expect(block.input.contents).toBe("内容".repeat(9000));
   });
 
   it("keeps Read toolUse (no transient fields) even when consumed", async () => {
@@ -1422,8 +1456,8 @@ describe("AgentSession toolUse tail trimming", () => {
     const { provider, calls } = fakeProvider([
       {
         result: {
-          blocks: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
-          toolUses: [{ id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(1100) } }],
+          blocks: [{ type: "tool_use", id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(9000) } }],
+          toolUses: [{ id: "t1", name: "Write", input: { path: "src/foo.ts", contents: "内容".repeat(9000) } }],
         },
       },
       { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
@@ -1658,7 +1692,7 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     expect(out).toHaveLength(2);
     const last = out[out.length - 1];
     expect(last.role).toBe("user");
-    expect(last.content).toBe("## 任务清单\n- [ ] a (t1)\n\nsee");
+    expect(last.content).toBe(`${TASK_ANCHOR_HINT}\n## 任务清单\n- [ ] a (t1)\n\nsee`);
     expect(base[1].content).toBe("see");
   });
 
@@ -1680,12 +1714,12 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     const last = out[out.length - 1];
     expect(last.role).toBe("user");
     expect(last.content).toEqual([
-      { type: "text", text: "## 任务清单\n- [ ] c (t3)" },
+      { type: "text", text: `${TASK_ANCHOR_HINT}\n## 任务清单\n- [ ] c (t3)` },
       { type: "text", text: "see" },
     ]);
   });
 
-  it("injectTodoIntoMessages: tool_result 后不注入(避免伪用户发言 + API 400)", () => {
+  it("injectTodoIntoMessages: tool_result 后在同一条 user 消息尾部追加任务锚", () => {
     const base: ProviderMessage[] = [
       {
         role: "assistant",
@@ -1698,7 +1732,26 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     ];
     const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] x (t9)");
     expect(out).toHaveLength(2);
-    expect(out[1]).toEqual(base[1]);
+    // tool_result 仍在最前,任务锚作为 text 块追加其后(不新增 user 消息 → 角色仍交替)
+    expect(out[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "call_00_Brz", content: [{ type: "text", text: "ok" }] },
+        { type: "text", text: `${TASK_ANCHOR_HINT}\n## 任务清单\n- [ ] x (t9)` },
+      ],
+    });
+    // 原入参不被修改
+    expect(base[1]).toEqual({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "call_00_Brz", content: [{ type: "text", text: "ok" }] }],
+    });
+  });
+
+  it("injectTodoIntoMessages: anchorOnToolResult=false 时 tool_result 轮回退为不注入", () => {
+    const base: ProviderMessage[] = [
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: [{ type: "text", text: "ok" }] }] },
+    ];
+    expect(injectTodoIntoMessages(base, "## 任务清单\n- [ ] y", { anchorOnToolResult: false })).toEqual(base);
   });
 
   it("injectTodoIntoMessages: 空块或空消息时原样返回", () => {
@@ -1706,6 +1759,38 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
       { role: "user", content: "hi" },
     ]);
     expect(injectTodoIntoMessages([], "## 任务清单\n- [ ] d (t4)")).toEqual([]);
+  });
+
+  it("buildNextStepSection: 由真实未完成待办生成,空则无该段", () => {
+    expect(buildNextStepSection([])).toBe("");
+    expect(buildNextStepSection(undefined)).toBe("");
+    expect(buildNextStepSection(["  ", ""])).toBe("");
+    expect(buildNextStepSection(["修压缩"])).toBe(`${NEXT_STEP_TITLE}\n- 修压缩`);
+    // 折叠空白 + 最多 3 条
+    expect(buildNextStepSection([" a \n b ", "c", "d", "e"])).toBe(
+      `${NEXT_STEP_TITLE}\n- a b\n- c\n- d`,
+    );
+  });
+
+  it("任务锚: 有未完成待办时插入「下一步」段(来源为真实 todo,而非历史需求)", () => {
+    const base: ProviderMessage[] = [{ role: "user", content: "hi" }];
+    const out = injectTodoIntoMessages(base, "## 任务清单\n- [ ] a (t1)", {
+      pendingTodos: ["a"],
+    });
+    const last = out[out.length - 1];
+    const text = last.content as string;
+    expect(text).toContain(NEXT_STEP_TITLE);
+    // 「下一步」段位于固定提示之后、清单之前
+    expect(text.indexOf(TASK_ANCHOR_HINT)).toBeLessThan(text.indexOf(NEXT_STEP_TITLE));
+    expect(text.indexOf(NEXT_STEP_TITLE)).toBeLessThan(text.indexOf("## 任务清单"));
+  });
+
+  it("任务锚: 无未完成待办时不出现「下一步」段(不把已完成当待办)", () => {
+    const base: ProviderMessage[] = [{ role: "user", content: "hi" }];
+    const out = injectTodoIntoMessages(base, "## 任务清单\n- [x] a (t1)", { pendingTodos: [] });
+    const text = out[out.length - 1].content as string;
+    expect(text).not.toContain(NEXT_STEP_TITLE);
+    expect(text).toBe(`${TASK_ANCHOR_HINT}\n## 任务清单\n- [x] a (t1)\n\nhi`);
   });
 
   it("首轮 system 不含 todo,尾部 user 消息注入最新清单", async () => {
@@ -1726,12 +1811,14 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     const sent = calls[0].messages;
     const last = sent[sent.length - 1];
     expect(last.role).toBe("user");
-    expect(last.content).toBe("## 任务清单\n- [ ] 第一步 (t1)\n\nhello");
+    expect(last.content).toBe(
+      `${TASK_ANCHOR_HINT}\n${NEXT_STEP_TITLE}\n- 第一步\n## 任务清单\n- [ ] 第一步 (t1)\n\nhello`,
+    );
     const head = sent.slice(0, -1);
     expect(JSON.stringify(head)).not.toContain("任务清单");
   });
 
-  it("工具轮次:不注入清单,messages 尾部保持纯 tool_result,system 无后缀", async () => {
+  it("工具轮次:任务锚追加在 tool_result 之后,system 无后缀", async () => {
     const systems: string[] = [];
     const messageSnapshots: ProviderMessage[][] = [];
     let i = 0;
@@ -1773,7 +1860,10 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     const last2 = round2[round2.length - 1];
     expect(last2.role).toBe("user");
     expect(JSON.stringify(last2.content)).toContain("tool_result");
-    expect(JSON.stringify(last2.content)).not.toContain("任务清单");
+    // 工具轮也注入任务锚:tool_result 之后追加 text(不新增 user 消息 → 角色仍交替)
+    const blocks2 = last2.content as unknown as Array<{ type: string; text?: string }>;
+    expect(blocks2.map((b) => b.type)).toEqual(["tool_result", "text"]);
+    expect(blocks2[1].text).toContain("任务清单");
     // system 无动态后缀:todo 是会话内动态内容,进 system 会打断 tools+messages 前缀(规则 1)
     expect(systems[1]).toBe("base-system");
   });

@@ -6,12 +6,14 @@ import {
   isTransientSummaryText,
   buildStrReplaceOldStringArchiveChunk,
   withOldStringRecallMarker,
+  isAnchorField,
+  TOOL_USE_KEEP_RECENT_COUNT,
 } from "../src/agent/toolUsePolicy";
 import type { ProviderMessage } from "../src/agent/provider/types";
 
 describe("planToolUseTrim", () => {
   it("trims Write.contents but keeps path", () => {
-    const input = { path: "src/foo.ts", contents: "内容".repeat(1100) };
+    const input = { path: "src/foo.ts", contents: "内容".repeat(9000) };
     const plan = planToolUseTrim("Write", input);
     expect(plan.action).toBe("trim");
     expect(plan.trimmedInput).toEqual({
@@ -27,25 +29,32 @@ describe("planToolUseTrim", () => {
     expect(plan.action).toBe("keep");
   });
 
-  it("per-field thresholds: Write.contents 2000 / StrReplace.new_string 1000", () => {
-    // Write.contents 1500 字符(<2000 细分阈值)但 >200 全局阈值 → 保留原文
+  it("per-field thresholds: Write.contents 16000 / StrReplace.new_string 8000", () => {
+    // 普通整文件(1500 字符)远低于阈值 → 保留原文
     const w = planToolUseTrim("Write", { path: "a.ts", contents: "内容".repeat(750) });
     expect(w.action).toBe("keep");
-    // Write.contents 2200 字符(>2000) → trim
-    const w2 = planToolUseTrim("Write", { path: "a.ts", contents: "内容".repeat(1100) });
+    // 18000 字符(>16000) → 精简为「头尾预览」,仍以标记前缀开头便于防护识别
+    const w2 = planToolUseTrim("Write", { path: "a.ts", contents: "内容".repeat(9000) });
     expect(w2.action).toBe("trim");
-    // StrReplace.new_string 600 字符(<1000)但 >200 → 保留
-    const sr = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(300), new_string: "新".repeat(600) });
-    expect(sr.action).toBe("trim"); // old_string 300>200 仍触发 trim
+    const w2c = (w2.trimmedInput as any).contents as string;
+    expect(w2c).toContain("[TRANSIENT-SUMMARY");
+    expect(w2c).toContain("头尾预览");
+    expect(w2c).toContain("内容内容内容"); // 保留头部原文:模型仍能看到自己写过什么
+    // StrReplace.new_string 600 字符(<8000)→ 保留原文;old_string 9000>8000 触发精简
+    const sr = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(9000), new_string: "新".repeat(600) });
+    expect(sr.action).toBe("trim");
+    expect((sr.trimmedInput as any).old_string).toContain("[TRANSIENT-SUMMARY");
     expect((sr.trimmedInput as any).new_string).not.toContain("[TRANSIENT-SUMMARY");
-    // StrReplace.new_string 1200 字符(>1000) → trim
-    const sr2 = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(300), new_string: "新".repeat(1200) });
+    // 300 字符锚点(<8000)→ 保留原文:锚点是语义参数,不再被换成裸标记
+    expect(planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(300), new_string: "新".repeat(600) }).action).toBe("keep");
+    // StrReplace.new_string 10000 字符(>8000)→ 预览
+    const sr2 = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "x".repeat(300), new_string: "新".repeat(10000) });
     expect(sr2.action).toBe("trim");
     expect((sr2.trimmedInput as any).new_string).toContain("[TRANSIENT-SUMMARY");
   });
 
-  it("trims StrReplace old_string and new_string", () => {
-    const input = { path: "a.ts", old_string: "旧".repeat(300), new_string: "新".repeat(1100), replace_all: true };
+  it("trims StrReplace old_string and new_string when both exceed thresholds", () => {
+    const input = { path: "a.ts", old_string: "旧".repeat(9000), new_string: "新".repeat(9000), replace_all: true };
     const plan = planToolUseTrim("StrReplace", input);
     expect(plan.action).toBe("trim");
     const out = plan.trimmedInput as any;
@@ -53,6 +62,12 @@ describe("planToolUseTrim", () => {
     expect(out.new_string).toContain("[TRANSIENT-SUMMARY");
     expect(out.path).toBe("a.ts");
     expect(out.replace_all).toBe(true);
+  });
+
+  it("keeps a normal-size old_string anchor (<=8000) as-is", () => {
+    // 锚点是语义参数:800 字符锚点原文保留,避免「把标记当锚点复述」
+    const plan = planToolUseTrim("StrReplace", { path: "a.ts", old_string: "旧".repeat(800), new_string: "新" });
+    expect(plan.action).toBe("keep");
   });
 
   it("trims Workflow stages prompts but keeps goal, id, dependsOn", () => {
@@ -111,10 +126,15 @@ describe("planToolUseTrim", () => {
 
   it("isTransientSummaryText detects new/legacy/combo markers", () => {
     expect(isTransientSummaryText("[TRANSIENT-SUMMARY field=x chars=1] 瞬时参数省略标记:禁止写入文件")).toBe(true);
+    // 头尾预览形态:以标记前缀开头、首行即标记本身,即使很长也应被识别为标记
+    expect(isTransientSummaryText("[TRANSIENT-SUMMARY field=contents chars=18000] 瞬时参数已精简为头尾预览(省略 16400 字符)\n--- 预览·头 ---\nabc")).toBe(true);
     expect(isTransientSummaryText("[瞬时参数已省略:contents 300 字符]")).toBe(true);
     expect(isTransientSummaryText("瞬时参数省略标记:禁止写入文件,请用 Read 读取")).toBe(true);
     expect(isTransientSummaryText("正常内容 abc")).toBe(false);
     expect(isTransientSummaryText("")).toBe(false);
+    // 严格判定:仅当内容本身基本就是标记时为真;含该字面量的长文档不再误判。
+    const longDoc = "说明:" + "本段是正常文档内容。".repeat(40) + " 文末附注 [TRANSIENT-SUMMARY field=x chars=1]";
+    expect(isTransientSummaryText(longDoc)).toBe(false);
   });
 });
 
@@ -185,14 +205,11 @@ describe("findConsumedToolUses", () => {
 });
 
 describe("extended transient fields (TodoWrite/MemoryWrite)", () => {
-  it("trims TodoWrite content when long", () => {
+  it("never trims TodoWrite content, even when long", () => {
     const content = "编写自动化测试并修复遗留 bug".repeat(30); // >200 字符
     const plan = planToolUseTrim("TodoWrite", { op: "add", content });
-    expect(plan.action).toBe("trim");
-    const input = plan.trimmedInput as { op: string; content: string };
-    expect(input.op).toBe("add");
-    expect(input.content).toContain("[TRANSIENT-SUMMARY");
-    expect(input.content.length).toBeLessThan(200);
+    expect(plan.action).toBe("keep");
+    expect(plan.trimmedInput).toBeUndefined();
   });
 
   it("keeps TodoWrite content when short", () => {
@@ -205,7 +222,7 @@ describe("extended transient fields (TodoWrite/MemoryWrite)", () => {
     expect(plan.action).toBe("keep");
   });
 
-  it("trims MemoryWrite body when long", () => {
+  it("never trims MemoryWrite body, even when long", () => {
     const body = "这是一段要写入记忆的长内容".repeat(40); // >200 字符
     const plan = planToolUseTrim("MemoryWrite", {
       name: "my-memory",
@@ -213,33 +230,55 @@ describe("extended transient fields (TodoWrite/MemoryWrite)", () => {
       body,
       scope: "project",
     });
-    expect(plan.action).toBe("trim");
-    const input = plan.trimmedInput as Record<string, unknown>;
-    expect(input.name).toBe("my-memory");
-    expect(input.description).toBe("desc");
-    expect(input.scope).toBe("project");
-    expect(String(input.body)).toContain("[TRANSIENT-SUMMARY");
-    expect(String(input.body).length).toBeLessThan(200);
+    expect(plan.action).toBe("keep");
+    expect(plan.trimmedInput).toBeUndefined();
   });
 
-  it("keeps MemoryWrite semantic fields intact when only body trimmed", () => {
+  it("keeps MemoryWrite semantic fields intact (no trim at all)", () => {
     const plan = planToolUseTrim("MemoryWrite", {
       name: "keep-name",
       description: "keep-desc",
       body: "x".repeat(500),
       pinned: true,
     });
-    expect(plan.action).toBe("trim");
-    const input = plan.trimmedInput as Record<string, unknown>;
-    expect(input.name).toBe("keep-name");
-    expect(input.description).toBe("keep-desc");
-    expect(input.pinned).toBe(true);
+    expect(plan.action).toBe("keep");
+    expect(plan.trimmedInput).toBeUndefined();
   });
 
   it("keeps other memory tool params untouched", () => {
     expect(planToolUseTrim("MemoryRead", { name: "abc", scope: "global" }).action).toBe("keep");
     expect(planToolUseTrim("MemoryList", { scope: "project" }).action).toBe("keep");
     expect(planToolUseTrim("MemoryDelete", { name: "abc" }).action).toBe("keep");
+  });
+});
+
+describe("可重建性分档: 锚点档不参与写前定型", () => {
+  it("isAnchorField 只认 StrReplace.old_string", () => {
+    expect(isAnchorField("StrReplace", "old_string")).toBe(true);
+    expect(isAnchorField("StrReplace", "new_string")).toBe(false);
+    expect(isAnchorField("Write", "contents")).toBe(false);
+  });
+
+  it("skipAnchorFields: 大 old_string 保留原文, 只精简 new_string", () => {
+    const input = { path: "a.ts", old_string: "旧".repeat(9000), new_string: "新".repeat(9000) };
+    // 默认(发送前窗):两者都精简
+    expect(planToolUseTrim("StrReplace", input).action).toBe("trim");
+    // 写前定型(跳过锚点档):旧串原文保留,新串精简
+    const plan = planToolUseTrim("StrReplace", input, { skipAnchorFields: true });
+    expect(plan.action).toBe("trim");
+    const out = plan.trimmedInput as Record<string, unknown>;
+    expect(out.old_string).toBe(input.old_string); // 不可重建 → 原文进历史
+    expect(String(out.new_string)).toContain("[TRANSIENT-SUMMARY");
+  });
+
+  it("skipAnchorFields: 仅锚点超阈值时不变更(避免无谓改写破坏前缀)", () => {
+    const input = { path: "a.ts", old_string: "旧".repeat(9000), new_string: "短" };
+    expect(planToolUseTrim("StrReplace", input, { skipAnchorFields: true }).action).toBe("keep");
+  });
+
+  it("近期窗口常量与设计一致(N>0, 且远小于 thinking 的 15 属同一量级)", () => {
+    expect(TOOL_USE_KEEP_RECENT_COUNT).toBeGreaterThan(0);
+    expect(TOOL_USE_KEEP_RECENT_COUNT).toBeLessThanOrEqual(15);
   });
 });
 

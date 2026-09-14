@@ -59,7 +59,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     parts.push("## 项目规则\n" + lines.join("\n\n"));
   }
   if (input.memoryIndex) {
-    parts.push(`## 持久记忆\n${input.memoryIndex}\n(用 MemoryRead 读全文;记忆可能过时,以当前上下文为准)`);
+    parts.push(
+      `## 持久记忆\n${input.memoryIndex}\n(动手前先 MemoryRead 读全文:项目约定/历史决策/既有结论优先查这里;记忆可能过时,以当前上下文为准)`,
+    );
   }
   if (input.projectOverview) {
     // 框架信息:注入摘要,完整文档在 .dsb/docs/project-overview.md,需要时用 Read 读取
