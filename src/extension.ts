@@ -5,6 +5,11 @@ import { ChatViewProvider } from "./chat/chatViewProvider";
 import { MemoryStore } from "./agent/memory/memoryStore";
 import { SecretStorageApiKeyStore } from "./settings/apiKeyStore";
 import { Configuration } from "./settings/configuration";
+import {
+  planDeprecatedCleanup,
+  describeCleanup,
+  type ConfigScope,
+} from "./settings/deprecatedSettings";
 import { createGitBackend, MarketplaceManager } from "./plugins/marketplace";
 import { McpRegistry } from "./mcp/mcpRegistry";
 import { createGitWorktree } from "./agent/worktree";
@@ -61,6 +66,35 @@ async function migrateLegacyConfig(
   await providerStore.setActive("legacy");
   const oldKey = await apiKeyStore.getApiKey();
   if (oldKey) await providerStore.setApiKey("legacy", oldKey);
+}
+
+/** 作用域 → VS Code 写入目标。 */
+const SCOPE_TARGET: Record<ConfigScope, vscode.ConfigurationTarget> = {
+  global: vscode.ConfigurationTarget.Global,
+  workspace: vscode.ConfigurationTarget.Workspace,
+  workspaceFolder: vscode.ConfigurationTarget.WorkspaceFolder,
+};
+
+/**
+ * 清理已废弃配置键在用户 settings 中的残留值。
+ *
+ * 键从 `package.json` 移除后残留值不会自动消失,只被标为 "Unknown Configuration Setting";
+ * 用户读到 `"dsbAgent.thinking.enabled": false` 会误以为思考链路已关(实际无人读取),属认知误导。
+ * 只删**用户确实设过值**的作用域(`defaultValue` 不落盘,无需处理);失败不阻塞启动。
+ */
+async function cleanupDeprecatedSettings(): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration();
+  const plan = planDeprecatedCleanup((key) => cfg.inspect(key));
+  for (const hit of plan) {
+    try {
+      await cfg.update(hit.key, undefined, SCOPE_TARGET[hit.scope]);
+    } catch (err) {
+      console.warn(
+        `[deprecated-settings] 清理 ${hit.key}(${hit.scope}) 失败: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  for (const line of describeCleanup(plan)) console.log(line);
 }
 
 /** 管理供应商 QuickPick 流程:新建/切换/编辑/删除/配 key/刷新模型/cc-switch 导入。 */
@@ -315,6 +349,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   } catch {
     // 自愈失败不阻塞启动
+  }
+
+  // 清理已废弃配置键残留(用户 settings 里的死键会造成认知误导);失败不阻塞启动。
+  try {
+    await cleanupDeprecatedSettings();
+  } catch {
+    // 清理失败不阻塞启动
   }
 
   // 项目作用域:同一 git 仓库(含不同 worktree 目录)归一到同一个 projectKey,
