@@ -360,7 +360,11 @@ function track(title: string, lines: string[], includeEmptyTitle = true): string
   // 导致其后所有行号后移(缓存前缀断裂)。空轨仅含标题,parseCompactedBlock 仍能正确判空。
   // includeEmptyTitle=false 时(thinking 块)保持旧行为:空轨不输出标题。
   if (lines.length === 0 && !includeEmptyTitle) return [];
-  return [`## ${title}`, ...lines];
+  // 出口转义内嵌 `## 标题`(t37):历史块中多行条目被 parse 拆成独立元素后,
+  // 内嵌的标准轨名会冒充轨起点 → 内容串轨 + build/parse 幂等破坏。
+  // 在唯一输出口逐行转义,既防新污染也自愈历史块;转义形态幂等、零信息丢失。
+  const safe = lines.map((l) => demoteInnerHeadings(l));
+  return [`## ${title}`, ...safe];
 }
 
 /**
@@ -407,6 +411,30 @@ export function isCompactedBlock(content: string): boolean {
 /** 估算压缩块字符数(与 buildCompactedBlock 产物一致)。 */
 export function estimateBlockChars(parts: CompactBlockParts): number {
   return buildCompactedBlock(parts).length;
+}
+
+/**
+ * 把多行条目正文里的**内嵌 Markdown 标题**(`## xxx`)转义,防止它冒充压缩块轨标题。
+ *
+ * 背景(t37 调查):`classifyAssistantText` 的 heading / 列表 / 表格块会**保留内部换行**,
+ * 整段被格式化为单条轨行 `- [rN] <多行文本>`。当多行文本第 2 行起出现 `## 说明` 这类
+ * **标准轨名**时,`parseCompactedBlock` 会把它当成新轨起点 → 内容被搬进错误轨
+ * → `build(parse(x)) !== x`(幂等破坏 → 缓存前缀断裂 + 信息错位)。
+ *
+ * 修复采用「写前定型」双保险:
+ *  1. `contextManager.stratify` 在**把条目写入轨道前**转义(本轮新增内容不引入污染);
+ *  2. `track()`(build 的唯一出口)对**每一行内容**再转义一次 —— 因为 `parseCompactedBlock`
+ *     会把历史多行条目拆成独立数组元素,单靠写前定型无法覆盖「已被拆散的历史残片」,
+ *     在出口转义才能做到**历史块自愈 + build/parse 幂等**。
+ *
+ * 转义形态**幂等**(首字符为 `\`,不再匹配 `^##`),且**零信息丢失**(仍按字面 `## xxx` 可读)。
+ * 逐行处理:`- [rN] 正文\n## 说明` 拆分后,内嵌行同样被转义。
+ */
+export function demoteInnerHeadings(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^(#{1,6})(\s)/, "\\$1$2"))
+    .join("\n");
 }
 
 /** 从压缩块行 `- [r{n}] ...` 提取序号;无匹配返回 0。 */

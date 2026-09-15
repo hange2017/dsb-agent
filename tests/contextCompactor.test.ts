@@ -16,6 +16,7 @@ import {
   estimateThinkingChars,
   truncateParts,
   trimThinkingBlock,
+  demoteInnerHeadings,
   type ThinkingBlockParts,
 } from "../src/agent/contextCompactor";
 
@@ -180,6 +181,44 @@ describe("parseCompactedBlock / mergeCompactedTracks", () => {
     const merged = mergeCompactedTracks(prev, next);
     expect(merged.demands).toEqual(["- [r1] a", "- [r5] b"]);
     expect(merged.ledger).toEqual(["- [r2] x"]);
+  });
+});
+
+describe("内嵌标题转义 (t37): 防串轨 + build/parse 幂等", () => {
+  it("demoteInnerHeadings 转义内嵌 ##/### 标题, 且幂等", () => {
+    const text = "- [r2] 正文\n## 说明\n- [r3] 列表项\n### 子标题";
+    const once = demoteInnerHeadings(text);
+    expect(once).toBe("- [r2] 正文\n\\## 说明\n- [r3] 列表项\n\\### 子标题");
+    expect(demoteInnerHeadings(once)).toBe(once); // 幂等:已转义不再变
+  });
+
+  it("条目正文内嵌标准轨名时, build→parse→build 保持字节稳定(不串轨)", () => {
+    const parts = {
+      demands: ["- [r1] 需求A"],
+      conclusions: ["- [r2] 正文\n## 说明\n- [r3] 表格/列表内容"],
+      explanations: ["- [r4] 解释X"],
+      ledger: ["- [r5] Bash: ls"],
+    };
+    const block = buildCompactedBlock(parts);
+    const parsed = parseCompactedBlock(block);
+    // 内嵌标题不再被误判为轨起点:内容不被搬到说明轨
+    expect(parsed.explanations).toEqual(["- [r4] 解释X"]);
+    expect(parsed.conclusions.join("\n")).toContain("表格/列表内容");
+    expect(buildCompactedBlock(parsed)).toBe(block);
+  });
+
+  it("历史污染块(内容已散落多行)在 build 出口自愈, 且自愈后幂等", () => {
+    // 模拟已被 parse 拆散的历史形态:标准轨行夹杂内嵌伪标题
+    const polluted = {
+      demands: ["- [r1] a"],
+      conclusions: ["- [r2] 汇报:", "## 项目现状", "**技术栈**:CMake", "- [r3] 完成"],
+      explanations: [],
+      ledger: [],
+    };
+    const healed = buildCompactedBlock(polluted);
+    const reparsed = parseCompactedBlock(healed);
+    expect(reparsed.conclusions).toContain("\\## 项目现状");
+    expect(buildCompactedBlock(reparsed)).toBe(healed); // 自愈后幂等
   });
 });
 

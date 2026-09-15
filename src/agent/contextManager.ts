@@ -10,6 +10,7 @@ import {
   classifyAssistantText,
   summarizeToolUse,
   extractKeyLines,
+  demoteInnerHeadings,
   buildCompactedBlock,
   isCompactedBlock,
   parseCompactedBlock,
@@ -922,14 +923,14 @@ export class ContextManager {
           view.push({ seq, role: "user", text });
           if (!text) continue;
           if (isLegacySummaryMessage(msg) && !isCompactedMessage(msg)) {
-            conclusions.push(`- [r${seq}] ${text}`);
+            conclusions.push(`- [r${seq}] ${demoteInnerHeadings(text)}`);
             pushChunk({ type: "conclusion", role: "user", summary: makeSummary("conclusion", text), content: text }, seq);
             continue;
           }
           // 运行时续写提示不是用户需求:跳过需求轨(否则会顶掉「最新要求/更早的需求」,污染目标定位)。
           // 仍写入 view(供 thinking 上下文),但不进 demands / 冷存储 demand 块。
           if (isRuntimeContinueMessage(msg)) continue;
-          demands.push(`- [r${seq}] ${text}`);
+          demands.push(`- [r${seq}] ${demoteInnerHeadings(text)}`);
           pushChunk({ type: "demand", role: "user", summary: makeSummary("demand", text), content: text }, seq);
           continue;
         }
@@ -953,7 +954,7 @@ export class ContextManager {
       if (text && text !== INTERRUPTED_ASSISTANT_TEXT) {
         const { conclusion, explanation } = classifyAssistantText(text, toolUses.length > 0);
         for (const para of conclusion) {
-          conclusions.push(`- [r${seq}] ${para}`);
+          conclusions.push(`- [r${seq}] ${demoteInnerHeadings(para)}`);
           pushChunk({ type: "conclusion", role: "assistant", summary: makeSummary("conclusion", para), content: para }, seq);
         }
         for (const para of explanation) {
@@ -975,7 +976,7 @@ export class ContextManager {
     if (explanationTexts.length > 0) {
       const joined = explanationTexts.map((e) => `[r${e.seq}] ${e.text}`).join("\n\n");
       const summary = await this.trackedSummarize(joined, { maxTokens }, "explanation");
-      explanations.push(`- [r${explanationTexts[0].seq}] ${summary}`);
+      explanations.push(`- [r${explanationTexts[0].seq}] ${demoteInnerHeadings(summary)}`);
       pushChunk(
         {
           type: "explanation",
