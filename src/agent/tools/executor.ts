@@ -387,6 +387,19 @@ export class ToolExecutor {
   }
 
   /**
+   * 回滚一次写操作:优先用编辑前快照(checkpoints,可撤销新建文件),
+   * 无快照时用编辑前内容复原 / 删除本次新建的文件。
+   */
+  private rollback(full: string, preContent?: string): void {
+    if (this.checkpoints) {
+      this.checkpoints.restore(full);
+      return;
+    }
+    if (preContent === undefined) fs.rmSync(full, { force: true });
+    else fs.writeFileSync(full, preContent, "utf8");
+  }
+
+  /**
    * 写后自检(最强兜底):读回**落盘字节**,逐行扫描瞬时参数占位标记。
    * 写前守卫 isTransientSummaryText 只判「整段内容是不是标记」,对大文件里夹带的单行标记无感
    * (整段长度 > 320 即提前返回 false)——本函数补这个洞。
@@ -406,12 +419,13 @@ export class ToolExecutor {
     const preSet = new Set(scanTransientMarkerLines(preContent ?? ""));
     const introduced = post.filter((h) => !preSet.has(h));
     if (introduced.length === 0) return undefined;
-    if (this.checkpoints) {
-      this.checkpoints.restore(full);
-    } else if (preContent === undefined) {
-      fs.rmSync(full, { force: true });
-    } else {
-      fs.writeFileSync(full, preContent, "utf8");
+    this.rollback(full, preContent);
+    // 复验:checkpoints.restore 在「无快照」时是静默 no-op,可能留下脏文件。
+    // 落盘仍含新引入标记行 → 强制用编辑前内容兜底复原,确保绝不残留。
+    const afterRollback = this.readIfExists(full);
+    if (afterRollback !== undefined && scanTransientMarkerLines(afterRollback).some((h) => !preSet.has(h))) {
+      if (preContent === undefined) fs.rmSync(full, { force: true });
+      else fs.writeFileSync(full, preContent, "utf8");
     }
     try {
       this.statsStore?.record("transient_marker_rollback", {

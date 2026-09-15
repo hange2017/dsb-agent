@@ -16,16 +16,20 @@ const WHOLE_MARKER = "[TRANSIENT-SUMMARY field=contents chars=999] 瞬时参数�
 
 let tmp: string;
 
-function makeExec(opts?: { checkpoints?: CheckpointStore }) {
+function makeExec(opts?: { checkpoints?: CheckpointStore; snapshotsNoop?: boolean }) {
   const rec = vi.fn();
   const fakeStats = { record: rec } as unknown as StatsStore;
+  // snapshotsNoop:模拟「有 checkpoints 但无对应快照」→ restore 静默 no-op 的场景
+  const checkpoints = opts?.snapshotsNoop
+    ? ({ snapshot: () => undefined, restore: () => undefined, files: () => [] } as unknown as CheckpointStore)
+    : opts?.checkpoints;
   const exec = new ToolExecutor(
     new MemoryStore(path.join(tmp, ".mem")),
     undefined,
     undefined,
     undefined,
     0,
-    opts?.checkpoints,
+    checkpoints,
     undefined,
     undefined,
     undefined,
@@ -100,6 +104,22 @@ describe("写后自检 + 回滚(夹带标记行的漏网写入)", () => {
 
     expect(r.ok).toBe(false);
     expect(fs.readFileSync(p, "utf8")).toBe("编辑前\n");
+  });
+
+  it("restore 静默 no-op(无快照)时,复验兜底仍复原,不留脏文件", async () => {
+    const { exec } = makeExec({ snapshotsNoop: true });
+    const p = path.join(tmp, "c.txt");
+    fs.writeFileSync(p, "编辑前内容\n", "utf8");
+
+    const r = await exec.execute(
+      "StrReplace",
+      { path: "c.txt", old_string: "编辑前内容", new_string: `编辑前内容\n${MARKER_LINE}` },
+      { workspaceRoot: tmp },
+    );
+
+    expect(r.ok).toBe(false);
+    expect(r.content).toContain("ROLLED BACK");
+    expect(fs.readFileSync(p, "utf8")).toBe("编辑前内容\n");
   });
 
   it("既有引用行不误伤(编辑前已存在的标记行不算本次引入)", async () => {
