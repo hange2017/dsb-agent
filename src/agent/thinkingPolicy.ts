@@ -6,11 +6,16 @@
  * 决策结果在 text 块,长期脉络在压缩时生成的 `[thinking]` 块——tail 里的
  * thinking 原文属"临时思维",下一轮无需完整重读。
  *
- * 手段(已批准 v2):
- *  - 单条:保留尾部结论行(thinking 结尾通常是结论),前面删除,加标记;
- *  - 条数:已消费 thinking 只保留最近 KEEP_RECENT 条完整尾巴,
- *    更早的压成「最后一行结论」(避免条数随轮次线性增长);
+ * 手段(T3 后):
+ *  - 长度:超阈值单条保留尾部结论行(thinking 结尾通常是结论),前面删除,加标记;
+ *    该规则已在**写入 messages 前定型**(agentLoop 回合落盘处),发送前只做幂等兜底。
  *  - 保持块结构 `{ type: "thinking" }`,同步操作零 LLM 成本。
+ *
+ * 已退役(不再用于发送路径):**按条数窗口折叠**(rank >= KEEP_RECENT_COUNT → 压成
+ * 一行结论)。理由:条数规则必须在块**已发送后**回头改写历史中部消息 —— 缓存前缀在
+ * 该消息处断裂,其实测为 C 类 miss 主因。条数增长的自然回收点是压缩(旧 thinking
+ * 随 head 离开窗口,由 compressThinkingSources 归并进 `[thinking]` 脉络块)。
+ * `rankFromLatest` 参数与相关常量保留仅为向后兼容/显式调用,发送路径恒传 0。
  */
 
 import type { ProviderMessage } from "./provider/types";
@@ -19,7 +24,10 @@ import { makeSummary, type ColdChunk } from "../context/contextStore";
 /** thinking 超过此字符数才精简;保留尾部结论的字符数(150 → 400 放宽:避免决策所需推理中段被过早丢弃)。 */
 export const THINKING_TAIL_CHARS = 400;
 
-/** 已消费 thinking 中,最近 N 条保留完整尾巴;更早的压成一行结论。 */
+/**
+ * 已消费 thinking 中,最近 N 条保留完整尾巴;更早的压成一行结论。
+ * 注意:该「条数窗口」规则已退役,不再用于发送路径(见文件头说明);发送路径恒 rank=0。
+ */
 export const THINKING_KEEP_RECENT_COUNT = 15;
 
 /** 截断标记:模型应知道详细推理已被精简,只剩结尾结论。 */

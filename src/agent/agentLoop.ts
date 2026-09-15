@@ -550,24 +550,30 @@ export class AgentSession {
   }
 
   /**
-   * tail 内已消费 thinking 原文精简(同步,零 LLM 成本):
-   * 超阈值 thinking 保留尾部结论行 + 截断标记,前面删除;
-   * 原文写入冷存储,标记追加 [r{seq}] 供 ContextRecall。失败不阻塞主循环。
+   * tail 内已消费 thinking 原文精简(同步,零 LLM 成本)。
+   *
+   * T3(缓存前缀):此处**只做长度规则的幂等兜底** —— 超阈值(> THINKING_TAIL_CHARS)
+   * 的 thinking 保留尾部结论行 + 截断标记,原文写冷存储并附 [r{seq}] 供 ContextRecall。
+   * 但超阈值 thinking 已在 push 进 messages 前「写前定型」(见回合落盘处),故该兜底对
+   * 新产生的 thinking 恒为 keep(幂等),不会制造「原始 → 精简」二次字节形态。
+   *
+   * 原「按条数窗口折叠旧 thinking」(rank 规则)已移除此路径:条数规则要求「预知该块
+   * 终将跌出窗口」,只能在块**已发送后**回头改写历史中部消息 → 该消息之后的全部前缀
+   * 断裂(实测 C 类断裂主因)。条数增长的自然回收点是压缩:旧 thinking 随 head 一起
+   * 离开窗口,并由 compressThinkingSources 归并进 `[thinking]` 脉络块。
    */
   private trimConsumedThinking(): void {
     try {
       const targets = findConsumedThinking(this.messages);
       if (targets.length === 0) return;
-      // rankFromLatest:0=最新一条已消费,越早越大(用于「最近 N 条保留完整尾巴」)。
-      const rankFromLatest = targets.length - 1;
-      for (let t = 0; t < targets.length; t++) {
-        const { index, blockIndex } = targets[t];
+      for (const { index, blockIndex } of targets) {
         const msg = this.messages[index];
         if (msg.role !== "assistant") continue;
         const block = msg.content[blockIndex];
         if (block.type !== "thinking") continue;
         const original = block.thinking;
-        const plan = planThinkingTrim(original, rankFromLatest - t);
+        // rank 恒 0:只走长度规则(幂等兜底),不再按条数窗口折叠(折叠=改写已发送中部)。
+        const plan = planThinkingTrim(original, 0);
         if (plan.action === "trim" && plan.trimmed !== undefined) {
           const seq = this.archiveCut([buildThinkingArchiveChunk(original)]);
           block.thinking = seq !== undefined ? withRecallMarker(plan.trimmed, seq) : plan.trimmed;

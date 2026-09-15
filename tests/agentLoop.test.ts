@@ -1577,7 +1577,7 @@ describe("AgentSession thinking tail trimming", () => {
     expect(block.thinking).toBe("短思考");
   });
 
-  it("collapses old consumed thinking beyond recent N to one-line (N=15)", async () => {
+  it("T3: consumed thinking is never rewritten in place at send time (no rank collapse)", async () => {
     const mk = (n: number) => ({
       role: "assistant" as const,
       content: [
@@ -1598,15 +1598,14 @@ describe("AgentSession thinking tail trimming", () => {
       .flatMap((m) => (m.content as any[]).filter((b) => b.type === "thinking"))
       .map((b) => b.thinking as string);
 
-    // 16 条已消费 thinking:最近 15 条保留,最旧 1 条压成一行
+    // T3:条数窗口折叠(rank 规则)已从发送前路径移除 —— 它必须改写**已发送**的中部
+    // 消息,会让该消息之后的全部前缀断裂。短 thinking(≤ 阈值)一律原样保留,
+    // 条数增长的回收交给压缩阶段(旧 thinking 随 head 离开窗口并入 [thinking] 脉络)。
     expect(blocks).toHaveLength(16);
-    const olds = blocks.filter((t) => t.startsWith("[thinking-old:"));
-    expect(olds).toHaveLength(1);
-    expect(olds[0]).toContain("轮次1结论");
-    expect(olds[0]).not.toContain("轮次1推理");
-    const recent = blocks.filter((t) => !t.startsWith("[thinking-old:"));
-    // 其余 15 条:短 thinking(≤150)原样保留
-    expect(recent.filter((t) => !t.startsWith("[thinking-trimmed")).length).toBe(15);
+    expect(blocks.some((t) => t.startsWith("[thinking-old:"))).toBe(false);
+    expect(blocks.some((t) => t.startsWith("[thinking-trimmed"))).toBe(false);
+    expect(blocks[0]).toBe("轮次1推理\n轮次1结论");
+    expect(blocks[15]).toBe("轮次16推理\n轮次16结论");
   });
 
   it("P3: shapes oversized thinking at persist time (first entry), keeping prefix stable", async () => {
