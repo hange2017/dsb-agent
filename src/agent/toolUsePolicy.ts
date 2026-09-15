@@ -109,6 +109,32 @@ export function isTransientSummaryText(text: string): boolean {
 }
 
 /**
+ * 扫描「已落盘字节」中的瞬时参数占位标记行(写后自检用)。
+ * 与 isTransientSummaryText 的分工:后者判「整段内容本身是不是标记」(写前拦截);
+ * 本函数判「写入结果里是否夹带了标记行」(漏网兜底,按行扫描)。
+ * 命中条件(逐行,去首尾空白后):
+ *   1. 整行以 `[TRANSIENT-SUMMARY field=... chars=N]` 形状开头;或
+ *   2. 整行以 `[瞬时参数已省略` 开头且整行长度 <= 320 字符。
+ * 正文中「引用标记」的长文档不会命中(受整行长度/形状约束),避免误伤。
+ */
+export function scanTransientMarkerLines(text: string): string[] {
+  if (typeof text !== "string" || text === "") return [];
+  const hits: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^\[TRANSIENT-SUMMARY field=[^\n]* chars=\d+\]/.test(line)) {
+      hits.push(line.slice(0, 160));
+      continue;
+    }
+    if (line.length <= 320 && line.startsWith("[瞬时参数已省略")) {
+      hits.push(line.slice(0, 160));
+    }
+  }
+  return hits;
+}
+
+/**
  * 瞬时参数(可重建)字段表。键为工具名,值为该工具 input 中可重建的大字段。
  * 未来新工具只需在此声明哪些字段瞬态。
  */

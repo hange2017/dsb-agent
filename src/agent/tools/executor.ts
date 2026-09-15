@@ -12,7 +12,7 @@ import {
 } from "./workspaceFs";
 import { CORE_TOOLS, buildMcpToolDef } from "./definitions";
 import { filterToolDefs } from "./platformGate";
-import { isTransientSummaryText } from "../toolUsePolicy";
+import { isTransientSummaryText, scanTransientMarkerLines } from "../toolUsePolicy";
 import { platformInfo } from "../../util/platformInfo";
 import { grepFallback } from "./grepFallback";
 import { TodoManager } from "./todoTool";
@@ -363,6 +363,73 @@ export class ToolExecutor {
     );
   }
 
+  /** 读文件内容;不存在/读失败返回 undefined。写后自检用(判断「本次是否新引入」标记行)。 */
+  private readIfExists(full: string): string | undefined {
+    try {
+      return fs.readFileSync(full, "utf8");
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 守卫拒绝埋点:量化「瞬时参数省略标记」被拒频次(偶发 vs 高频)。fail-open,统计失败不影响主流程。 */
+  private recordGuardRefusal(tool: string, field: string, text: string): void {
+    try {
+      this.statsStore?.record("transient_marker_refused", {
+        tool,
+        field,
+        chars: text.length,
+        sample: scanTransientMarkerLines(text)[0] ?? oneLinePreview(text, 120),
+      });
+    } catch {
+      // 统计失败不影响主流程
+    }
+  }
+
+  /**
+   * 写后自检(最强兜底):读回**落盘字节**,逐行扫描瞬时参数占位标记。
+   * 写前守卫 isTransientSummaryText 只判「整段内容是不是标记」,对大文件里夹带的单行标记无感
+   * (整段长度 > 320 即提前返回 false)——本函数补这个洞。
+   * 仅回滚「本次新引入」的标记行(preContent 里本就有的不算),避免误伤文档中既有的引用行。
+   * 命中即回滚到编辑前内容 + 返回带说明的失败结果:绝不留脏文件。
+   */
+  private selfCheckWrittenBytes(
+    full: string,
+    filePath: string,
+    op: "Write" | "StrReplace",
+    preContent?: string,
+  ): ToolExecResult | undefined {
+    const disk = this.readIfExists(full);
+    if (disk === undefined) return undefined;
+    const post = scanTransientMarkerLines(disk);
+    if (post.length === 0) return undefined;
+    const preSet = new Set(scanTransientMarkerLines(preContent ?? ""));
+    const introduced = post.filter((h) => !preSet.has(h));
+    if (introduced.length === 0) return undefined;
+    if (this.checkpoints) {
+      this.checkpoints.restore(full);
+    } else if (preContent === undefined) {
+      fs.rmSync(full, { force: true });
+    } else {
+      fs.writeFileSync(full, preContent, "utf8");
+    }
+    try {
+      this.statsStore?.record("transient_marker_rollback", {
+        op,
+        file: filePath,
+        lines: introduced.length,
+        sample: introduced[0],
+      });
+    } catch {
+      // 统计失败不影响主流程
+    }
+    return errorResult(
+      `ROLLED BACK: ${op} ${filePath} 已回滚 —— 写后自检在落盘字节中发现 ${introduced.length} 行瞬时参数省略标记(已恢复到编辑前内容,文件未被污染)。
+命中样例: ${introduced[0]}
+省略标记不是真实内容(它是系统对超长工具参数的摘要占位,真实内容在文件系统里)。请先 Read ${filePath}(长文件分段 offset/limit)取回真实内容后再重写/重试。`
+    );
+  }
+
   async execute(name: string, input: Record<string, unknown>, ctx: ToolExecContext): Promise<ToolExecResult> {
     await fireHook(this.hooks, "PreToolUse", name, input);
     try {
@@ -407,15 +474,20 @@ export class ToolExecutor {
           const filePath = asString(input.path, "path");
           const contents = typeof input.contents === "string" ? input.contents : "";
           if (isTransientSummaryText(contents)) {
+            this.recordGuardRefusal("Write", "contents", contents);
             return errorResult(
               `REFUSED: contents 疑似瞬时参数省略标记(transient summary),拒绝写入 ${filePath}。
 上下文中的省略标记不是真实内容,禁止复述或写入文件。
 请先用 Read 读取真实内容(长文件请分段 offset/limit),再以完整内容重试。`
             );
           }
-          this.checkpoints?.snapshot(resolveWorkspacePath(root, filePath));
+          const fullPath = resolveWorkspacePath(root, filePath);
+          const preContent = this.readIfExists(fullPath);
+          this.checkpoints?.snapshot(fullPath);
           writeWorkspaceFile(root, filePath, contents);
-          const written = fs.statSync(resolveWorkspacePath(root, filePath));
+          const rolledBackWrite = this.selfCheckWrittenBytes(fullPath, filePath, "Write", preContent);
+          if (rolledBackWrite) return rolledBackWrite;
+          const written = fs.statSync(fullPath);
           const lineCount = contents.length === 0 ? 0 : contents.split("\n").length;
           return { ok: true, content: `Wrote ${filePath} (${written.size} bytes, ${lineCount} lines) · 内容预览: ${oneLinePreview(contents)}` };
         }
@@ -424,14 +496,19 @@ export class ToolExecutor {
           const oldString = asString(input.old_string, "old_string");
           const newString = asString(input.new_string, "new_string");
           if (isTransientSummaryText(newString) || isTransientSummaryText(oldString)) {
+            const badIsNew = isTransientSummaryText(newString);
+            this.recordGuardRefusal("StrReplace", badIsNew ? "new_string" : "old_string", badIsNew ? newString : oldString);
             return errorResult(`REFUSED: old_string/new_string 疑似工具参数的历史回显标记,拒绝修改 ${filePath}。
 该标记不是对话正文、也不是真实锚点,禁止复述。
 请先 Read ${filePath}(长文件分段)取回真实锚点原文,再重试编辑。`);
           }
           const full = resolveWorkspacePath(root, filePath); // 逃逸保持红:在 try 外抛
+          const preContent = this.readIfExists(full);
           this.checkpoints?.snapshot(full); // 快照失败也必须红(真实失败,非「无匹配」)
           try {
             const { replacements } = strReplaceWorkspaceFile(root, filePath, oldString, newString, input.replace_all === true);
+            const rolledBackReplace = this.selfCheckWrittenBytes(full, filePath, "StrReplace", preContent);
+            if (rolledBackReplace) return rolledBackReplace;
             return { ok: true, content: `Replaced ${replacements} occurrence(s) in ${filePath} · new_string 预览: ${oneLinePreview(newString)}` };
           } catch (err) {
             const code = (err as NodeJS.ErrnoException)?.code;
@@ -481,6 +558,7 @@ export class ToolExecutor {
           const op = asString(input.op, "op");
           // 防护:拒绝把「瞬时参数省略标记」当清单内容写入(模型从历史读到标记后复述)。
           if (isTransientSummaryText(typeof input.content === "string" ? input.content : "")) {
+            this.recordGuardRefusal("TodoWrite", "content", typeof input.content === "string" ? input.content : "");
             return errorResult(
               `REFUSED: content 疑似瞬时参数省略标记,拒绝写入清单。
 请用 TodoWrite(op="list") 查看清单真实状态后重试。`
@@ -573,6 +651,7 @@ export class ToolExecutor {
           const name = asString(input.name, "name");
           // 防护:拒绝把省略标记当记忆正文写入(历史回声导致的记忆数据损坏)。
           if (isTransientSummaryText(typeof input.body === "string" ? input.body : "")) {
+            this.recordGuardRefusal("MemoryWrite", "body", typeof input.body === "string" ? input.body : "");
             return errorResult(
               `REFUSED: body 疑似瞬时参数省略标记,拒绝写入记忆 ${name}。
 请用 MemoryRead 读回该条真实内容后重试。`

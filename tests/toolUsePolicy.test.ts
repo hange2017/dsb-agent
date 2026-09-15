@@ -4,6 +4,7 @@ import {
   planToolUseTrim,
   transientSummary,
   isTransientSummaryText,
+  scanTransientMarkerLines,
   buildStrReplaceOldStringArchiveChunk,
   withOldStringRecallMarker,
   isAnchorField,
@@ -307,5 +308,36 @@ describe("StrReplace old_string archive helpers", () => {
       9,
     ) as Record<string, unknown>;
     expect(String(out.old_string)).toContain("[r9]");
+  });
+});
+
+describe("scanTransientMarkerLines (写后自检)", () => {
+  it("命中整行的瞬时参数占位标记", () => {
+    const text = "正常第一行\n[瞬时参数已省略:new_string 500 字符;内容已在文件系统/执行状态中]\n正常第三行";
+    const hits = scanTransientMarkerLines(text);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("[瞬时参数已省略");
+  });
+
+  it("命中 TRANSIENT-SUMMARY 形状行(不看整段长度)", () => {
+    // 整段远超 320 字符:写前守卫会提前返回 false,写后扫描仍必须命中
+    const text =
+      "这是一段很长的正常正文,用于让整段长度突破 320 字符。".repeat(20) +
+      "\n[TRANSIENT-SUMMARY field=contents chars=999]\n" +
+      "正常结尾";
+    expect(text.length).toBeGreaterThan(320);
+    const hits = scanTransientMarkerLines(text);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toContain("[TRANSIENT-SUMMARY");
+  });
+
+  it("不误伤文档中对标记的引用(超长整行)", () => {
+    const longRef = "说明:" + "这是引用该标记的正常文档正文。".repeat(40);
+    expect(scanTransientMarkerLines(longRef)).toHaveLength(0);
+  });
+
+  it("空内容/无标记返回空数组", () => {
+    expect(scanTransientMarkerLines("")).toEqual([]);
+    expect(scanTransientMarkerLines("完全正常的文件内容\n第二行")).toEqual([]);
   });
 });
