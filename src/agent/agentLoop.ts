@@ -50,6 +50,7 @@ import {
   buildThinkingArchiveChunk,
   withRecallMarker,
 } from "./thinkingPolicy";
+import { ToolRepeatTracker, type ToolRepeatHit } from "./toolRepeatDetector";
 import type { ColdChunk } from "../context/contextStore";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
@@ -191,6 +192,8 @@ export class AgentSession {
   /** A5:最近一次压缩事件(含 compactedSeqs),供 QA 抽查使用。 */
   private lastCompaction: CompactionRecord | undefined = undefined;
   private readonly hooks?: HookRunner;
+  /** 重复调用检测器(会话内状态,只读旁路;缺省回调时不使用)。 */
+  private readonly repeatTracker = new ToolRepeatTracker();
   /** 最近一次 send 的事件通道:thinking 压缩/对话轮次统计变化时推送 compaction_stats。 */
   private currentOnEvent: ((ev: AgentLoopEvent) => void) | undefined;
   /** 实际使用的 provider(原样,无总开关包装)。 */
@@ -272,6 +275,11 @@ export class AgentSession {
       subagentDepth?: number;
       /** Hook 生命周期:会话创建时 SessionStart,每次运行结束时 Stop。 */
       hooks?: HookRunner;
+      /**
+       * 重复调用打点:每次工具事件落盘后,若与本次会话中同参数的历史调用重复则回调。
+       * 只传数字与短参数摘要(不含工具输出内容);缺省不回调 = 不做检测。
+       */
+      onToolRepeat?: (hit: ToolRepeatHit) => void;
     },
   ) {
     this.todo = this.deps.todo ?? new TodoManager();
@@ -328,6 +336,16 @@ export class AgentSession {
 
   private record(ev: SessionEvent): void {
     this.deps.onRecord?.(ev);
+    // 重复调用检测:与 jsonl 落盘同一漏斗,保证运行时口径与离线脚本 analyze-duplicate-work.py 一致。
+    // 纯旁路:只读事件、只发统计回调,不改动任何发给 provider 的字节(messages/system 前缀稳定)。
+    if (ev.kind === "tool" && this.deps.onToolRepeat) {
+      try {
+        const hit = this.repeatTracker.observe(ev.name, ev.input as Record<string, unknown> | undefined, ev.detail, ev.timestamp);
+        if (hit) this.deps.onToolRepeat(hit);
+      } catch {
+        // 统计失败不影响主流程(fail-open,与 hooks / persistNow 同哲学)。
+      }
+    }
   }
 
   /** 持久化当前 messages 快照:失败绝不阻断主循环(fail-open,与 hooks 同哲学)。 */

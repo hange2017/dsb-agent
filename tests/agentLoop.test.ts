@@ -2075,3 +2075,104 @@ describe("AgentSession snapshot-store cut-point archive", () => {
   });
 });
 
+
+describe("AgentSession · tool repeat detector wiring", () => {
+  it("fires onToolRepeat when the same tool call repeats within one session", async () => {
+    // 三轮:①Read a.txt ②Read a.txt(同参数,重复) ③文本完成
+    const { provider } = fakeProvider([
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t1", name: "Read", input: { path: "a.txt" } }],
+          toolUses: [{ id: "t1", name: "Read", input: { path: "a.txt" } }],
+        },
+      },
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t2", name: "Read", input: { path: "a.txt" } }],
+          toolUses: [{ id: "t2", name: "Read", input: { path: "a.txt" } }],
+        },
+      },
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const hits: Array<{ tool: string; count: number; keyText: string }> = [];
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({ Read: () => ({ ok: true, content: "file body" }) }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      onToolRepeat: (hit) => hits.push({ tool: hit.tool, count: hit.count, keyText: hit.keyText }),
+    });
+    await session.send("read it", () => {});
+    // 只有第二次同参数 Read 触发打点
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ tool: "Read", count: 2, keyText: "a.txt | 0 | 0" });
+  });
+
+  it("does not fire onToolRepeat for distinct tool calls", async () => {
+    const { provider } = fakeProvider([
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t1", name: "Read", input: { path: "a.txt" } }],
+          toolUses: [{ id: "t1", name: "Read", input: { path: "a.txt" } }],
+        },
+      },
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t2", name: "Read", input: { path: "b.txt" } }],
+          toolUses: [{ id: "t2", name: "Read", input: { path: "b.txt" } }],
+        },
+      },
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    let fired = 0;
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({ Read: () => ({ ok: true, content: "file body" }) }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      onToolRepeat: () => {
+        fired++;
+      },
+    });
+    await session.send("read both", () => {});
+    expect(fired).toBe(0);
+  });
+
+  it("never mutates messages sent to provider when detector callback throws", async () => {
+    // 回调抛错不得影响主流程(fail-open),且发给 provider 的字节不受检测影响。
+    const { provider, calls } = fakeProvider([
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t1", name: "Read", input: { path: "a.txt" } }],
+          toolUses: [{ id: "t1", name: "Read", input: { path: "a.txt" } }],
+        },
+      },
+      {
+        result: {
+          blocks: [{ type: "tool_use", id: "t2", name: "Read", input: { path: "a.txt" } }],
+          toolUses: [{ id: "t2", name: "Read", input: { path: "a.txt" } }],
+        },
+      },
+      { result: { blocks: [{ type: "text", text: "done" }], toolUses: [] } },
+    ]);
+    const session = new AgentSession({
+      provider,
+      tools: fakeTools({ Read: () => ({ ok: true, content: "file body" }) }).tools,
+      permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
+      workspaceRoot: "/tmp",
+      systemPrompt: "s",
+      onToolRepeat: () => {
+        throw new Error("stats boom");
+      },
+    });
+    const events: string[] = [];
+    await session.send("read it twice", (ev) => events.push(ev.type));
+    expect(events).toContain("done");
+    expect(calls.length).toBe(3);
+    // 第二轮请求里应包含第一轮的 tool_result(完整原样),检测器不裁剪任何字节。
+    const second = JSON.stringify(calls[1].messages);
+    expect(second).toContain("file body");
+  });
+});

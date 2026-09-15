@@ -415,6 +415,11 @@ export class ChatViewProvider {
             onProviderRound: (usage) => {
               this.statsStore?.record("provider_round", { ...usage, sessionId });
             },
+            // 重复调用打点:同参数工具调用在会话内再次出现时落一条 tool_repeat
+            // (只记数字与短参数摘要,不含工具输出内容;离线脚本 analyze-duplicate-work.py 同口径)
+            onToolRepeat: (hit) => {
+              this.statsStore?.record("tool_repeat", { ...hit, sessionId });
+            },
             // 压缩打点:记录每次压缩的位置 × 原因 × before/after tokens(只记数字不记内容)
             onCompaction: (ev) => {
               // detailLevel=basic:只保留基础轮次统计,过滤 A7 压缩逐位置 llm 明细
