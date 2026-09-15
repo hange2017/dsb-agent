@@ -123,7 +123,7 @@ export interface ContextManagerOptions {
   maxCompactTextTokens?: number;
   /** 压缩时保留的尾部消息条数 */
   keepTail?: number;
-  /** 压缩块最大字符数;超限时对最旧解释段再摘要、其次截断超长行 */
+  /** 压缩块最大字符数;超限时对尾部(该次新增)解释段再摘要、其次截断超长行 */
   maxBlockChars?: number;
   /** 压缩块硬上限:默认 maxBlockChars * 4;超过硬上限才截断超长行 */
   maxBlockCharsHard?: number;
@@ -559,12 +559,12 @@ export class ContextManager {
   /**
    * 压缩块收缩(自适应上限):默认目标是 maxChars;内容特别多时自动放宽,
    * 避免截断损失。
-   *  - 先对最旧解释段再摘要(低预算),正常压进 maxChars 内;
+   *  - 先对尾部(该次新增)解释段再摘要(低预算),正常压进 maxChars 内;
    *  - 再摘要后仍超限但未超硬上限 hardMax → 自动扩容:直接返回,不截断
    *    (宁可块大一点,也不丢需求/结论原文细节);
    *  - 超过硬上限 → 才截断超长行兜底(尽力而为)。
    * 预算模式(budgetTokens 传入):目标与硬上限都是 budgetTokens(token 口径),
-   * 取消 4× 扩容;三段式收缩(再摘要 → 截断超长行 → 按 seq 最旧截断轨道行)。
+   * 取消 4× 扩容;三段式收缩(再摘要 → 截断超长行 → 按 seq 尾部截断轨道行)。
    */
   private async ensureBlockFits(parts: CompactBlockParts, budgetTokens?: number): Promise<CompactBlockParts> {
     if (budgetTokens !== undefined) {
