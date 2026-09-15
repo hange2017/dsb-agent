@@ -50,6 +50,13 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Guard against transient-marker pollution
+        # 第三道防线(仓库级):写前守卫/写后自检之外,拦住「瞬时参数省略标记」
+        # 以独立成行形态进入版本库。先自检判定算法,再扫全仓。
+        run: |
+          node scripts/scan-transient-pollution.mjs --self-test
+          node scripts/scan-transient-pollution.mjs
+
       - name: Platform info
         shell: bash
         run: |

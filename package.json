@@ -254,6 +254,7 @@
     "watch": "node esbuild.mjs --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "lint:transient": "node scripts/scan-transient-pollution.mjs",
     "licenses:inventory": "node scripts/generate-third-party-notices.mjs",
     "vscode:prepublish": "npm run compile",
     "install-extension": "bash scripts/install-extension.sh"
