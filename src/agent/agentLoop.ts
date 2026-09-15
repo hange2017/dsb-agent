@@ -132,10 +132,14 @@ export function buildTaskAnchor(
   todoBlock: string,
   mapLines?: string[],
   pendingTodos?: string[],
+  modeNote?: string,
 ): string {
   const map = mapLines && mapLines.length > 0 ? `${mapLines.join("\n")}\n` : "";
   const next = buildNextStepSection(pendingTodos);
-  return `${TASK_ANCHOR_HINT}\n${next ? `${next}\n` : ""}${map}${todoBlock}`;
+  // 模式说明(T2):原先挂在 system 后缀,会让 system 变长 → tools + 全部 messages miss;
+  // 现改由锚投递到消息尾部,mode 切换只影响尾部字节,前缀照常命中。
+  const mode = modeNote && modeNote.length > 0 ? `${modeNote}\n` : "";
+  return `${TASK_ANCHOR_HINT}\n${mode}${next ? `${next}\n` : ""}${map}${todoBlock}`;
 }
 
 /**
@@ -155,16 +159,24 @@ export function buildTaskAnchor(
 export function injectTodoIntoMessages(
   messages: ProviderMessage[],
   todoBlock: string,
-  opts?: { anchorOnToolResult?: boolean; mapLines?: string[]; pendingTodos?: string[] },
+  opts?: {
+    anchorOnToolResult?: boolean;
+    mapLines?: string[];
+    pendingTodos?: string[];
+    /** 模式说明(T2):原先挂 system 后缀,现随锚投递到消息尾部。 */
+    modeNote?: string;
+  },
 ): TodoInjection {
   const hasMap = (opts?.mapLines?.length ?? 0) > 0;
   const hasPending = (opts?.pendingTodos?.length ?? 0) > 0;
+  const hasMode = (opts?.modeNote?.length ?? 0) > 0;
   // T1:清单为空但**存在任务地图**时仍需注入 —— 地图自 T1 起不再进压缩块,
   // 尾部锚是它唯一的投递通道(仅靠清单判断会让地图整段消失)。
-  if (todoBlock.length === 0 && !hasMap && !hasPending) return messages;
+  // T2:仅 mode 说明也存在时同样要注入(plan/ask 且无清单/地图时它是唯一投递通道)。
+  if (todoBlock.length === 0 && !hasMap && !hasPending && !hasMode) return messages;
   const last = messages[messages.length - 1];
   if (!last || last.role !== "user") return messages;
-  const anchor = buildTaskAnchor(todoBlock, opts?.mapLines, opts?.pendingTodos);
+  const anchor = buildTaskAnchor(todoBlock, opts?.mapLines, opts?.pendingTodos, opts?.modeNote);
   const content = last.content;
   const merged = messages.slice(0, -1);
   if (typeof content === "string") {
@@ -717,26 +729,29 @@ export class AgentSession {
           this.trimConsumedToolUses();
           this.trimConsumedThinking();
           await this.trimConsumedToolResults();
-          // 仅有未完成项时注入任务锚(清单 + 回查提示):并入尾部 user / tool_result 消息之后。
-          // 全完成不注入,避免模型反复 TodoWrite;清单最新状态由 TodoWrite 的
-          // tool_result(消息尾部)传播——绝不进 system(todo 动态内容会打断前缀)。
-          // 仅有未完成项时注入任务清单行;但**任务地图**独立于清单(T1 起地图不再进压缩块,
-          // 只能经锚投递),故「清单或地图非空」都注入,保证地图每轮可见(含工具轮)。
-          // 全空不注入,避免无意义尾部膨胀;清单最新状态由 TodoWrite 的
-          // tool_result(消息尾部)传播——绝不进 system(todo 动态内容会打断前缀)。
+          // 任务锚注入(清单 + 地图 + 模式说明 + 回查提示):并入尾部 user / tool_result 之后。
+          // 三类内容互相独立,任一非空即注入(T1 地图已移出压缩块、T2 模式说明已移出 system,
+          // 尾部锚是它们唯一的投递通道):
+          //  - 清单:仅未完成项(全完成不注入,避免模型反复 TodoWrite);
+          //  - 地图:自 T1 起不再进压缩块,只能经锚投递,保证每轮可见(含工具轮);
+          //  - 模式说明:自 T2 起不再挂 system 后缀(system 字节变化会让 tools + 全部 messages 前缀 miss)。
+          // 全空不注入,避免无意义尾部膨胀;清单最新状态由 TodoWrite 的 tool_result(尾部)传播——
+          // 绝不进 system(todo / mode 等动态内容都会打断前缀)。
           const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : "";
           // 兜底可选调用:注入式 ContextManager(测试替身/旧实现)可能没有该方法。
           const mapLines = this.contextManager.getResidentMap?.() ?? [];
           const requestMessages =
-            todoBlock.length > 0 || mapLines.length > 0
+            todoBlock.length > 0 || mapLines.length > 0 || modeSeg.length > 0
               ? injectTodoIntoMessages(this.messages, todoBlock, {
                   anchorOnToolResult: this.deps.todoAnchorOnToolResult !== false,
                   mapLines,
                   // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
                   pendingTodos: this.todo.list().filter((i) => !i.done).map((i) => i.content),
+                  modeNote: modeSeg,
                 })
               : this.messages;
-          const roundSystem = `${systemPrompt}${modeSeg ? `\n\n${modeSeg}` : ""}`;
+          // T2:system 恒等于 systemPrompt 字节(不挂 mode 段)→ 切模式不再让 tools + messages 前缀全断。
+          const roundSystem = systemPrompt;
           const prepared = prepareRound({
             caps: provider.capabilities,
             messages: requestMessages,
@@ -748,7 +763,8 @@ export class AgentSession {
             mode: prepared.toolParallelMode,
             maxParallelTools: prepared.maxParallelTools,
           };
-          // 每轮通告核心 + MCP 工具定义,按模式白名单过滤:plan/ask 下写工具与 mcp__ 不暴露给模型
+          // 每轮通告核心 + MCP 工具定义(T2:**恒为全量**,不按模式过滤 —— tools JSON 变化会让
+          // system 之后的整段前缀 miss)。模式限制改由尾部锚说明 + 执行层 isToolAllowed 硬拒兜底。
           // 传原始 messages + lastInputTokens:Fallback 会按子 client caps 重 prepare;直连 client 入口再 sanitize。
           const lastInputTokens = this.contextManager.getLastInputTokens?.() ?? 0;
           // 发送前打点:记录这一包消息的 token 组成(只记数字不记内容),供历史占比统计
@@ -756,7 +772,7 @@ export class AgentSession {
           this.deps.onProviderSend?.(estimateProviderSendTokens(roundSystem, requestMessages));
           result = await provider.round(requestMessages, {
             system: roundSystem,
-            tools: tools.allToolDefs().filter((d) => isToolAllowed(mode, d.name)),
+            tools: tools.allToolDefs(),
             signal,
             maxTokens: prepared.maxTokens,
             lastInputTokens,

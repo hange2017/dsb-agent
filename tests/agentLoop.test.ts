@@ -762,14 +762,16 @@ describe("AgentSession", () => {
     }
   });
 
-  it("mode=plan filters provider tools to the read-only allowlist", async () => {
+  it("mode=plan keeps tools/system byte-stable and delivers mode note via the tail anchor", async () => {
     const systems: string[] = [];
     const tools: string[] = [];
+    const sent: ProviderMessage[][] = [];
     const provider: ProviderClient = {
       capabilities: { supportsVision: true, supportsThinking: true },
-      async round(_messages, opts, _onEvent): Promise<ProviderRoundResult> {
+      async round(messages, opts, _onEvent): Promise<ProviderRoundResult> {
         tools.push(...opts.tools.map((t) => t.name));
         systems.push(opts.system);
+        sent.push(messages);
         return { blocks: [{ type: "text", text: "ok" }], toolUses: [] };
       },
     };
@@ -781,11 +783,19 @@ describe("AgentSession", () => {
       systemPrompt: "s",
     });
     await session.send("read only", () => {}, { mode: "plan" });
+    // T2:tools 恒为全量(不按模式过滤)→ JSON 跨轮/跨模式字节稳定
     expect(tools).toContain("Read");
-    expect(tools).not.toContain("Write");
-    expect(tools).not.toContain("Bash");
-    expect(tools.some((t) => t.startsWith("mcp__"))).toBe(false);
-    expect(systems[0]).toContain("Plan 模式");
+    expect(tools).toContain("Write");
+    expect(tools).toContain("Bash");
+    expect(tools.some((t) => t.startsWith("mcp__"))).toBe(true);
+    // T2:system 恒等于 systemPrompt 字节,不再挂模式段
+    expect(systems[0]).toBe("s");
+    // T2:模式说明改由消息尾部投递(前缀字节不受影响)
+    const tail = sent[0][sent[0].length - 1];
+    const tailText = typeof tail.content === "string"
+      ? tail.content
+      : (tail.content as Array<{ type: string; text?: string }>).map((b) => b.text ?? "").join("\n");
+    expect(tailText).toContain("Plan 模式");
   });
 
   it("mode=plan hard-rejects a Write call with an error tool_result", async () => {
