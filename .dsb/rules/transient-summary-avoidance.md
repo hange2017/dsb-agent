@@ -64,6 +64,26 @@
 ### R7:记忆与清单的回读指引(2026-09-14 新增)
 - 标记文案已区分工具:`记忆 → MemoryRead`,`文件 → Read`。**不要把二者弄反**(旧文案纯文件导向,是「虽保存却未真读」的根因之一)。
 
+---
+
+## 三层防线(2026-08-17 加固,均为代码强制)
+
+模型侧规则(R1-R7)之外,代码侧已有三层防线,事故「漏网也伤不到人」:
+
+| 层 | 位置 | 作用 |
+|---|---|---|
+| L1 写前守卫 | `src/agent/tools/executor.ts`(4 个写入口) + `isTransientSummaryText` | 整段即标记 → `REFUSED`,根本不落盘 |
+| L2 写后自检 + 回滚 | `executor.ts` `selfCheckWrittenBytes` + `scanTransientMarkerLines` | 落盘后逐行扫字节;**新引入**标记行 → 用编辑前快照回滚 + 返回 `ROLLED BACK` |
+| L3 仓库门禁 | `scripts/scan-transient-pollution.mjs`(CI 步骤) | 扫全仓,拦住标记以独立成行形态进入版本库 |
+
+要点:
+- **为什么需要 L2**:L1 只判「整段内容是不是标记」,对**大文件里夹带单行标记**无感(整段长度 > 320 即提前返回 `false`)。L2 逐行扫,补这个洞。
+- **L2 只回滚「本次新引入」的标记行**:编辑前就存在的引用行不算(`preSet` 差集),避免误伤文档中既有的引用。
+- **L2 命中后是失败结果(红)**:返回 `ROLLED BACK: ...`,必须 Read 取真实内容后重写;不要当成功忽略。
+- **埋点(2026-08-17)**:L1 拒绝落 `transient_marker_refused`(含 tool/field/chars/sample),L2 回滚落 `transient_marker_rollback`(含 op/file/lines/sample),可用 `~/.dsb/stats/<project>/events-*.jsonl` 量化「偶发 vs 高频」。
+- **L3 白名单**:仅 `src/agent/toolUsePolicy.ts`(检测器自身)与 `tests/`(需构造标记样本);其余一律拦截。
+- **本文件自身的写法约束**:描述标记时必须**拆写**(如用省略号或反引号包裹后接中文),不得写成整行标记形态,否则会被 L3 拦下。
+
 ## 已知陷阱
 
 - **误伤扫描**:任何文档/代码若**引用**该标记字面前缀会被旧版误拒;新版形状校验已修,但文档中仍应避免写入**整行标记形态**的样例(建议拆写,如 `[TRANSIENT-SUMMARY …]` 中间用省略号)。
