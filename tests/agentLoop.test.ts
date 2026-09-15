@@ -1086,7 +1086,9 @@ describe("AgentSession history token budget wiring", () => {
     expect(String((sent[0].content as string))).toContain("[compacted]");
     // tail 4 条 = m5..m7 + hello;v2 目标线下 m0..m4 被压缩
     expect(sent).toHaveLength(5);
-    expect(sent[sent.length - 1]).toMatchObject({ role: "user", content: "hello" });
+    // T1:地图已移出压缩块 → 每轮经任务锚并入末条消息(尾部变化,不破坏前缀)
+    expect(sent[sent.length - 1].role).toBe("user");
+    expect(String(sent[sent.length - 1].content)).toContain("hello");
   });
 
   it("falls back to legacy keepTail=4 when budget is 0", async () => {
@@ -1109,7 +1111,9 @@ describe("AgentSession history token budget wiring", () => {
     expect(String((sent[0].content as string))).toContain("[compacted]");
     // [压缩块, m5..m7(3 条), hello] = 5 条
     expect(sent).toHaveLength(5);
-    expect(sent[sent.length - 1]).toMatchObject({ role: "user", content: "hello" });
+    // T1:末条为「任务锚 + hello」(地图移出块后经尾部锚投递)
+    expect(sent[sent.length - 1].role).toBe("user");
+    expect(String(sent[sent.length - 1].content)).toContain("hello");
   });
 });
 

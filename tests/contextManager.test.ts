@@ -1278,6 +1278,8 @@ describe("ContextManager compaction events", () => {
 });
 
 describe("ContextManager 任务地图(P2 常驻地图)", () => {
+  const textMsg = (n: number): ProviderMessage => ({ role: "user", content: "中".repeat(n) });
+
   it("taskMapEnabled: 块首含地图;目标=首条需求、最新要求=末条需求(目标漂移不丢)", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
@@ -1297,9 +1299,10 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
     ];
     const out = await cm.compact(msgs);
     const content = out[0].content as string;
-    expect(content).toContain("## 任务地图");
-    // 地图在块首段:位于「需求」轨之前
-    expect(content.indexOf("## 任务地图")).toBeLessThan(content.indexOf("## 需求"));
+    // T1:地图**不再**写入压缩块(块只由 4 轨构成 → 字节跨轮稳定,不再整块 miss)
+    expect(content).not.toContain("## 任务地图");
+    expect(content).toContain("## 需求");
+    // 地图仍在:改由常驻缓存承载,经任务锚在消息尾部投递(尾部变化不破坏前缀)
     const map = cm.getResidentMap();
     expect(map.some((l) => l.includes("**目标:** 最初目标"))).toBe(true);
     // 关键:落在需求轨中间的「目标澄清」也必须常驻,否则多轮后会漂移
@@ -1542,5 +1545,138 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
     expect(content).toContain("真实需求B");
     expect(content).toContain("真实结论:地图已生效");
     expect(content).toContain("新需求C");
+  });
+
+  it("T1 核心:地图滑动窗口每轮都变,但对压缩块字节零影响(不再整块 miss)", async () => {
+    // 压缩块是**单条消息**(atomic):块内任一字节变化 = 整消息 miss。
+    // 修复前,地图的「已做/结果/更早的需求」是 latest(...) 滑动窗口,
+    // 每次压缩都让块首那段变化 → 整块(实测中位 1.8 万 tok)全额 miss。
+    // T1 判据:**同一批消息,开关地图产出的块字节必须完全一致** —— 即地图对块零影响。
+    const msgs: ProviderMessage[] = [
+      { role: "user", content: "最初目标:修压缩" },
+      { role: "user", content: "中间需求一" },
+      { role: "user", content: "澄清:其实要保住地图" },
+      ...Array.from({ length: 4 }, () => textMsg(50)),
+    ];
+    const opts = { windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" };
+    const cmOn = new ContextManager({ ...opts, taskMapEnabled: true });
+    const cmOff = new ContextManager({ ...opts, taskMapEnabled: false });
+    const on = await cmOn.compact(msgs);
+    const off = await cmOff.compact(msgs);
+
+    // 前置:地图确实生成了(否则本测试失去意义),且确实**不在**块内
+    const map = cmOn.getResidentMap();
+    expect(map.length).toBeGreaterThan(0);
+    expect(map.join("\n")).toContain("任务地图");
+    expect(on[0].content as string).not.toContain("任务地图");
+
+    // 核心断言:块字节与「关掉地图」逐字节相同 → 地图的任何滑动都不再触碰块
+    expect(on[0].content).toBe(off[0].content);
+    // 且 tail 侧也不受影响(地图只经锚注入,不进持久历史)
+    expect(on.slice(1)).toEqual(off.slice(1));
+  });
+
+  it("T1:地图仍可跨压缩轮次完整重建(移出块后不丢信息)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1_000_000,
+      triggerRatio: 0.75,
+      summarize: async () => "S",
+      historyTokenBudget: 1000,
+      taskMapEnabled: true,
+    });
+    const first = await cm.compact(Array.from({ length: 6 }, () => textMsg(50)));
+    const map1 = cm.getResidentMap().join("\n");
+    expect(map1).toContain("**目标:**");
+    // 第二轮:旧块 + 新消息 → 地图从旧块轨(parse 出来的 4 轨)+ 新段重建
+    const second = await cm.compact([...first, ...Array.from({ length: 3 }, () => textMsg(50))]);
+    const map2 = cm.getResidentMap().join("\n");
+    expect(map2.length).toBeGreaterThan(0);
+    expect(map2).toContain("**目标:**");
+    // 两轮的块都不含地图
+    expect(second[0].content as string).not.toContain("任务地图");
+  });
+
+  it("T1:taskMapEnabled=false 时块与地图均不受影响(字节与旧版一致)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+    });
+    const out = await cm.compact(Array.from({ length: 8 }, () => textMsg(50)));
+    expect(out[0].content as string).not.toContain("任务地图");
+    expect(cm.getResidentMap()).toEqual([]);
+  });
+
+  it("T1 恢复路径:seedResidentMap 从恢复块重建地图(会话重启后锚不再为空)", () => {
+    // T1 后地图不再随压缩块持久化 → 会话恢复时 residentMap 为空,
+    // 到「下次压缩」之间任务锚会丢「目标/已做/结果」。种子用恢复块的 4 轨重建。
+    const cm = new ContextManager({
+      windowTokens: 1_000_000,
+      triggerRatio: 0.75,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    const legacy = [
+      "[前文摘要]",
+      "[compacted]",
+      "## 需求",
+      "- [r1] 最初目标:修压缩",
+      "- [r2] 澄清:其实要保住地图",
+      "## 结论",
+      "- [r3] 结论:地图已移出块",
+      "## 说明",
+      "## 工具履历",
+      "- [r4] Bash: ls",
+    ].join("\n");
+    expect(cm.getResidentMap()).toEqual([]);
+    cm.seedResidentMap(legacy);
+    const map = cm.getResidentMap().join("\n");
+    expect(map).toContain("## 任务地图");
+    expect(map).toContain("最初目标:修压缩");
+    expect(map).toContain("澄清:其实要保住地图");
+    expect(map).toContain("结论:地图已移出块");
+  });
+
+  it("T1 恢复路径:种子幂等、不覆盖已有地图;非压缩块/关闭地图时不生效", () => {
+    const cm = new ContextManager({
+      windowTokens: 1_000_000,
+      triggerRatio: 0.75,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    cm.seedResidentMap(["[compacted]", "## 需求", "- [r1] 目标A"].join("\n"));
+    const first = cm.getResidentMap();
+    expect(first.join("\n")).toContain("目标A");
+    // 幂等:已有地图时不再被种子改写(避免恢复期字节抖动)
+    cm.seedResidentMap(["[compacted]", "## 需求", "- [r1] 目标B"].join("\n"));
+    expect(cm.getResidentMap()).toEqual(first);
+
+    // 非压缩块文本:不生效
+    const cm2 = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+    });
+    cm2.seedResidentMap("一段普通文本,不带 [compacted] 标记");
+    expect(cm2.getResidentMap()).toEqual([]);
+
+    // 关闭地图:不生成
+    const cm3 = new ContextManager({ windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" });
+    cm3.seedResidentMap(["[compacted]", "## 需求", "- [r1] 目标A"].join("\n"));
+    expect(cm3.getResidentMap()).toEqual([]);
+  });
+
+  it("T1 恢复路径:未显式传块时回退 presetCompactedBlock 快照种子", () => {
+    const preset = ["[compacted]", "## 需求", "- [r1] 恢复自快照的目标"].join("\n");
+    const cm = new ContextManager({
+      windowTokens: 1_000_000,
+      triggerRatio: 0.75,
+      summarize: async () => "S",
+      taskMapEnabled: true,
+      presetCompactedBlock: preset,
+    });
+    cm.seedResidentMap();
+    expect(cm.getResidentMap().join("\n")).toContain("恢复自快照的目标");
   });
 });

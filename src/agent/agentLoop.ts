@@ -157,7 +157,11 @@ export function injectTodoIntoMessages(
   todoBlock: string,
   opts?: { anchorOnToolResult?: boolean; mapLines?: string[]; pendingTodos?: string[] },
 ): TodoInjection {
-  if (todoBlock.length === 0) return messages;
+  const hasMap = (opts?.mapLines?.length ?? 0) > 0;
+  const hasPending = (opts?.pendingTodos?.length ?? 0) > 0;
+  // T1:清单为空但**存在任务地图**时仍需注入 —— 地图自 T1 起不再进压缩块,
+  // 尾部锚是它唯一的投递通道(仅靠清单判断会让地图整段消失)。
+  if (todoBlock.length === 0 && !hasMap && !hasPending) return messages;
   const last = messages[messages.length - 1];
   if (!last || last.role !== "user") return messages;
   const anchor = buildTaskAnchor(todoBlock, opts?.mapLines, opts?.pendingTodos);
@@ -223,7 +227,7 @@ export class AgentSession {
       contextStore?: ContextStore;
       /** 工具执行轮是否也注入任务锚(默认 true);个别兼容端点若拒绝 tool_result 后跟 text,可置 false 回退。 */
       todoAnchorOnToolResult?: boolean;
-      /** P2:是否启用常驻任务地图(压缩块首段 + 任务锚顶部);默认 true,显式 false 可回退旧行为。 */
+      /** 是否启用常驻任务地图(仅经任务锚在消息尾部投递;T1 起不再进压缩块);默认 true,显式 false 可回退旧行为。 */
       taskMapEnabled?: boolean;
       /** 冷存储按会话隔离;缺省 "default"。 */
       sessionId?: string;
@@ -311,9 +315,14 @@ export class AgentSession {
       targetPct: this.deps.targetPct,
       tailFoldRatio: this.deps.tailFoldRatio,
       presetCompactedBlock: this.deps.compactedPreset,
-      // P2:默认开启常驻任务地图(压缩块首段 + 任务锚顶部);显式传 false 可回退。
+      // 默认开启常驻任务地图(仅经任务锚在消息尾部投递);显式传 false 可回退。
       taskMapEnabled: this.deps.taskMapEnabled !== false,
     });
+    // T1 恢复路径种子:地图已移出压缩块(不再随块持久化),会话恢复后到下次压缩之间
+    // residentMap 会为空 → 任务锚短时丢「目标/已做/结果」。此处从恢复块里仍在的 4 轨
+    // 重建一份地图(幂等/确定性,只走消息尾部锚,不参与压缩块前缀)。
+    // 优先取 apiHistory 里的压缩块,其次回退 preset 快照(ContextManager 内部处理)。
+    this.contextManager.seedResidentMap?.(this.extractCompactedBlock());
     this.hooks = this.deps.hooks;
     // SessionStart:会话创建时触发(构造器为同步,fire-and-forget;失败由 fireHook 吞掉)。
     if (this.hooks) void fireHook(this.hooks, "SessionStart", "", {});
@@ -711,15 +720,22 @@ export class AgentSession {
           // 仅有未完成项时注入任务锚(清单 + 回查提示):并入尾部 user / tool_result 消息之后。
           // 全完成不注入,避免模型反复 TodoWrite;清单最新状态由 TodoWrite 的
           // tool_result(消息尾部)传播——绝不进 system(todo 动态内容会打断前缀)。
-          const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : null;
-          const requestMessages = todoBlock
-            ? injectTodoIntoMessages(this.messages, todoBlock, {
-                anchorOnToolResult: this.deps.todoAnchorOnToolResult !== false,
-                mapLines: this.contextManager.getResidentMap(),
-                // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
-                pendingTodos: this.todo.list().filter((i) => !i.done).map((i) => i.content),
-              })
-            : this.messages;
+          // 仅有未完成项时注入任务清单行;但**任务地图**独立于清单(T1 起地图不再进压缩块,
+          // 只能经锚投递),故「清单或地图非空」都注入,保证地图每轮可见(含工具轮)。
+          // 全空不注入,避免无意义尾部膨胀;清单最新状态由 TodoWrite 的
+          // tool_result(消息尾部)传播——绝不进 system(todo 动态内容会打断前缀)。
+          const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : "";
+          // 兜底可选调用:注入式 ContextManager(测试替身/旧实现)可能没有该方法。
+          const mapLines = this.contextManager.getResidentMap?.() ?? [];
+          const requestMessages =
+            todoBlock.length > 0 || mapLines.length > 0
+              ? injectTodoIntoMessages(this.messages, todoBlock, {
+                  anchorOnToolResult: this.deps.todoAnchorOnToolResult !== false,
+                  mapLines,
+                  // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
+                  pendingTodos: this.todo.list().filter((i) => !i.done).map((i) => i.content),
+                })
+              : this.messages;
           const roundSystem = `${systemPrompt}${modeSeg ? `\n\n${modeSeg}` : ""}`;
           const prepared = prepareRound({
             caps: provider.capabilities,

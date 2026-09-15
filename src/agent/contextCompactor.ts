@@ -285,10 +285,13 @@ export function extractKeyLines(output: string, ok: boolean, opts: KeyLineOption
 /** 合并块各轨道(均应为已格式化行) */
 export interface CompactBlockParts {
   /**
-   * 任务地图(可选,视为「块首段的永久地图」):目标/最新要求/近期需求/更早的需求/已做/结果。
-   * 不含「下一步」(块内无法访问 todo,真实待办由 agentLoop 的任务锚注入)。
-   * 不可删(裁剪时不参与);为 undefined 或空数组时整段不输出,
-   * 保证未启用地图的压缩块字节与旧版完全一致(缓存前缀不受影响)。
+   * 任务地图(**仅为兼容旧块的只读字段**,T1 起不再写入块内):
+   * 目标/最新要求/近期需求/更早的需求/已做/结果;不含「下一步」
+   * (块内无法访问 todo,真实待办由 agentLoop 的任务锚注入)。
+   *
+   * 保留原因:旧会话持久化的压缩块(含块首地图)仍需被 `parseCompactedBlock`
+   * 解析出来,以便恢复时用 4 轨重建地图(`seedResidentMap`)。
+   * 新块构建时恒为 `undefined`(见 `buildCompactedBlock`),故块字节只由 4 轨决定。
    */
   map?: string[];
   demands: string[];
@@ -388,9 +391,11 @@ export function buildCompactedBlock(parts: CompactBlockParts): string {
   const sections = [
     "[前文摘要]",
     "[compacted]",
-    // 任务地图置于块首段:压缩/裁剪永不删(裁剪候选集不含 map 轨),
-    // 空地图不输出任何字节 → 未启用地图的块与旧版完全一致。
-    ...(parts.map ?? []),
+    // T1(缓存前缀):任务地图**不再输出到块内**。
+    // 块只由 4 轨构成(只追加/只删尾 → 字节稳定);地图含滑动窗口段
+    // (已做/结果/更早的需求每轮都在变),若置于块首(最前缀位置),其变化会让
+    // 整块(实测中位 1.8 万 tok)全额 miss —— 实测 09-14/09-15 全部「块重建」皆源于此。
+    // 地图改由任务锚在**消息尾部**投递(尾部变化不破坏任何前缀)。
     ...track("需求", parts.demands),
     ...track("结论", parts.conclusions),
     ...track("说明", parts.explanations),

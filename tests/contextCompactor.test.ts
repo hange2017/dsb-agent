@@ -340,21 +340,32 @@ describe("任务地图轨 (P2-3): 可选, 空则字节与旧版一致, 永不参
     expect(block).not.toContain("任务地图");
   });
 
-  it("有 map 时置于块首段 (紧跟 [compacted], 在需求轨之前) 且标题只出现一次", () => {
+  it("T1: 有 map 时块内也不出现地图 (地图改由消息尾部任务锚投递)", () => {
     const block = buildCompactedBlock({ map: mapAxis, demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
-    expect(block).toContain("## 任务地图");
-    expect(block.split("## 任务地图").length - 1).toBe(1);
-    expect(block.indexOf("## 任务地图")).toBeLessThan(block.indexOf("## 需求"));
-    expect(block.indexOf("[compacted]")).toBeLessThan(block.indexOf("## 任务地图"));
+    // T1 核心断言:地图不再写入块内任何位置 —— 它的滑动窗口段每轮都变,
+    // 置于块首(最前缀)会让整块 hash 变化 → 全额 miss。
+    expect(block).not.toContain("任务地图");
+    expect(block).not.toContain("P2-3 块首地图");
+    // 块骨架只由 4 轨构成,字节与「无 map」完全一致(块层跨轮稳定)
+    const noMap = buildCompactedBlock({ demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
+    expect(block).toBe(noMap);
   });
 
-  it("build→parse→build 幂等 (地图含自身标题与 ### 子标题)", () => {
+  it("build→parse→build 幂等 (旧块含地图时仍可解析;新块不再产出地图)", () => {
     const parts = { map: mapAxis, demands: ["- [r1] a"], conclusions: ["- [r3] c"], explanations: [], ledger: ["- [r2] Read: a"] };
     const block = buildCompactedBlock(parts);
     const parsed = parseCompactedBlock(block);
-    expect(parsed.map).toEqual(mapAxis);
+    // 新块不含地图 → 解析得到空地图轨,但 4 轨内容完整保留
+    expect(parsed.map ?? []).toEqual([]);
     expect(parsed.demands).toEqual(["- [r1] a"]);
     expect(buildCompactedBlock(parsed)).toBe(block);
+  });
+
+  it("旧块(带块首地图)仍可被 parse 解析出地图轨(向后兼容读取)", () => {
+    const legacy = ["[前文摘要]", "[compacted]", ...mapAxis, "## 需求", "- [r1] a"].join("\n");
+    const parsed = parseCompactedBlock(legacy);
+    expect(parsed.map).toEqual(mapAxis);
+    expect(parsed.demands).toEqual(["- [r1] a"]);
   });
 
   it("增量合并: next 无地图时沿用 prev 地图; next 有地图时以 next 为准", () => {

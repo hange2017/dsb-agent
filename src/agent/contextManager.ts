@@ -162,9 +162,10 @@ export interface ContextManagerOptions {
    */
   presetCompactedBlock?: string;
   /**
-   * 任务地图(P2):true 时压缩块首段插入 `## 任务地图`
-   * (目标/最新要求/近期需求/更早的需求/已做/结果;「下一步」由任务锚注入),
-   * 裁剪时永不删;缺省 false(块字节与旧版一致,便于回退与灰度)。
+   * 任务地图:true 时生成常驻地图并经**任务锚(消息尾部)**投递
+   * (目标/最新要求/近期需求/更早的需求/已做/结果;「下一步」由任务锚注入)。
+   * T1 起地图**不再写入压缩块** —— 其滑动窗口段每轮都变,置于块首会让整块 hash 变化;
+   * 缺省 false(不生成地图,等价旧行为)。
    */
   taskMapEnabled?: boolean;
 }
@@ -212,7 +213,7 @@ export class ContextManager {
   private nextSeq = 1;
   /** thinking 压缩开关(可热更新;plan/ask 模式关闭)。 */
   private thinkingEnabled: boolean;
-  /** 常驻任务地图(P2-3/P2-4):最近一次压缩生成的块首地图,供任务锚每轮顶部复用。 */
+  /** 常驻任务地图(T1 起只经任务锚在消息尾部投递,不再进压缩块);供每轮锚顶部复用。 */
   private residentMap: string[] = [];
   /** thinking 压缩发生时的回调(成功或失败均触发,用于成本统计);缺省不回调。 */
   onThinkingCompaction?: () => void;
@@ -262,11 +263,28 @@ export class ContextManager {
   }
 
   /**
-   * 常驻任务地图(P2-4):最近一次压缩写入块首的地图行;未压缩或未开启时返回 []。
-   * 供任务锚每轮顶部复用(与压缩块内地图同源,字节稳定)。
+   * 常驻任务地图:最近一次压缩从 4 轨重建的地图行;未压缩/未开启且无恢复种子时返回 []。
+   * 供任务锚每轮顶部复用(**只走消息尾部**,不参与压缩块前缀)。
    */
   getResidentMap(): string[] {
     return this.residentMap;
+  }
+
+  /**
+   * T1 恢复路径种子:从恢复的压缩块(或 preset 快照)的 4 轨重建常驻地图。
+   *
+   * T1 把地图移出压缩块后,地图不再随块持久化 → 会话恢复后到「下次压缩」之间
+   * `residentMap` 为空,任务锚会短时丢失「目标/已做/结果」。
+   * 此处用恢复块里仍在的 4 轨(需求/结论/说明/履历)重建一份地图:幂等且确定性
+   * (同块 → 同地图),不引入额外字节抖动 —— 地图只走消息尾部锚,不参与压缩块前缀。
+   * 仅在开启地图、且当前地图为空时生效;旧块自带地图时其「近期需求」继续累积。
+   */
+  seedResidentMap(blockText?: string): void {
+    if (!this.opts.taskMapEnabled || this.residentMap.length > 0) return;
+    const text = blockText ?? this.opts.presetCompactedBlock;
+    if (!text || !isCompactedBlock(text)) return;
+    const parts = parseCompactedBlock(text);
+    this.residentMap = this.buildResidentMap(parts, parts.map ?? []);
   }
 
   track(usage?: { inputTokens?: number; outputTokens?: number }): number {
@@ -454,17 +472,21 @@ export class ContextManager {
       explanations: merged.explanations.filter((l) => !isRuntimeSyntheticText(l)),
       ledger: merged.ledger.filter((l) => !isRuntimeSyntheticText(l)),
     };
-    // P2:任务地图作为块首段常驻(永不裁剪);关闭时块字节与旧版完全一致。
-    const withMap: CompactBlockParts = this.opts.taskMapEnabled
-      ? { ...purged, map: this.buildResidentMap(purged, prev?.map ?? this.residentMap) }
-      : purged;
-    // 常驻地图缓存:供任务锚每轮顶部读取(与压缩块内地图同源,字节稳定)。
-    this.residentMap = withMap.map ?? [];
+    // T1(缓存前缀):任务地图**不再写入压缩块**。
+    // 地图含滑动窗口段(已做/结果/更早的需求),每轮重建都在变;它此前位于块首
+    // (块内最前缀位置),其变化会让整块(实测中位 1.8 万 tok)全额 miss ——
+    // 实测 09-14/09-15 的全部「块重建」皆源于此。块现在只由 4 轨构成,
+    // 配合「只追加/只删尾」即可做到字节跨轮恒定。
+    // 地图改存常驻缓存,仅经任务锚在**消息尾部**投递(尾部变化不破坏任何前缀)。
+    const blockParts: CompactBlockParts = { ...purged, map: undefined };
+    if (this.opts.taskMapEnabled) {
+      this.residentMap = this.buildResidentMap(purged, prev?.map ?? this.residentMap);
+    }
     const fitted = budget
-      ? await this.ensureBlockFits(withMap, Math.max(1, Math.floor(budget.compactedTokens * this.targetPct)))
-      : await this.ensureBlockFits(withMap);
+      ? await this.ensureBlockFits(blockParts, Math.max(1, Math.floor(budget.compactedTokens * this.targetPct)))
+      : await this.ensureBlockFits(blockParts);
     // 压缩块收缩上报:实际发生收缩(after < before)才记录
-    const beforeBlockTokens = estimateTokens(buildCompactedBlock(withMap));
+    const beforeBlockTokens = estimateTokens(buildCompactedBlock(blockParts));
     const afterBlockTokens = estimateTokens(buildCompactedBlock(fitted));
     if (afterBlockTokens < beforeBlockTokens) {
       this.emitCompaction({
@@ -797,11 +819,12 @@ export class ContextManager {
 
   /**
    * 生成常驻任务地图(确定性):从合并后的轨道推导
-   * 「目标/最新要求/近期需求/更早的需求/已做/结果」,置于压缩块首段且永不被裁剪。
+   * 「目标/最新要求/近期需求/更早的需求/已做/结果」;
+   * T1 起只经任务锚在**消息尾部**投递(不再进压缩块,故不参与前缀)。
    *  - 目标    = 「需求」轨首条(最初需求,受 P0-a 保护);
    *  - 最新要求 = 「需求」轨末条(覆盖多轮中的目标澄清/修正,避免只记住最初目标);
    *  - 每次压缩都会用当前轨道重建地图 → 澄清一旦进来即常驻,不再随中间行被裁掉。
-   * 注意:**不生成「下一步」段** —— 压缩块无法访问 todo,用历史需求冒充待办会把
+   * 注意:**不生成「下一步」段** —— 压缩时无法访问 todo,用历史需求冒充待办会把
    * 已完成事项显示为下一步;真实「下一步」由 agentLoop 的任务锚注入(见 buildTaskAnchor)。
    */
   private buildResidentMap(parts: CompactBlockParts, prevMap: string[] = []): string[] {
