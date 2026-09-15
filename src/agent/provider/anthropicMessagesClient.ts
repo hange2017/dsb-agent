@@ -138,8 +138,12 @@ export class AnthropicMessagesClient implements ProviderClient {
       body["thinking"] = { type: "disabled" };
     } else {
       const budget = positiveInt(opts.thinkingBudgetTokens ?? this.capabilities.thinkingBudgetTokens);
-      if (budget !== undefined) {
+      // 协议纵深防御:Anthropic 要求 `budget_tokens < max_tokens`。上层(capabilityGate)已按此规则
+      // 解析,但 client 是最后一道门——任何调用方误传都不得发出违规组合(严格端点 400),降级为 disabled。
+      if (budget !== undefined && budget < maxTokens) {
         body["thinking"] = { type: "enabled", budget_tokens: budget };
+      } else if (budget !== undefined) {
+        body["thinking"] = { type: "disabled" };
       }
     }
 

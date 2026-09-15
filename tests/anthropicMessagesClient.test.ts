@@ -289,12 +289,51 @@ describe("AnthropicMessagesClient", () => {
       apiKey: "sk-test",
       baseUrl: "https://x",
       model: "m",
-      capabilities: { supportsVision: true, supportsThinking: true, thinkingBudgetTokens: 10_000 },
+      capabilities: {
+        supportsVision: true,
+        supportsThinking: true,
+        thinkingBudgetTokens: 10_000,
+        maxOutputTokens: 32_000,
+      },
       fetchImpl: capturingFetch,
     });
     await client.round([{ role: "user", content: "hi" }], { system: "s", tools: TOOLS }, () => {});
     const parsed = JSON.parse(sentBody) as { thinking?: { type: string; budget_tokens?: number } };
     expect(parsed.thinking).toEqual({ type: "enabled", budget_tokens: 10_000 });
+  });
+
+  it("clamps invalid thinking combo (budget_tokens >= max_tokens) to disabled", async () => {
+    // 协议纵深防御:即使调用方误传 `budget >= max_tokens`(Anthropic 会 400),
+    // client 也必须降级为 disabled,而不是把违规请求发出去。
+    const stream = sseBody([
+      ["content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }],
+      ["content_block_stop", { index: 0 }],
+    ]);
+    let sentBody = "";
+    const capturingFetch = (async (_url: string, init?: { body?: string }) => {
+      sentBody = init?.body ?? "";
+      return makeFetch(200, stream)(_url, init as RequestInit);
+    }) as typeof fetch;
+    const client = new AnthropicMessagesClient({
+      apiKey: "sk-test",
+      baseUrl: "https://x",
+      model: "m",
+      capabilities: {
+        supportsVision: true,
+        supportsThinking: true,
+        thinkingBudgetTokens: 4096,
+        maxOutputTokens: 8192,
+      },
+      fetchImpl: capturingFetch,
+    });
+    // 误传:压缩摘要场景把 maxTokens 钳到 800,但预算仍是 4096 → 违规组合。
+    await client.round(
+      [{ role: "user", content: "hi" }],
+      { system: "s", tools: TOOLS, maxTokens: 800 },
+      () => {},
+    );
+    const parsed = JSON.parse(sentBody) as { thinking?: { type: string } };
+    expect(parsed.thinking).toEqual({ type: "disabled" });
   });
 
   it("opts.thinkingBudgetTokens overrides capabilities budget", async () => {

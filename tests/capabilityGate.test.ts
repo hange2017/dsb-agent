@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   prepareRound,
+  resolveThinkingParams,
   dynamicMaxTokens,
   sanitizeOutbound,
   repairToolUseResultPairs,
@@ -49,7 +50,7 @@ describe("prepareRound", () => {
     expect(out.toolParallelMode).toBe("read_safe");
   });
 
-  it("passes budget and respects parallel caps", () => {
+  it("respects parallel caps; 预算装不进 maxTokens 时禁用而非发违规组合", () => {
     const out = prepareRound({
       caps: {
         supportsVision: true,
@@ -63,19 +64,25 @@ describe("prepareRound", () => {
       messages: [{ role: "user", content: "a" }],
       lastInputTokens: 49_000,
     });
-    expect(out.thinkingBudgetTokens).toBe(2048);
+    // 窗口吃紧(maxTokens≈500),预算 2048 装不下且低于 1024 下限 → 禁用 thinking,
+    // 而不是发出 `budget_tokens >= max_tokens` 的违规组合(严格端点 400)。
+    expect(out.thinkingDisabled).toBe(true);
+    expect(out.thinkingBudgetTokens).toBeUndefined();
     expect(out.maxParallelTools).toBe(2);
     expect(out.toolParallelMode).toBe("serial");
     expect(out.maxTokens).toBeLessThan(8192);
   });
 
-  it("derives thinkingBudgetTokens from thinkingLevel when not explicit", () => {
+  it("level 预算超出本轮输出上限时收敛,为正文留住额度", () => {
     const out = prepareRound({
       caps: { supportsVision: true, supportsThinking: true, thinkingLevel: "high" },
       messages: [{ role: "user", content: "a" }],
       lastInputTokens: 100,
     });
-    expect(out.thinkingBudgetTokens).toBe(16384);
+    // high=16384 + 预留 1024 > maxTokens 8192 → 收敛为 8192-1024=7168(< maxTokens,且 >= 1024 下限)。
+    expect(out.maxTokens).toBe(8192);
+    expect(out.thinkingBudgetTokens).toBe(7168);
+    expect(out.thinkingDisabled).toBeUndefined();
   });
 
   it("explicit thinkingBudgetTokens wins over thinkingLevel", () => {
@@ -85,6 +92,63 @@ describe("prepareRound", () => {
       lastInputTokens: 100,
     });
     expect(out.thinkingBudgetTokens).toBe(2048);
+  });
+});
+
+describe("resolveThinkingParams(协议自洽规则)", () => {
+  const base = { supportsVision: true, supportsThinking: true } as const;
+
+  it("能力不支持思考 → 禁用", () => {
+    expect(resolveThinkingParams({ supportsVision: true, supportsThinking: false }, 8192)).toEqual({
+      thinkingDisabled: true,
+    });
+  });
+
+  it("调用方显式禁用优先于能力支持", () => {
+    expect(
+      resolveThinkingParams({ ...base, thinkingBudgetTokens: 2048 }, 8192, { thinkingDisabled: true }),
+    ).toEqual({ thinkingDisabled: true });
+  });
+
+  it("未配置任何预算 → 不注入 thinking 参数", () => {
+    expect(resolveThinkingParams(base, 8192)).toEqual({});
+  });
+
+  it("预算装得下 → 原样启用", () => {
+    expect(resolveThinkingParams({ ...base, thinkingBudgetTokens: 4096 }, 8192)).toEqual({
+      thinkingBudgetTokens: 4096,
+    });
+  });
+
+  it("预算装不下但收敛后仍 >=1024 → 收敛,正文保留 1024 额度", () => {
+    expect(resolveThinkingParams({ ...base, thinkingLevel: "high" }, 8192)).toEqual({
+      thinkingBudgetTokens: 7168,
+    });
+    // 上限刚过下限:3500-1024=2476,仍给正文留 1024
+    expect(resolveThinkingParams({ ...base, thinkingLevel: "medium" }, 3500)).toEqual({
+      thinkingBudgetTokens: 2476,
+    });
+  });
+
+  it("压缩摘要小额度(maxTokens=800/200,medium=4096)→ 禁用,杜绝空转付费与 400", () => {
+    for (const maxTokens of [800, 200]) {
+      expect(resolveThinkingParams({ ...base, thinkingLevel: "medium" }, maxTokens)).toEqual({
+        thinkingDisabled: true,
+      });
+    }
+  });
+
+  it("越 explanation 上限的 3500 档 → 收敛到 2476(不再让思考吃光额度,也不再违规)", () => {
+    // 旧行为:透传 4096 → `budget>=max_tokens` 违规,且思考吃掉几乎全部输出额度。
+    expect(resolveThinkingParams({ ...base, thinkingLevel: "medium" }, 3500)).toEqual({
+      thinkingBudgetTokens: 2476,
+    });
+  });
+
+  it("中强度预算在充裕输出上限下仍启用(不误伤正常轮次)", () => {
+    expect(resolveThinkingParams({ ...base, thinkingLevel: "medium" }, 8192)).toEqual({
+      thinkingBudgetTokens: 4096,
+    });
   });
 });
 

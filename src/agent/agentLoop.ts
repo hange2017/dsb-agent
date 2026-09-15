@@ -56,7 +56,13 @@ import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
 import type { ModelCapabilities } from "../providers/types";
-import { prepareRound, sanitizeOutbound, assertToolResultsComplete, repairToolUseResultPairs } from "./capabilityGate";
+import {
+  prepareRound,
+  resolveThinkingParams,
+  sanitizeOutbound,
+  assertToolResultsComplete,
+  repairToolUseResultPairs,
+} from "./capabilityGate";
 import { mapParallelBatches, runWithConcurrency } from "./tools/parallelSafe";
 
 export type AgentLoopEvent =
@@ -475,6 +481,11 @@ export class AgentSession {
         lastInputTokens: this.contextManager.getLastInputTokens?.() ?? 0,
       });
       const roundStart = Date.now();
+      // 摘要任务不需要推理预算,且调用方预算常被钳到 800/200/3500 —— 远小于能力预算(medium=4096)。
+      // 直接透传会发出 `budget_tokens >= max_tokens` 的违规组合(严格端点 400,且此处 catch 会静默
+      // 降级为兜底文案 → 压缩块变空)。故按「钳后的 maxTokens」重新解析 thinking 参数。
+      const summaryMaxTokens = Math.min(prepared.maxTokens, maxTokens);
+      const summaryThinking = resolveThinkingParams(this.effectiveProvider.capabilities, summaryMaxTokens);
       const result = await this.effectiveProvider.round(
         [message],
         {
@@ -484,11 +495,12 @@ export class AgentSession {
           tools: [],
           signal: this.abortController?.signal,
           // 调用方预算(explanation 800 / thinking 3500)真正生效,同时不超能力上限
-          maxTokens: Math.min(prepared.maxTokens, maxTokens),
+          maxTokens: summaryMaxTokens,
           lastInputTokens: this.contextManager.getLastInputTokens?.() ?? 0,
-          ...(prepared.thinkingBudgetTokens !== undefined
-            ? { thinkingBudgetTokens: prepared.thinkingBudgetTokens }
+          ...(summaryThinking.thinkingBudgetTokens !== undefined
+            ? { thinkingBudgetTokens: summaryThinking.thinkingBudgetTokens }
             : {}),
+          ...(summaryThinking.thinkingDisabled === true ? { thinkingDisabled: true } : {}),
         },
         () => {},
       );
@@ -785,6 +797,8 @@ export class AgentSession {
             ...(prepared.thinkingBudgetTokens !== undefined
               ? { thinkingBudgetTokens: prepared.thinkingBudgetTokens }
               : {}),
+            // 本轮预算装不下思考时明确禁用(否则 client 会用能力默认预算发出违规组合)
+            ...(prepared.thinkingDisabled === true ? { thinkingDisabled: true } : {}),
           }, forward);
           // Fallback 切模型后 capabilities 可能已变:热更新压缩窗(有覆盖时保持覆盖)。
           this.contextManager.setWindowTokens?.(

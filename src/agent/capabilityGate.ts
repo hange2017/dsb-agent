@@ -23,6 +23,8 @@ export interface PrepareRoundResult {
   outbound: ProviderMessage[];
   maxTokens: number;
   thinkingBudgetTokens?: number;
+  /** true = 本轮明确禁用模型侧思考(预算装不进 maxTokens,或能力不支持)。 */
+  thinkingDisabled?: boolean;
   windowTokens: number;
   maxParallelTools: number;
   toolParallelMode: ToolParallelMode;
@@ -172,6 +174,43 @@ export function dynamicMaxTokens(opts: {
   return Math.max(1, Math.min(maxOutputTokens, room));
 }
 
+/** Anthropic 扩展思考的预算下限(协议硬约束:budget_tokens >= 1024)。 */
+export const kMinThinkingBudgetTokens = 1024;
+
+/** 启用 thinking 时为正文保留的最小输出额度:避免预算把 max_tokens 吃光、只产出思考。 */
+export const kThinkingOutputReserveTokens = 1024;
+
+/**
+ * thinking 参数解析:保证「发出的 thinking 组合协议自洽」。
+ *
+ * 规则(按 Anthropic 扩展思考硬约束 `budget_tokens < max_tokens` 推导,并额外保证正文有额度):
+ *   ① 预算 + 正文预留 ≤ maxTokens → 原样启用;
+ *   ② 超出 → 收敛为 `maxTokens - 正文预留`;
+ *   ③ 收敛后 < 1024(协议下限)→ 禁用。
+ * 为什么必须做:压缩摘要把 maxTokens 钳到 800/200,而能力预算仍是 medium=4096,
+ * 旧行为原样透传 → `budget_tokens >= max_tokens` 违规,严格端点 400,
+ * 且压缩调用被 catch 静默降级为兜底文案(压缩块变空、任务地图丢失);
+ * 即便端点宽容接受,额度也全被思考吃掉(实测 51,428 tok 返回后未被采用)。
+ */
+export function resolveThinkingParams(
+  caps: ModelCapabilities,
+  maxTokens: number,
+  opts?: { thinkingDisabled?: boolean },
+): { thinkingBudgetTokens?: number; thinkingDisabled?: boolean } {
+  if (caps.supportsThinking !== true) return { thinkingDisabled: true };
+  if (opts?.thinkingDisabled === true) return { thinkingDisabled: true };
+  const budget = effectiveThinkingBudgetTokens(caps);
+  if (budget === undefined) return {};
+  // ① 原预算 + 正文预留都装得下 → 原样(主对话常规路径,行为不变)。
+  if (budget + kThinkingOutputReserveTokens <= maxTokens) return { thinkingBudgetTokens: budget };
+  // ② 超出 → 收敛,把多余的输出额度还给正文。
+  const fit = maxTokens - kThinkingOutputReserveTokens;
+  // ③ 收敛后连协议下限(1024)都不到 → 禁用。
+  //    典型:压缩摘要 explanation maxTokens=800 / resummarize 200 —— 这类任务本就不需要推理预算,
+  //    旧行为是把 medium=4096 原样透传,既违规(4096 >= 800)又让模型把额度全烧在思考上。
+  return fit >= kMinThinkingBudgetTokens ? { thinkingBudgetTokens: fit } : { thinkingDisabled: true };
+}
+
 /**
  * loop 能力消费中枢:outbound 清洗 + round opts + 并行策略。
  * Client 仍负责 thinking 线格式(disabled / enabled+budget)。
@@ -189,7 +228,7 @@ export function prepareRound(input: PrepareRoundInput): PrepareRoundResult {
     lastInputTokens,
     maxOutputTokens: effectiveMaxOutputTokens(caps),
   });
-  const thinkingBudgetTokens = effectiveThinkingBudgetTokens(caps);
+  const thinking = resolveThinkingParams(caps, maxTokens);
   const maxParallelTools = effectiveMaxParallelTools(caps);
   const toolParallelMode = effectiveToolParallelMode(caps);
   const out: PrepareRoundResult = {
@@ -199,7 +238,8 @@ export function prepareRound(input: PrepareRoundInput): PrepareRoundResult {
     maxParallelTools,
     toolParallelMode,
   };
-  if (thinkingBudgetTokens !== undefined) out.thinkingBudgetTokens = thinkingBudgetTokens;
+  if (thinking.thinkingBudgetTokens !== undefined) out.thinkingBudgetTokens = thinking.thinkingBudgetTokens;
+  if (thinking.thinkingDisabled === true) out.thinkingDisabled = true;
   return out;
 }
 

@@ -66,7 +66,8 @@ export class FallbackClient implements ProviderClient {
           tools: opts.tools,
           signal: opts.signal,
           maxTokens: prepared.maxTokens,
-          thinkingDisabled: opts.thinkingDisabled,
+          // 调用方显式禁用 或 该子 client 的预算装不下本轮 maxTokens → 禁用
+          thinkingDisabled: opts.thinkingDisabled === true || prepared.thinkingDisabled === true,
         };
         if (prepared.thinkingBudgetTokens !== undefined) {
           childOpts.thinkingBudgetTokens = prepared.thinkingBudgetTokens;
