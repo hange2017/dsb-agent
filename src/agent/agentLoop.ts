@@ -51,6 +51,7 @@ import {
   withRecallMarker,
 } from "./thinkingPolicy";
 import { ToolRepeatTracker, type ToolRepeatHit } from "./toolRepeatDetector";
+import { TurnSummaryStats, type TurnSummary, type TurnEndReason } from "./turnSummary";
 import type { ColdChunk } from "../context/contextStore";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
@@ -248,6 +249,8 @@ export class AgentSession {
   private readonly hooks?: HookRunner;
   /** 重复调用检测器(会话内状态,只读旁路;缺省回调时不使用)。 */
   private readonly repeatTracker = new ToolRepeatTracker();
+  /** 轮次档案累加器:一次 send = 一份档案,收尾经 onTurnSummary 落盘(纯旁路)。 */
+  private readonly turnStats = new TurnSummaryStats();
   /** 最近一次 send 的事件通道:thinking 压缩/对话轮次统计变化时推送 compaction_stats。 */
   private currentOnEvent: ((ev: AgentLoopEvent) => void) | undefined;
   /** 实际使用的 provider(原样,无总开关包装)。 */
@@ -334,6 +337,12 @@ export class AgentSession {
        * 只传数字与短参数摘要(不含工具输出内容);缺省不回调 = 不做检测。
        */
       onToolRepeat?: (hit: ToolRepeatHit) => void;
+      /**
+       * 轮次档案:一次 send(一个「大任务」)收尾时回调一条完整计数档案
+       * (rounds / toolCalls / 重复 / 压缩 / ContextRecall / 缓存命中 token)。
+       * 纯旁路:只记数字不记内容,不影响发给 provider 的字节;缺省不回调 = 不打点。
+       */
+      onTurnSummary?: (s: TurnSummary) => void;
     },
   ) {
     this.todo = this.deps.todo ?? new TodoManager();
@@ -397,10 +406,16 @@ export class AgentSession {
     this.deps.onRecord?.(ev);
     // 重复调用检测:与 jsonl 落盘同一漏斗,保证运行时口径与离线脚本 analyze-duplicate-work.py 一致。
     // 纯旁路:只读事件、只发统计回调,不改动任何发给 provider 的字节(messages/system 前缀稳定)。
-    if (ev.kind === "tool" && this.deps.onToolRepeat) {
+    if (ev.kind === "tool") {
+      // 轮次档案:工具调用数/失败数/种类数(与 UI 事件同源,口径一致)。
+      this.turnStats.recordTool(ev.name, ev.status === "completed");
+      if (ev.name === "ContextRecall") this.turnStats.recordContextRecall();
       try {
         const hit = this.repeatTracker.observe(ev.name, ev.input as Record<string, unknown> | undefined, ev.detail, ev.timestamp);
-        if (hit) this.deps.onToolRepeat(hit);
+        if (hit) {
+          this.turnStats.recordRepeat(hit);
+          this.deps.onToolRepeat?.(hit);
+        }
       } catch {
         // 统计失败不影响主流程(fail-open,与 hooks / persistNow 同哲学)。
       }
@@ -704,6 +719,8 @@ export class AgentSession {
     this.messages.push({ role: "user", content: userContent });
     // 对话轮次统计:一次 send = 一次对话(即使后续失败/取消也计入),并推送 UI 快照
     this.deps.stats?.beginConversation();
+    // 轮次档案:一次 send = 一个「大任务」,从入口开始计时;收尾在 finally 落一条。
+    this.turnStats.begin(this.deps.sessionId ?? "default", (opts?.rawText ?? userText).length, Date.now());
     this.currentOnEvent = onEvent;
     this.emitStats(onEvent);
     // 会话事件记录原始用户文本(rawText),不记录展开后的 prompt
@@ -745,6 +762,7 @@ export class AgentSession {
               void this.runCompactionQa(this.lastCompaction);
             }
             onEvent({ type: "info", text: "已压缩上下文" });
+            this.turnStats.recordCompaction();
           } catch {
             // 注入的 ContextManager 摘要失败时不阻断主循环:保持原消息继续
             onEvent({ type: "info", text: "上下文压缩失败,继续原对话" });
@@ -755,6 +773,7 @@ export class AgentSession {
         // 由 chatController 关闭当前 assistant 时间线并新开 user/assistant 框。
         if (this.pendingAppends.length > 0) {
           const appends = this.pendingAppends.splice(0);
+          this.turnStats.recordAppend(appends.length);
           for (const text of appends) {
             this.messages.push({ role: "user", content: text });
             this.record({ kind: "user", text, timestamp: Date.now() });
@@ -858,6 +877,13 @@ export class AgentSession {
             ...(result.usage.cacheReadTokens !== undefined ? { cacheReadTokens: result.usage.cacheReadTokens } : {}),
             ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
             phase: "chat",
+            roundMs: Date.now() - roundStart,
+          });
+          this.turnStats.recordChatRound({
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            ...(result.usage.cacheReadTokens !== undefined ? { cacheReadTokens: result.usage.cacheReadTokens } : {}),
+            ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
             roundMs: Date.now() - roundStart,
           });
         }
@@ -1132,6 +1158,22 @@ export class AgentSession {
       onEvent({ type: "status", busy: false });
       if (terminal) {
         onEvent(terminal);
+      }
+      // 轮次档案:一次「大任务」的完整计数在此一次性落盘(纯旁路,失败不影响主流程)。
+      // endReason 区分 done/error/aborted/maxRounds —— 触顶与取消是「卡住」的两个主因,必须可分辨。
+      try {
+        const endReason: TurnEndReason = signal.aborted
+          ? "aborted"
+          : terminal?.type === "done"
+            ? "done"
+            : terminal?.type === "error"
+              ? /Exceeded max tool rounds/.test(terminal.message)
+                ? "maxRounds"
+                : "error"
+              : "aborted";
+        this.deps.onTurnSummary?.(this.turnStats.finish(endReason, Date.now()));
+      } catch {
+        // fail-open:统计失败绝不影响收尾。
       }
       // 任意终态下 this.messages 都是合法快照(done 保留终态;error/abort 已 rollback 到 preSend),
       // 在此保存即「以最后一次稳定状态为准」。必须放在 if (terminal) 之外,abort 也要落盘。

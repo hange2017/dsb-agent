@@ -39,6 +39,7 @@ import type { ProviderStore } from "../providers/providerStore";
 import type { ModelCatalog } from "../providers/modelCatalog";
 import type { CapabilityRegistry } from "../providers/capabilityRegistry";
 import { getConfiguredRipgrepPath } from "../util/ripgrepPath";
+import { cacheHitRate, repeatWasteRate } from "../agent/turnSummary";
 
 /** 执行 hook 命令的 execFile 封装(原 controller.runHookCommand 迁此,单一实现,注入 ProjectRuntime):
  * bash -c(Windows 下 cmd /c)执行并捕获输出;输入 JSON 走 stdin;失败不 reject(fail-open)。 */
@@ -419,6 +420,18 @@ export class ChatViewProvider {
             // (只记数字与短参数摘要,不含工具输出内容;离线脚本 analyze-duplicate-work.py 同口径)
             onToolRepeat: (hit) => {
               this.statsStore?.record("tool_repeat", { ...hit, sessionId });
+            },
+            // 轮次档案:一次大任务收尾落一条 turn_summary(rounds/toolCalls/重复/压缩/
+            // ContextRecall/缓存命中 token),补齐「tool_repeat 只有分子没有分母」的缺口;
+            // 派生命中率用权威口径 cacheRead/(cacheRead+input),与 analyze-cache-prefix.py 一致。
+            onTurnSummary: (s) => {
+              const rate = cacheHitRate(s);
+              const waste = repeatWasteRate(s);
+              this.statsStore?.record("turn_summary", {
+                ...s,
+                ...(rate !== undefined ? { cacheHitRate: Number(rate.toFixed(4)) } : {}),
+                ...(waste !== undefined ? { repeatWasteRate: Number(waste.toFixed(4)) } : {}),
+              });
             },
             // 压缩打点:记录每次压缩的位置 × 原因 × before/after tokens(只记数字不记内容)
             onCompaction: (ev) => {
