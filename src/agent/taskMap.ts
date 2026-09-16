@@ -97,6 +97,52 @@ export function toReadOnlyMapLines(lines: string[]): string[] {
   });
 }
 
+/**
+ * 注入侧「存量地图」兜底过滤(P0-5)。
+ *
+ * 背景:t79 只在**写前**单行化(`summarizeToolUse`),杜绝新碎片;但**历史压缩块里已固化**
+ * 的裂行碎片(物理续行经 `parseCompactedBlock` 读回后成了无前缀轨条目)会由
+ * `mergeCompactedTracks` 永久保留,并在建图时被取进「已做」段 —— 现场:
+ * ```
+ * ### 已做
+ * - import glob, json, os, coll…            ← 裂行碎片(无工具名)
+ * - Bash: cd … && python3 - <<'PY'          ← 合法调用行
+ * - import json, os, datetime, …            ← 同上一行的续行
+ * ```
+ * 重建只在下一次压缩发生,存量会话会带着脏行直到那时。本函数在**注入侧**再兜一道,
+ * 对存量地图**立即生效**(地图只走消息尾部锚,不参与压缩块前缀,过滤无缓存副作用)。
+ *
+ * 判据(「已做」段内,去 `- ` 前缀后):
+ *  - 以 `⤷` 开头 → 工具**输出**行(语义是"输出是什么",非"做了什么")→ 剔除;
+ *  - 不匹配 `ToolName: detail`(`summarizeToolUse` 的唯一输出形态)→ 裂行碎片 → 剔除。
+ *    工具名恒为拉丁标识符,故中文/代码开头的一律是碎片,不会误伤合法条目。
+ * 非「已做」段原样保留。
+ */
+const DID_SECTION_TITLES = new Set(["### 已做", "### 已执行的工具"]);
+const TOOL_CALL_LINE = /^[A-Za-z][A-Za-z0-9_]*: /;
+
+export function sanitizeMapLines(lines: string[]): string[] {
+  const out: string[] = [];
+  let inDid = false;
+  for (const raw of lines ?? []) {
+    const line = typeof raw === "string" ? raw : "";
+    if (/^###\s/.test(line)) {
+      inDid = DID_SECTION_TITLES.has(line.trim());
+      out.push(line);
+      continue;
+    }
+    if (inDid && /^\s*-\s/.test(line)) {
+      // 归一化:地图条目可能带 `- [rN] `(轨内原始形态)或已去前缀(轨条目经 section() 输出),
+      // 统一用 stripSeq 剥掉前缀再判形态。
+      const body = stripSeq(line);
+      const isToolResult = isToolResultLedgerLine(line);
+      if (isToolResult || !TOOL_CALL_LINE.test(body)) continue;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 function clip(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > MAX_LINE ? t.slice(0, MAX_LINE - 1) + "…" : t;

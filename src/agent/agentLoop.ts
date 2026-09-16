@@ -54,7 +54,7 @@ import { ToolRepeatTracker, type ToolRepeatHit } from "./toolRepeatDetector";
 import type { ColdChunk } from "../context/contextStore";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
-import { toReadOnlyMapLines } from "./taskMap";
+import { sanitizeMapLines, toReadOnlyMapLines } from "./taskMap";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
 import type { ModelCapabilities } from "../providers/types";
 import {
@@ -774,7 +774,7 @@ export class AgentSession {
           // 绝不进 system(todo / mode 等动态内容都会打断前缀)。
           const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : "";
           // 兜底可选调用:注入式 ContextManager(测试替身/旧实现)可能没有该方法。
-          const mapLinesRaw = this.contextManager.getResidentMap?.() ?? [];
+          const mapLinesRaw = sanitizeMapLines(this.contextManager.getResidentMap?.() ?? []);
           // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
           const pendingTodos = this.todo.list().filter((i) => !i.done).map((i) => i.content);
           // P0-3(补全):**无未完成待办**时,地图退化为「只读上下文」——
