@@ -184,6 +184,22 @@ describe("buildCompactedBlock / isCompactedBlock", () => {
     expect(empty).toContain(RECALL_HINT_LINE);
   });
 
+  it("parse 跳过历史版本 hint 行(v1/v2),不串进任何轨(旧块兼容)", () => {
+    // v1: `(hint: ContextRecall(seq=n) → [r{n}])`
+    // v2: `(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))`  ← 目标语义改「最新条」后废弃
+    const legacyV1 = ["[前文摘要]", "[compacted]", "## 需求", "- [r1] a", "(hint: ContextRecall(seq=n) → [r{n}])"].join("\n");
+    const legacyV2 = [
+      "[前文摘要]",
+      "[compacted]",
+      "## 需求",
+      "- [r1] a",
+      "(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))",
+    ].join("\n");
+    expect(parseCompactedBlock(legacyV1).demands).toEqual(["- [r1] a"]);
+    expect(parseCompactedBlock(legacyV2).demands).toEqual(["- [r1] a"]);
+    expect(parseCompactedBlock(legacyV2).ledger).toEqual([]);
+  });
+
   it("rejects plain text as compacted block", () => {
     expect(isCompactedBlock("普通文本")).toBe(false);
   });
@@ -361,54 +377,57 @@ describe("thinking block lenient parsing", () => {
   });
 });
 
-describe("任务地图轨 (P2-3): 可选, 空则字节与旧版一致, 永不参与截断", () => {
+describe("任务地图轨已废弃 (C): 块内无地图, 旧块地图段在 parse 时被丢弃", () => {
   const mapAxis = ["## 任务地图", "**目标:** 修复多轮迷失目标", "### 更早的需求", "- P2-3 块首地图"];
 
-  it("无 map 时块内不出现任务地图段 (字节与旧版一致)", () => {
+  it("块内不出现任务地图段 (骨架只由 4 轨构成)", () => {
     const block = buildCompactedBlock({ demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
     expect(block).not.toContain("任务地图");
   });
 
-  it("T1: 有 map 时块内也不出现地图 (地图改由消息尾部任务锚投递)", () => {
-    const block = buildCompactedBlock({ map: mapAxis, demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
-    // T1 核心断言:地图不再写入块内任何位置 —— 它的滑动窗口段每轮都变,
-    // 置于块首(最前缀)会让整块 hash 变化 → 全额 miss。
-    expect(block).not.toContain("任务地图");
-    expect(block).not.toContain("P2-3 块首地图");
-    // 块骨架只由 4 轨构成,字节与「无 map」完全一致(块层跨轮稳定)
-    const noMap = buildCompactedBlock({ demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] });
-    expect(block).toBe(noMap);
+  it("C: 旧块(带块首地图)parse 时丢弃地图段, 4 轨内容完整保留(向后兼容读取)", () => {
+    // 历史会话落盘的块可能仍带 `## 任务地图` 段;地图轨字段已删除,旧段应被自然丢弃,
+    // 不能污染任何现存轨(尤其不能把地图行串进「需求」轨冒充目标)。
+    const legacy = [
+      "[前文摘要]",
+      "[compacted]",
+      ...mapAxis,
+      "## 需求",
+      "- [r1] a",
+      "## 结论",
+      "- [r3] c",
+    ].join("\n");
+    const parsed = parseCompactedBlock(legacy);
+    expect(parsed.demands).toEqual(["- [r1] a"]);
+    expect(parsed.conclusions).toEqual(["- [r3] c"]);
+    // 地图文本不得出现在任何轨里
+    const all = [...parsed.demands, ...parsed.conclusions, ...parsed.explanations, ...parsed.ledger];
+    expect(all.some((l) => l.includes("任务地图") || l.includes("块首地图") || l.includes("更早的需求"))).toBe(false);
   });
 
-  it("build→parse→build 幂等 (旧块含地图时仍可解析;新块不再产出地图)", () => {
-    const parts = { map: mapAxis, demands: ["- [r1] a"], conclusions: ["- [r3] c"], explanations: [], ledger: ["- [r2] Read: a"] };
+  it("build→parse→build 幂等 (4 轨往返不变)", () => {
+    const parts = { demands: ["- [r1] a"], conclusions: ["- [r3] c"], explanations: [], ledger: ["- [r2] Read: a"] };
     const block = buildCompactedBlock(parts);
     const parsed = parseCompactedBlock(block);
-    // 新块不含地图 → 解析得到空地图轨,但 4 轨内容完整保留
-    expect(parsed.map ?? []).toEqual([]);
     expect(parsed.demands).toEqual(["- [r1] a"]);
+    expect(parsed.conclusions).toEqual(["- [r3] c"]);
+    expect(parsed.ledger).toEqual(["- [r2] Read: a"]);
     expect(buildCompactedBlock(parsed)).toBe(block);
   });
 
-  it("旧块(带块首地图)仍可被 parse 解析出地图轨(向后兼容读取)", () => {
-    const legacy = ["[前文摘要]", "[compacted]", ...mapAxis, "## 需求", "- [r1] a"].join("\n");
-    const parsed = parseCompactedBlock(legacy);
-    expect(parsed.map).toEqual(mapAxis);
-    expect(parsed.demands).toEqual(["- [r1] a"]);
+  it("增量合并只作用 4 轨(旧块地图不再被沿用)", () => {
+    const prev = { demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] };
+    const next = { demands: ["- [r5] b"], conclusions: [], explanations: [], ledger: [] };
+    const merged = mergeCompactedTracks(prev, next);
+    // prev 行在前、next 新行追加在后(增量只追加)
+    expect(merged.demands).toEqual(["- [r1] a", "- [r5] b"]);
+    expect(Object.keys(merged).sort()).toEqual(["conclusions", "demands", "explanations", "ledger"]);
   });
 
-  it("增量合并: next 无地图时沿用 prev 地图; next 有地图时以 next 为准", () => {
-    const prev = { map: mapAxis, demands: ["- [r1] a"], conclusions: [], explanations: [], ledger: [] };
-    const nextNoMap = { demands: ["- [r5] b"], conclusions: [], explanations: [], ledger: [] };
-    expect(mergeCompactedTracks(prev, nextNoMap).map).toEqual(mapAxis);
-    const nextMap = { map: ["## 任务地图", "**目标:** 新目标"], demands: [], conclusions: [], explanations: [], ledger: [] };
-    expect(mergeCompactedTracks(prev, nextMap).map).toEqual(["## 任务地图", "**目标:** 新目标"]);
-  });
-
-  it("truncateParts 原样保留地图, 只截断其它轨", () => {
+  it("truncateParts 只截断 4 轨, 不再残留地图字段", () => {
     const long = "y".repeat(500);
-    const out = truncateParts({ map: mapAxis, demands: [long], conclusions: [], explanations: [], ledger: [] }, 100);
-    expect(out.map).toEqual(mapAxis);
+    const out = truncateParts({ demands: [long], conclusions: [], explanations: [], ledger: [] }, 100);
     expect(out.demands[0].length).toBe(101);
+    expect(Object.keys(out).sort()).toEqual(["conclusions", "demands", "explanations", "ledger"]);
   });
 });

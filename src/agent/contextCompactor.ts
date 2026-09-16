@@ -307,18 +307,8 @@ export function extractKeyLines(output: string, ok: boolean, opts: KeyLineOption
   return [...errLines, ...rest].join("\n");
 }
 
-/** 合并块各轨道(均应为已格式化行) */
+/** 合并块各轨道(均应为已格式化行)。 */
 export interface CompactBlockParts {
-  /**
-   * 任务地图(**仅为兼容旧块的只读字段**,T1 起不再写入块内):
-   * 目标/最新要求/近期需求/更早的需求/已做/结果;不含「下一步」
-   * (块内无法访问 todo,真实待办由 agentLoop 的任务锚注入)。
-   *
-   * 保留原因:旧会话持久化的压缩块(含块首地图)仍需被 `parseCompactedBlock`
-   * 解析出来,以便恢复时用需求轨重建**单行会话目标**(`seedResidentGoal`)。
-   * 新块构建时恒为 `undefined`(见 `buildCompactedBlock`),故块字节只由 4 轨决定。
-   */
-  map?: string[];
   demands: string[];
   conclusions: string[];
   explanations: string[];
@@ -331,15 +321,11 @@ export function parseCompactedBlock(content: string): CompactBlockParts {
   const lines = (content ?? "").split("\n");
   let current: keyof CompactBlockParts | null = null;
   for (const line of lines) {
-    const heading = line.match(/^##\s+(需求|结论|说明|工具履历|任务地图)\s*$/);
+    // 只识别 4 条现存轨。旧会话遗留的 `## 任务地图` 段(及其 `**目标:**` / `### 已做`
+    // 等行)自 2026-09-16 地图整块废弃后不再识别:地图标题不匹配任何轨 → `current`
+    // 保持上一轨或 null → 地图行被自然丢弃(恢复时不再需要地图,目标由需求轨重建)。
+    const heading = line.match(/^##\s+(需求|结论|说明|工具履历)\s*$/);
     if (heading) {
-      if (heading[1] === "任务地图") {
-        // 地图段含自身标题行,原样收集(含 `**目标:**` 与 `### 已做` 等行),
-        // 使 build→parse→build 幂等;`### 子标题` 不匹配上面的 `##` 正则,不会被误判。
-        current = "map";
-        parts.map = [...(parts.map ?? []), line];
-        continue;
-      }
       current =
         heading[1] === "需求"
           ? "demands"
@@ -351,11 +337,7 @@ export function parseCompactedBlock(content: string): CompactBlockParts {
       continue;
     }
     if (current && line.trim() !== "" && line !== "[compacted]" && line !== "[前文摘要]" && !isRecallHintLine(line)) {
-      if (current === "map") {
-        parts.map = [...(parts.map ?? []), line];
-      } else {
-        parts[current].push(line);
-      }
+      parts[current].push(line);
     }
   }
   return parts;
@@ -375,7 +357,6 @@ export function mergeCompactedTracks(prev: CompactBlockParts, next: CompactBlock
     return out;
   };
   return {
-    map: next.map && next.map.length > 0 ? next.map : prev.map,
     demands: merge(prev.demands, next.demands),
     conclusions: merge(prev.conclusions, next.conclusions),
     explanations: merge(prev.explanations, next.explanations),
@@ -401,14 +382,26 @@ function track(title: string, lines: string[], includeEmptyTitle = true): string
  * 注意:内容固定不变,否则每次压缩重建都会改变块尾字节 → 缓存前缀断裂。
  */
 export const RECALL_HINT_LINE =
-  "(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))";
+  "(hint: 当前目标见任务锚;原文→ContextRecall(seq=n))";
 
-/** 旧版提示行(历史会话已落盘的块):解析时同样跳过,避免被当成业务行。 */
+/**
+ * 旧版提示行(历史会话已落盘的块):解析时同样跳过,避免被当成业务行。
+ * - v1:`(hint: ContextRecall(seq=n) → [r{n}])`
+ * - v2(2026-09-16 前):`(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))`
+ *   —— v2 文案把「需求轨**首条**」指为会话目标;目标语义已改为「最新一条」后,
+ *   该文案会把模型引回早已完成的陈旧目标(实测「完成git处理」钉死数十天),
+ *   故 v3 改为不指向具体轨行(目标由任务锚单行给出),降低迷失概率。
+ */
 export const LEGACY_RECALL_HINT_LINE = "(hint: ContextRecall(seq=n) → [r{n}])";
+export const LEGACY_RECALL_HINT_LINE_V2 = "(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))";
 
 /** 是否为压缩块提示行(当前或历史版本)。 */
 export function isRecallHintLine(line: string): boolean {
-  return line === RECALL_HINT_LINE || line === LEGACY_RECALL_HINT_LINE;
+  return (
+    line === RECALL_HINT_LINE ||
+    line === LEGACY_RECALL_HINT_LINE ||
+    line === LEGACY_RECALL_HINT_LINE_V2
+  );
 }
 
 /** 构建合并压缩块(带 [compacted] 标记) */
@@ -591,8 +584,6 @@ export function truncateLongLines(lines: string[], maxLine = 240): string[] {
 /** 把多轨行统一截断(供块超限时的兜底)。 */
 export function truncateParts(parts: CompactBlockParts, maxLine = 240): CompactBlockParts {
   return {
-    // 旧块若带地图轨(历史遗留),原样保留、不参与截断/裁剪(地图已废弃,不再写入新块)。
-    ...(parts.map ? { map: parts.map } : {}),
     demands: truncateLongLines(parts.demands, maxLine),
     conclusions: truncateLongLines(parts.conclusions, maxLine),
     explanations: truncateLongLines(parts.explanations, maxLine),
