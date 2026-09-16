@@ -155,7 +155,7 @@ export function buildNextStepSection(pending: string[] | undefined): string {
 
 /**
  * 组合任务锚文本(固定提示 + 会话目标 + 下一步 + 最新清单)。
- * `goalLine` 可选:非空时输出单行 `**会话目标:** <最初需求>`(压缩块需求轨首条)。
+ * `goalLine` 可选:非空时输出单行 `**会话目标:** <最新需求>`(压缩块需求轨最新一条 = 当前任务)。
  *   历史(2026-09-16):此处原为 `mapLines`(6 段常驻任务地图)。地图的「已做/结果」两段
  *   构成自我强化闭环 —— 模型自己的过程旁白 → 结论轨 → 地图「结果」段 → 锚 → 回喂自身,
  *   实测让「现在重启了」5 个字跑 56 轮。整块删除,只保留「把目标放到消息尾部」这个真价值。
@@ -199,7 +199,7 @@ export function injectTodoIntoMessages(
   todoBlock: string,
   opts?: {
     anchorOnToolResult?: boolean;
-    /** 单行会话目标(压缩块需求轨首条);非空时输出 `**会话目标:** …`。 */
+    /** 单行会话目标(压缩块需求轨最新一条 = 当前任务);非空时输出 `**会话目标:** …`。 */
     goalLine?: string;
     pendingTodos?: string[];
     /** 模式说明(T2):原先挂 system 后缀,现随锚投递到消息尾部。 */
@@ -369,7 +369,7 @@ export class AgentSession {
       goalAnchorEnabled: this.deps.goalAnchorEnabled !== false,
     });
     // 恢复路径种子:目标已移出压缩块(不再随块持久化),会话恢复后到下次压缩之间
-    // residentGoal 会为空 → 任务锚短时丢目标行。此处从恢复块的需求轨首条重建
+    // residentGoal 会为空 → 任务锚短时丢目标行。此处从恢复块的需求轨最新一条真实需求重建
     // (幂等/确定性,只走消息尾部锚,不参与压缩块前缀)。
     // 优先取 apiHistory 里的压缩块,其次回退 preset 快照(ContextManager 内部处理)。
     this.contextManager.seedResidentGoal?.(this.extractCompactedBlock());
@@ -783,7 +783,7 @@ export class AgentSession {
           // 三类内容互相独立,任一非空即注入(T1 地图已移出压缩块、T2 模式说明已移出 system,
           // 尾部锚是它们唯一的投递通道):
           //  - 清单:仅未完成项(全完成不注入,避免模型反复 TodoWrite);
-          //  - 会话目标:压缩块需求轨首条(最初需求),单行投递,保证每轮可见(含工具轮);
+          //  - 会话目标:压缩块需求轨**最新一条**(= 当前任务),单行投递,保证每轮可见(含工具轮);
           //  - 模式说明:自 T2 起不再挂 system 后缀(system 字节变化会让 tools + 全部 messages 前缀 miss)。
           // 全空不注入,避免无意义尾部膨胀;清单最新状态由 TodoWrite 的 tool_result(尾部)传播——
           // 绝不进 system(todo / mode 等动态内容都会打断前缀)。

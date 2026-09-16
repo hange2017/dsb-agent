@@ -156,14 +156,14 @@ export interface ContextManagerOptions {
    */
   presetCompactedBlock?: string;
   /**
-   * 目标锚:true 时维护**单行会话目标**(`demands[0]` = 最初需求),
+   * 目标锚:true 时维护**单行会话目标**(= 压缩块需求轨**最新一条真实需求**,即当前任务),
    * 经任务锚在**消息尾部**投递(仅在锚里输出一行 `**会话目标:** …`)。
    *
    * 历史(2026-09-16):此处原为「任务地图(taskMapEnabled)」——6 段地图
    * (目标/最新要求/近期需求/已做/结果/更早的需求)。实测其「已做/结果」两段构成
    * **自我强化闭环**(模型自己的旁白 → conclusions 轨 → 地图结果段 → 锚 → 回喂自身),
    * 使「短消息 → LLM 轮次」中位数从 5 轮涨到 56 轮;且 6 段全是压缩块 4 轨的投影,
-   * **零新增信息**。故整块删除,只保留「把最初目标放到尾部」这一个真正有价值的点。
+   * **零新增信息**。故整块删除,只保留「把当前目标放到消息尾部」这一个真正有价值的点。
    * 详见 `.dsb/specs/2026-09-16-去任务地图降级为单行目标锚-design.md`。
    *
    * 缺省 false(不输出目标行,等价旧行为)。
@@ -171,17 +171,11 @@ export interface ContextManagerOptions {
   goalAnchorEnabled?: boolean;
 }
 
-/** 可被压缩裁掉的轨道(map 除外:地图永不删)。 */
+/** 可被压缩裁掉的轨道(地图轨已于 2026-09-16 废弃,块内只余这 4 条)。 */
 type TrimTrack = "demands" | "conclusions" | "explanations" | "ledger";
 
 /**
- * 需求轨**免裁保护**条数:首条 + 末尾 K 条。
- * 首条 = 最初目标(会作为「会话目标」单行常驻于任务锚尾部);末尾 = 最新要求。
- * 软保护开启时只裁中间段,保证「目标 + 最新要求」永不因预算被裁掉。
- */
-const DEMAND_KEEP_TAIL = 2;
-
-/** A5:从消息列表内容中提取 `[r{n}]` 序号(保持出现顺序)。 */
+ * A5:从消息列表内容中提取 `[r{n}]` 序号(保持出现顺序)。 */
 function extractSeqsFromMessages(messages: ProviderMessage[]): number[] {
   const out: number[] = [];
   for (const msg of messages) {
@@ -206,7 +200,7 @@ export class ContextManager {
   private nextSeq = 1;
   /** thinking 压缩开关(可热更新;plan/ask 模式关闭)。 */
   private thinkingEnabled: boolean;
-  /** 常驻会话目标(`demands[0]` = 最初需求);只经任务锚在消息尾部投递,不进压缩块。 */
+  /** 常驻会话目标(需求轨最新一条真实需求 = 当前任务);只经任务锚在消息尾部投递,不进压缩块。 */
   private residentGoal = "";
   /** thinking 压缩发生时的回调(成功或失败均触发,用于成本统计);缺省不回调。 */
   onThinkingCompaction?: () => void;
@@ -256,7 +250,7 @@ export class ContextManager {
   }
 
   /**
-   * 常驻**会话目标**(`demands[0]`,即最初需求):最近一次压缩/恢复种子得到。
+   * 常驻**会话目标**(需求轨最新一条真实需求 = 当前任务):最近一次压缩/恢复种子得到。
    * 供任务锚每轮在**消息尾部**输出一行 `**会话目标:** …`;不参与压缩块前缀。
    * 未压缩/未开启/无种子时返回空串(锚不输出该行,字节与旧版一致)。
    */
@@ -265,7 +259,7 @@ export class ContextManager {
   }
 
   /**
-   * 恢复路径种子:从恢复的压缩块(或 preset 快照)的**需求轨首条**重建会话目标。
+   * 恢复路径种子:从恢复的压缩块(或 preset 快照)的**需求轨最新一条真实需求**重建会话目标。
    *
    * 地图移出压缩块后不再随块持久化 → 会话恢复后到「下次压缩」之间 `residentGoal` 为空,
    * 任务锚会短时丢失目标行。此处用恢复块里仍在的需求轨重建:幂等且确定性
@@ -467,8 +461,8 @@ export class ContextManager {
     };
     // 地图(6 段)已整块删除(2026-09-16):其「已做/结果」两段构成自我强化闭环
     // (模型旁白 → conclusions 轨 → 地图结果段 → 锚 → 回喂自身),且 6 段全是 4 轨投影、零新增信息。
-    // 现只保留「会话目标」一行(需求轨首条 = 最初需求),经任务锚在**消息尾部**投递。
-    const blockParts: CompactBlockParts = { ...purged, map: undefined };
+    // 现只保留「会话目标」一行(需求轨最新一条 = 当前任务),经任务锚在**消息尾部**投递。
+    const blockParts: CompactBlockParts = { ...purged };
     if (this.opts.goalAnchorEnabled) {
       this.residentGoal = this.buildResidentGoal(purged);
     }
@@ -783,81 +777,80 @@ export class ContextManager {
   }
 
   /**
-   * 收缩轨道行直到压缩块 token ≤ 预算。删除顺序:
-   * 结论/说明/履历轨按 seq 最新优先(删块尾,稳定段前缀字节不变);
-   * 需求轨最后才动,且保护首条与最近 3 条,只删中间 —— 目标不被压缩丢弃。
+   * 收缩轨道行直到压缩块 token ≤ 预算。删除顺序严格遵守规则 4「只删尾部」:
+   * 按 section 物理顺序从后往前(工具履历 → 说明 → 结论 → 需求),段内 seq 最新优先。
+   * 删除点始终落在块最末尾 → 已固化前缀字节零变化(需求首条天然留到最后)。
    */
   private trimTracksToBudget(parts: CompactBlockParts, budgetTokens: number): CompactBlockParts {
     let current = parts;
     let guard = 0;
-    // 两阶段:① 软保护(首条 + 末尾 N 条需求免裁)——尽量保住「中期目标澄清」;
-    // ② 仍超预算则放开软保护(仅首条免裁)——极端预算下必须能收敛,否则块无界膨胀。
-    for (const softProtect of [true, false]) {
-      while (this.blockTokens(current) > budgetTokens && guard < 1000) {
-        guard++;
-        const victim = this.pickTrimVictim(current, softProtect);
-        if (!victim) break;
-        current = {
-          ...current,
-          [victim.track]: current[victim.track].filter((l) => l !== victim.line),
-        };
-      }
-      if (this.blockTokens(current) <= budgetTokens) break;
+    while (this.blockTokens(current) > budgetTokens && guard < 1000) {
+      guard++;
+      const victim = this.pickTrimVictim(current);
+      if (!victim) break;
+      current = {
+        ...current,
+        [victim.track]: current[victim.track].filter((l) => l !== victim.line),
+      };
     }
     return current;
   }
 
   /**
-   * 生成常驻**会话目标**(`demands[0]` = 最初需求,受 pickTrimVictim 首条保护)。
+   * 生成常驻**会话目标**(取需求轨**最新一条**已提交需求,即当前正在推进的任务)。
    *
-   * 历史(2026-09-16):此处原为 `buildResidentMap` —— 生成 6 段常驻地图
-   * (目标/最新要求/近期需求/更早的需求/已做/结果)。该地图有致命闭环:
-   *   `parts.conclusions`(结论轨)本就是「assistant 文本」的投影,而「结果」段直接取它
-   *   → 模型在上一轮的**过程旁白**会被写入结论轨 → 进入地图「结果」段 → 经任务锚回到模型眼前。
-   *   于是模型开始「回应自己的分析」而不是推进任务:「现在重启了」5 个字跑 56 轮 / 151 次工具调用。
-   *   同时「已做」取 ledger 原文(原始 Bash 命令),对定位毫无帮助,只稀释注意力。
-   *   整块删除:6 段全是压缩块 4 轨的**投影**,零新增信息;「还剩什么没做」由 TodoManager
-   *   的 pending 项(锚的 `### 下一步`)负责,本来就不该由地图冒充。
-   * 保留唯一真价值:把最初目标放到**消息尾部**(注意力更强),即下面这一行。
+   * 历史(2026-09-16,两步):
+   * ① 原为 `buildResidentMap` —— 6 段常驻地图(目标/最新要求/近期需求/更早的需求/已做/结果)。
+   *    致命闭环:`parts.conclusions` 本就是「assistant 文本」的投影,而「结果」段直接取它
+   *    → 模型上一轮的**过程旁白**被写入结论轨 → 进入地图「结果」段 → 经任务锚回到模型眼前,
+   *    于是模型开始「回应自己的分析」而不是推进任务(「现在重启了」5 个字跑 56 轮 / 151 次工具调用)。
+   *    整块删除后只留一行目标。
+   * ② 首版目标取 `demands[0]`(最初需求)+ pickTrimVictim 首条**硬保护** → 双重锁死:
+   *    最初需求永不被裁、也永远是「会话目标」。在**跨多个任务的长会话**里这是错的:
+   *    实测本会话第 1 条需求「完成git处理」早已完成数十天,却仍被当作当前目标逐轮注入,
+   *    持续诱导模型回跑去关联早已结束的 git 任务。**目标必须跟随当前任务** → 改取最新一条:
+   *    - `demands` 末条 = 最近一次用户提交的需求(最新轮次的意图),跨任务自然切换;
+   *    - 若末条是运行时合成行则向前回退到最近一条真实需求;
+   *    - 目标仍在**消息尾部**投递(尾部变化不破坏前缀),且不写入压缩块。
    */
   private buildResidentGoal(parts: CompactBlockParts): string {
-    // 过滤历史遗留的「运行时合成」行(`- [rN] [续写] …` / `[输出中断]`),避免污染目标语义。
+    // 从尾部找最近一条真实需求(过滤历史遗留的「运行时合成」行,如 `- [rN] [续写] …`)。
     const demands = parts.demands.filter((l) => !isRuntimeSyntheticText(l));
-    const first = demands[0] ?? "";
+    if (demands.length === 0) return "";
+    const latest = [...demands].sort((a, b) => rSeq(a) - rSeq(b))[demands.length - 1];
     // 剥掉轨行前缀 `- [rN] `:目标行在锚里作普通文本展示,保留序号无意义且显得杂乱。
-    return first.replace(/^-\s*\[r\d+\]\s*/, "").trim();
+    return latest.replace(/^-\s*\[r\d+\]\s*/, "").trim();
   }
 
   /**
-   * 选择要压缩删除的轨道行(替代原先「一律删最新 seq」):
-   *  - 非 demands 轨:照旧按 seq 最新优先删(块尾先动,稳定段前缀字节不变);
-   *  - demands 轨:最后才动,且**首条(最初目标)与末尾 N 条(最新要求/近期澄清)免裁**,只删中间。
-   * 返回 undefined 表示无可删行(仅剩受保护的需求,预算已无法再降)。
+   * 选择要压缩删除的轨道行。严格「删除只落块尾」:按 section 物理顺序从后往前
+   * (工具履历 → 说明 → 结论 → 需求)逐段耗尽,段内按 seq 最新优先。
+   * 返回 undefined 表示无可删行(所有轨已空),预算无法再降。
    */
   private pickTrimVictim(
     parts: CompactBlockParts,
-    softProtectDemands = true,
   ): { track: TrimTrack; line: string } | undefined {
-    const others: Array<{ track: TrimTrack; line: string; seq: number }> = [];
-    for (const track of ["conclusions", "explanations", "ledger"] as const) {
-      for (const line of parts[track]) others.push({ track, line, seq: rSeq(line) });
+    // 严格「块尾优先」:按 section 物理顺序**从后往前**逐段删
+    // (工具履历 → 说明 → 结论 → 需求),段内按 seq 最新优先。
+    //
+    // 依据规则 4「裁剪只删尾部」。旧实现跨段按**全局**最新 seq 取 victim —— 全局最新可能
+    // 落在靠前的段(如结论),删它会让其后所有段(说明/工具履历)整体前移 → 前缀在块**中部**
+    // 断裂。改为从最后一个 section 起逐段耗尽:删除点始终落在块的**最末尾**,
+    // 已固化前缀字节零变化 → 前缀保留最长。
+    //
+    // 需求轨也一视同仁:**首条不再硬保护、末尾也不再保留**。
+    // 二者此前的存在理由是「目标 = demands[0] / 末尾最新要求」;现在目标取值虽仍取
+    // 「最新一条」(见 buildResidentGoal),但它在**裁剪之前**就从 parts 捕获、经任务锚在
+    // 消息尾部投递 —— 不依赖块内残留。故块内需求行按尾部优先自由裁撤即可(且尾优先删除
+    // 天然让首条留到最后),前缀稳定性最好。
+    for (const track of ["ledger", "explanations", "conclusions", "demands"] as const) {
+      const lines = parts[track];
+      if (lines.length === 0) continue;
+      let victimLine = lines[0];
+      for (const line of lines) if (rSeq(line) > rSeq(victimLine)) victimLine = line;
+      return { track, line: victimLine };
     }
-    if (others.length > 0) {
-      others.sort((a, b) => b.seq - a.seq);
-      return { track: others[0].track, line: others[0].line };
-    }
-    // 非需求轨已空:动需求轨。
-    // 软保护开:首条(最初目标) + 末尾 N 条(最新要求 + 近期澄清)免裁,只删中间;
-    // 软保护关(极端预算兜底):仅首条免裁,其余按 seq 最新优先删 —— 必须能收敛。
-    const demands = parts.demands;
-    const keepTail = softProtectDemands
-      ? Math.min(DEMAND_KEEP_TAIL, Math.max(0, demands.length - 1))
-      : 0;
-    const middle = demands.slice(1, demands.length - keepTail);
-    if (middle.length === 0) return undefined;
-    let victimLine = middle[0];
-    for (const line of middle) if (rSeq(line) > rSeq(victimLine)) victimLine = line;
-    return { track: "demands", line: victimLine };
+    return undefined;
   }
 
   /**

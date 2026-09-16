@@ -1281,7 +1281,7 @@ describe("ContextManager compaction events", () => {
 describe("ContextManager 会话目标锚(单行)", () => {
   const textMsg = (n: number): ProviderMessage => ({ role: "user", content: "中".repeat(n) });
 
-  it("goalAnchorEnabled: 会话目标=需求轨首条(最初需求),且不写入压缩块", async () => {
+  it("goalAnchorEnabled: 会话目标=需求轨最新一条(当前任务),且不写入压缩块", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
@@ -1306,8 +1306,9 @@ describe("ContextManager 会话目标锚(单行)", () => {
     expect(content).not.toContain("### 已做");
     expect(content).not.toContain("### 结果");
     expect(content).toContain("## 需求");
-    // 单行目标 = 需求轨首条(最初需求);已剥掉 `- [rN] ` 轨行前缀
-    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
+    // 单行目标 = 需求轨**最新一条**(= 当前任务);已剥掉 `- [rN] ` 轨行前缀。
+    // 目标必须跟随当前任务:旧语义取首条会让「最初目标」在跨任务长会话里被永久钉死。
+    expect(cm.getResidentGoal()).toBe("澄清:其实要保住地图");
   });
 
   it("goalAnchorEnabled 缺省(false):不生成目标,getResidentGoal 为空(字节与旧版一致)", async () => {
@@ -1317,7 +1318,7 @@ describe("ContextManager 会话目标锚(单行)", () => {
     expect(cm.getResidentGoal()).toBe("");
   });
 
-  it("目标不漂移:中途加入澄清/新需求后,目标仍是首条(最初需求)", async () => {
+  it("目标跟随当前任务:取块内最新需求(不再钉死首条),仍在 tail 的新需求留待下轮入块", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
@@ -1330,15 +1331,19 @@ describe("ContextManager 会话目标锚(单行)", () => {
       ...Array.from({ length: 4 }, () => textMsg(30)),
     ];
     const first = await cm.compact(base);
-    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
-    // 第二轮:旧块 + 新的澄清 + 新需求;目标不得被末条需求顶掉
+    // 首轮:块内最新需求 = 「中间需求一」(最初目标已被更新的需求取代)
+    expect(cm.getResidentGoal()).toBe("中间需求一");
+    // 第二轮:旧块 + 新澄清 + 新需求(新需求落在 tail,尚未入块)
     await cm.compact([
       ...first,
       { role: "user", content: "澄清:其实重点是缓存命中" },
       { role: "user", content: "新需求:再加一层保护" },
       ...Array.from({ length: 3 }, () => textMsg(30)),
     ]);
-    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
+    // 目标 = **块内**最新需求(已滚出 tail 的最近任务);这已不再是首条「最初目标」。
+    // 注意:「新需求」此刻仍在 tail(tail 里的最新需求模型直接可见,无需锚重复),
+    // 它会在下一次压缩入块后成为新的目标。
+    expect(cm.getResidentGoal()).toBe("澄清:其实重点是缓存命中");
   });
 
   it("目标行已剥离运行时合成行(`[续写]`/`[输出中断]` 不作目标)", async () => {
@@ -1377,7 +1382,7 @@ describe("ContextManager 会话目标锚(单行)", () => {
     const off = await cmOff.compact(msgs);
 
     // 前置:目标确实生成了(否则本测试失去意义),且确实不在块内
-    expect(cmOn.getResidentGoal()).toBe("最初目标:修压缩");
+    expect(cmOn.getResidentGoal()).toBe("澄清:其实要保住地图");
     expect(on[0].content as string).not.toContain("会话目标");
 
     // 核心断言:块字节与「关掉目标锚」逐字节相同 → 目标不触碰任何前缀
@@ -1385,7 +1390,7 @@ describe("ContextManager 会话目标锚(单行)", () => {
     expect(on.slice(1)).toEqual(off.slice(1));
   });
 
-  it("裁剪保护:极小预算下首条需求(目标)免裁", async () => {
+  it("裁剪保护:极小预算下按「只删尾部」收敛,最前缀行(最早需求)自然留存", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
@@ -1393,7 +1398,9 @@ describe("ContextManager 会话目标锚(单行)", () => {
       goalAnchorEnabled: true,
       historyTokenBudget: 2000, // 极紧预算:块必须裁剪才能收敛
     });
-    // 20 条长需求 → 按预算裁剪;首条(目标)是硬保护(软保护放开后仍免裁)
+    // 20 条长需求 → 按预算裁剪。裁剪严格遵守规则 4「只删尾部」:
+    // 需求轨是最后一个 section,段内按 seq 最新优先删 → 最早行(块内最前缀行)自然留到最后。
+    // 这既保住缓存前缀最长,也保住「最初目标」的留痕(目标本身另由任务锚取最新条投递)。
     const long = "需求正文" + "细节".repeat(120);
     const msgs: ProviderMessage[] = Array.from({ length: 20 }, (_, i) => ({
       role: "user",
@@ -1401,11 +1408,14 @@ describe("ContextManager 会话目标锚(单行)", () => {
     }));
     const out = await cm.compact(msgs);
     const content = out[0].content as string;
-    // 首条需求(最初目标)在任何预算下都不得被裁掉 → 目标不丢
+    // 「只删尾部」的必然结果:首条(最早需求)不会被删 → 前缀留存
     expect(content).toContain("需求0:");
     const demandLines = content.split("\n").filter((l) => /^-\s*\[r\d+\]\s*需求\d+:/.test(l));
     expect(demandLines.length).toBeGreaterThan(0);
     expect(demandLines[0]).toContain("需求0:");
+    // 且块内需求行严格按 seq 递增保留(被删的必是尾部,不可能中间挖空)
+    const seqs = demandLines.map((l) => Number(/\[r(\d+)\]/.exec(l)![1]));
+    expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
   });
 
   it("旧块「需求/结论」轨里的历史合成行会被一次性清除(不再随 merge 永久残留)", async () => {
@@ -1468,8 +1478,8 @@ describe("ContextManager 会话目标锚(单行)", () => {
     ].join("\n");
     expect(cm.getResidentGoal()).toBe("");
     cm.seedResidentGoal(legacy);
-    // 目标是需求轨**首条**;结论/履历不参与
-    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
+    // 目标是需求轨**最新一条**(当前任务);结论/履历不参与
+    expect(cm.getResidentGoal()).toBe("澄清:其实要保住地图");
   });
 
   it("恢复路径:种子幂等、不覆盖已有目标;非压缩块/关闭目标锚时不生效", () => {
