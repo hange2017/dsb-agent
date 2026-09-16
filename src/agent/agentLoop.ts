@@ -54,6 +54,7 @@ import { ToolRepeatTracker, type ToolRepeatHit } from "./toolRepeatDetector";
 import type { ColdChunk } from "../context/contextStore";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
+import { toReadOnlyMapLines } from "./taskMap";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
 import type { ModelCapabilities } from "../providers/types";
 import {
@@ -773,14 +774,23 @@ export class AgentSession {
           // 绝不进 system(todo / mode 等动态内容都会打断前缀)。
           const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : "";
           // 兜底可选调用:注入式 ContextManager(测试替身/旧实现)可能没有该方法。
-          const mapLines = this.contextManager.getResidentMap?.() ?? [];
+          const mapLinesRaw = this.contextManager.getResidentMap?.() ?? [];
+          // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
+          const pendingTodos = this.todo.list().filter((i) => !i.done).map((i) => i.content);
+          // P0-3(补全):**无未完成待办**时,地图退化为「只读上下文」——
+          // 地图原措辞(`**目标:**`/`**最新要求:**`/`### 近期需求`)带行动暗示,与锚首句
+          // 「当前没有未完成的待办,不要自行继续历史任务」自相矛盾;实测模型取后者继续干活
+          // (纯状态汇报消息被读成"继续未竟任务")。只改标题措辞为历史语义,条目正文保真。
+          const mapLines =
+            todoBlock.length === 0 && pendingTodos.length === 0
+              ? toReadOnlyMapLines(mapLinesRaw)
+              : mapLinesRaw;
           const requestMessages =
             todoBlock.length > 0 || mapLines.length > 0 || modeSeg.length > 0
               ? injectTodoIntoMessages(this.messages, todoBlock, {
                   anchorOnToolResult: this.deps.todoAnchorOnToolResult !== false,
                   mapLines,
-                  // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
-                  pendingTodos: this.todo.list().filter((i) => !i.done).map((i) => i.content),
+                  pendingTodos,
                   modeNote: modeSeg,
                 })
               : this.messages;

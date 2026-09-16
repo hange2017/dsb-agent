@@ -5,6 +5,7 @@ import {
   extractMapSectionItems,
   RECENT_DEMANDS_TITLE,
   taskMapLines,
+  isToolResultLedgerLine,
 } from "./taskMap";
 import {
   classifyAssistantText,
@@ -863,7 +864,13 @@ export class ContextManager {
       goal,
       latestGoal,
       recentDemands,
-      did: latest(parts.ledger, 3),
+      // P0-1(补全):「已做」只取**工具调用行**(`Bash: …`),剔除工具输出行(`⤷ exit=0 | …`)。
+      // 输出行会让单条「已做」占据整个 MAX_LINE(现场:一行原始输出顶掉其余条目),
+      // 地图无谓变长、稀释注意力;需要输出细节走 ContextRecall 回查。
+      did: latest(
+        parts.ledger.filter((l) => !isToolResultLedgerLine(l)),
+        3,
+      ),
       results: latest(parts.conclusions, 3),
       earlierDemands: latest(olderMiddle, 2),
     });

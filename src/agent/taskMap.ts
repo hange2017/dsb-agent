@@ -59,6 +59,44 @@ export interface TaskMapInput {
 const MAX_ITEMS = 3;
 const MAX_LINE = 160;
 
+/**
+ * 判断某条「工具履历」行是否为**工具输出行**(而非工具调用行)。
+ * 履约轨同时存两类行:
+ *  - 工具调用行:`- [rN] Bash: cd …`(summarizeToolUse 生成,描述"做了什么")
+ *  - 工具输出行:`- [rN] ⤷ exit=0 | …`(extractKeyLines 生成,描述"输出是什么")
+ * 地图「已做」段语义是"做了什么",输出行会把地图撑长并稀释注意力(现场:一行原始
+ * 输出占据整个「已做」条目);输出细节需要时走 ContextRecall 回查。故建图时剔除。
+ */
+export function isToolResultLedgerLine(line: string): boolean {
+  return stripSeq(line).startsWith("⤷");
+}
+
+/**
+ * 把任务地图「退化为只读上下文」(P0-3):无未完成待办时使用。
+ *
+ * 背景:地图原措辞(`**目标:**` / `**最新要求:**` / `### 近期需求`)带**行动暗示**,
+ * 与锚首句"当前没有未完成的待办,不要自行继续历史任务"直接矛盾 —— 模型会取后者
+ * 继续干活(现场:纯状态汇报消息被读成"继续未竟任务")。这里只改**标题措辞**,
+ * 把一切暗示"待办/目标"的标签改写为**历史记录**语义,信息量不减、字节稳定。
+ * 注意:不改条目正文(正文是原始消息,用户原话必须保真)。
+ */
+export function toReadOnlyMapLines(lines: string[]): string[] {
+  const rename: Array<[RegExp, string]> = [
+    [/^\*\*目标:\*\*\s*/, "**历史目标:** "],
+    [/^\*\*最新要求:\*\*\s*/, "**最近一条用户消息:** "],
+    [/^###\s*近期需求\s*$/, "### 近期历史消息"],
+    [/^###\s*更早的需求\s*$/, "### 更早的历史消息"],
+    [/^###\s*已做\s*$/, "### 已执行的工具"],
+    [/^###\s*结果\s*$/, "### 历史结论"],
+  ];
+  return (lines ?? []).map((raw) => {
+    for (const [re, to] of rename) {
+      if (re.test(raw)) return raw.replace(re, to);
+    }
+    return raw;
+  });
+}
+
 function clip(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > MAX_LINE ? t.slice(0, MAX_LINE - 1) + "…" : t;
