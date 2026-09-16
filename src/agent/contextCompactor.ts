@@ -133,18 +133,12 @@ export function splitBlocks(text: string): TextBlock[] {
   return blocks;
 }
 
-/** 文本是否含结构性块(标题/列表/代码/表格)——这类内容是交付物,而非过程旁白(P0-1)。 */
-function hasStructuralBlock(text: string): boolean {
-  return splitBlocks(text).some((b) => b.type !== "para");
-}
-
 /**
  * 分类 assistant 文本:
- *  - heading/list/code/table 块 → 结论
- *  - 短文本(整体)→ 结论;但**带 tool_use 且无结构块**的短文本是过程旁白 → 解释(P0-1)
- *  - 首段 / 尾段(未超长)→ 结论(仅**终答轮**;过程轮不适用,P0-1)
- *  - 含结论关键词的段落 → 结论
- *  - 其余 → 解释
+ *  - **过程轮(伴 tool_use)**:一律判解释 —— 结构块是"取证/分析记录",段落是过渡旁白,
+ *    都不是交付物(P0-1 补全);即便含列举/代码也不例外。
+ *  - **终答轮(无 tool_use)**:heading/list/code/table 块 → 结论;短文本(整体)→ 结论;
+ *    首/尾段(未超长)→ 结论;含结论关键词的段落 → 结论;其余 → 解释。
  */
 export function classifyAssistantText(text: string, hasToolUse: boolean): AssistantTextParts {
   const conclusion: string[] = [];
@@ -157,11 +151,12 @@ export function classifyAssistantText(text: string, hasToolUse: boolean): Assist
   const len = trimmed.length;
   const shortThreshold = hasToolUse ? SHORT_TEXT : SHORT_NO_TOOL;
   if (len < shortThreshold) {
-    // P0-1:带 tool_use 的短文本是「过程旁白」(先取证不臆断 / 继续推进 / 收到),不是终答。
-    // 若判为结论 → 进 conclusions 轨 → 地图「结果」段 → 下轮任务锚回喂自身,
-    // 形成自我强化循环(实测:「现在重启了」5 字被读成继续未竟 git 任务,烧 56 轮/151 次工具调用)。
-    // 但含结构块(标题/列表/代码/表格)的短文本是**交付物**,仍判结论。
-    if (hasToolUse && !hasStructuralBlock(trimmed)) {
+    // P0-1(补全):带 tool_use 的短文本一定是「过程旁白」(先取证不臆断 / 继续推进 / 收到),
+    // 不是终答 —— **含结构块也一样**。旧逻辑只拦「无结构块」的短文本,漏掉了带代码/列表的
+    // 分析片段:它们被判结论 → 进 conclusions 轨 → 地图「结果」段 → 下轮任务锚回喂自身,
+    // 形成自我强化循环(实测:过程旁白被判结论,单条 43 字消息跑 20 轮 / 5.3 万输出 token)。
+    // 终答轮(无 tool_use)才可能产出结论。
+    if (hasToolUse) {
       explanation.push(trimmed);
     } else {
       conclusion.push(trimmed);
@@ -173,7 +168,14 @@ export function classifyAssistantText(text: string, hasToolUse: boolean): Assist
   const n = blocks.length;
   blocks.forEach((block, idx) => {
     if (block.type !== "para") {
-      conclusion.push(block.text);
+      // P0-1(补全):过程轮(伴 tool_use)的结构块(代码/列表/表格/标题)是「取证/分析记录」,
+      // 不是交付物 —— 结构块只在终答轮才算结论。旧逻辑无条件判结论,导致我每轮的分析正文
+      // (几乎全是代码块 + 列表)持续灌进 conclusions 轨 → 地图「结果」段 → 下轮锚回喂自己。
+      if (hasToolUse) {
+        explanation.push(block.text);
+      } else {
+        conclusion.push(block.text);
+      }
       return;
     }
     // P0-1:过程轮(伴 tool_use)的首/尾段落不再自动判结论 —— 那是开场铺垫/过渡旁白;

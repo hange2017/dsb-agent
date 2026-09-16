@@ -27,7 +27,7 @@ describe("classifyAssistantText", () => {
     expect(r.explanation).toEqual([]);
   });
 
-  it("keeps headings, lists, code and tables as conclusion", () => {
+  it("keeps headings, lists, code and tables as conclusion on a FINAL (no-tool) turn", () => {
     const text = [
       "## 方案",
       "采用分轨压缩方案。",
@@ -43,9 +43,29 @@ describe("classifyAssistantText", () => {
       "|---|----|",
       "| a | 1  |",
     ].join("\n");
-    const r = classifyAssistantText(text, true);
+    const r = classifyAssistantText(text, false);
     expect(r.conclusion.length).toBeGreaterThan(0);
     expect(r.explanation).toEqual([]);
+  });
+
+  it("P0-1(补全): on a tool turn, structural blocks are work-in-progress, not conclusions", () => {
+    // 现场:过程轮的分析正文(几乎全是代码块 + 列表)曾被**无条件**判结论 → 进 conclusions 轨
+    // → 地图「结果」段 → 下轮任务锚回喂自身 → 自我强化循环(单条 43 字消息跑 20 轮)。
+    // 终答轮(无 tool_use)才可能产出结论,过程轮一律降级 explanation。
+    const text = [
+      "## 分析",
+      "先看这段代码:",
+      "",
+      "```ts",
+      "const x = 1;",
+      "```",
+      "",
+      "- 要点一",
+      "- 要点二",
+    ].join("\n");
+    const r = classifyAssistantText(text, true);
+    expect(r.conclusion).toEqual([]);
+    expect(r.explanation.length).toBeGreaterThan(0);
   });
 
   it("splits a long reply: first/last paragraphs are conclusion, middle paragraphs are explanation", () => {
