@@ -1,7 +1,7 @@
 # DSBAgent — 项目总体框架
 
 > 生成时间:2026-08-16(最近一周工作同步后重写;08-16 同步交互式追加 / 滚动冻结 / 轮次导航)
-> 更新:2026-09-15(三补:地图「下一步」不再冒充待办 → 改「更早的需求」;任务锚按真实未完成 todo 注入 `### 下一步`)
+> 更新:2026-09-16(**去掉 6 段「任务地图」→ 降级为单行「会话目标」锚**;地图六段是压缩块 4 轨的投影且构成「输出→结论轨→结果段→锚→回喂」自我强化闭环,实测短消息中位轮次 5→56 轮。保留「目标放消息尾部」这一真价值)
 > 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 117 个 .ts、webview 16 个文件、tests 110 个测试文件 / 1175 项)
 
 ## 项目简介
@@ -50,17 +50,14 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 ### 3. 引擎核心 — `src/agent/`(不依赖 vscode 模块,可单测)
 - `agentLoop.ts`:Agent 主循环(模型调用 → 工具执行 → 上下文管理 → 压缩判定),`deps` 注入全部依赖,事件通过 `onEvent` 外发(含 `compaction_stats`)。
   - **缓存前缀稳定性(P0-P3)**:todo 移出 system 注入请求尾部(P0);trim 类 tool_result 写前定型(P1);trim 类 tool_use/thinking 写前定型 + thinkingPolicy 幂等保护(P3)——保证 messages 前缀字节跨轮稳定,最大化缓存命中。
-  - **任务锚(task anchor,2026-09-14)**:`buildTaskAnchor(todoBlock, mapLines, pendingTodos)` / `injectTodoIntoMessages(messages, todoBlock, { anchorOnToolResult, mapLines, pendingTodos })` 把「固定提示 + 下一步 + 常驻任务地图 + 最新清单 + 回查入口」注入本轮请求(仅请求视图,不进持久历史)。`### 下一步` 段(`buildNextStepSection`)由**真实未完成待办**生成(调用方只传 `done=false` 项),无未完成项时不输出。**工具执行轮也可见**(尾部为 tool_result 时把锚作为 text 块追加在同一条 user 消息内,不新增 user 消息 → 不破角色交替);绝不挂 system 后缀(避免前缀全 miss)。
+  - **任务锚(task anchor,2026-09-16 降级为单行目标锚)**:`buildTaskAnchor(todoBlock, goalLine, pendingTodos, modeNote)` / `injectTodoIntoMessages(messages, todoBlock, { anchorOnToolResult, goalLine, pendingTodos, modeNote })` 把「固定提示 + 单行会话目标 + 下一步 + 最新清单 + 回查入口」注入本轮请求(仅请求视图,不进持久历史)。**会话目标**仅 1 行(`**会话目标:** ${demands[0]}`,取压缩块需求轨首条,首条免裁故始终可得);`### 下一步` 段(`buildNextStepSection`)由**真实未完成待办**生成(调用方只传 `done=false` 项),无未完成项时不输出。**工具执行轮也可见**(尾部为 tool_result 时把锚作为 text 块追加在同一条 user 消息内,不新增 user 消息 → 不破角色交替);绝不挂 system 后缀(避免前缀全 miss)。
+    - **为何去掉 6 段「任务地图」**(2026-09-16):地图六段(目标/最新要求/近期需求/更早的需求/已做/结果)全是压缩块 4 轨的**投影**,零新增信息;且「已做」(来自 ledger 工具履历原文)与「结果」(来自 conclusions)构成**自我强化闭环** —— 模型自己的过程旁白 → 结论轨 → 地图「结果」段 → 锚 → 回喂自身。实测短消息(≤15 字)中位轮次 5 → 56 轮(决定性单例:「现在重启了」跑 56 轮/151 次工具调用)。降级后只保留「把目标放到消息尾部」这一真价值(1 行即可)。详见 `.dsb/specs/2026-09-16-去任务地图-降级为单行目标锚.md`。
   - **交互式追加队列**:busy 期间 `append(text)` 把新消息排入 `pendingAppends`,下一轮发送前注入消息尾部并发出 `user_message` 事件(只 push 不改写既有消息 → 前缀字节稳定;空闲时追加按钮隐藏,走普通发送)。
   - **thinking 处理侧开关**:thinking 剥离不进历史/压缩/脉络(可整体关闭)。
 - `contextManager.ts` / `contextCompactor.ts`:上下文组装、压缩(触发比例 `dsbAgent.compaction.triggerRatio` 默认 0.75)、压缩块 `[compacted]` 摘要、thinking 独立压缩。
   - **P2 压缩块 append-only**:只增尾部/只删尾部、标题恒输出、re-summarize 只动尾部新增行——稳定段前缀字节恒定,根治压缩后缓存雪崩。
-  - **常驻任务地图(P2,2026-09-14)**:压缩块首段置 `## 任务地图`(map 轨,**裁剪候选不含它 → 永不删**),`buildResidentMap(parts, prevMap)` 从需求轨/结论轨/履历轨确定性推导**六段**(目标/最新要求/近期需求/更早的需求/已做/结果;`### 下一步` 不在此生成——块内访问不到 todo,由任务锚按真实待办注入);
-    - `map.goal` = 需求轨首条(受保护);
-    - `map.latestGoal` = 需求轨末条 → 常驻 `**最新要求:**` 行,**覆盖多轮中的「目标澄清/修正」**,避免只记住最初目标;
-    - 「近期需求」**累积式**(`extractMapSectionItems` + `accumulateRecentDemands`):中期澄清一旦进地图即**粘住**,不随需求轨中间行被裁掉;
-    - 「更早的需求」(`EARLIER_DEMANDS_TITLE`)= 需求轨较早的中间需求(取最近 2 条):**语义是历史需求,不宣称是待办**;
-    - 灰度开关 `dsbAgent.compaction.taskMapEnabled`(默认 true);关闭时块字节与旧版完全一致。
+  - **~~常驻任务地图(P2,2026-09-14)~~ 已移除(2026-09-16)**:原压缩块首段置 `## 任务地图`(map 轨,永不参与裁剪),由 `buildResidentMap` 推导六段(目标/最新要求/近期需求/更早的需求/已做/结果)。**移除原因**:①六段全是压缩块 4 轨(`demands/conclusions/explanations/ledger`)的**投影**,零新增信息;②「已做」来自 ledger(工具履历**原文**,旁白过滤规则治不到)、「结果」来自 conclusions,二者构成**自我强化闭环** —— 模型自己的过程旁白 → 结论轨 → 地图「结果」段 → 锚 → 回喂自身;实测「现在重启了」5 字跑 56 轮/151 次工具调用。**现改为**:压缩块只维护 `residentGoal`(= `demands[0]`),锚里以 1 行 `**会话目标:**` 复述。
+    - 开关主键 `dsbAgent.compaction.goalAnchorEnabled`(默认 true);**旧键 `taskMapEnabled` 回退兼容**(0.4.0 已发布该键,新键缺省时读旧键,新键优先),老用户配置不静默失效。
   - **需求轨保护(P0-a)**:`pickTrimVictim` 取代「一律删最大 seq」——非需求轨仍按 seq 最新优先删(稳定段前缀字节不变);**需求轨最后才动且首条永不删**,只删中间;两阶段收敛(软保护→放开)。
   - **运行时合成文本不入语义轨(2026-09-14)**:`maxTokensContinue` 注入的续写提示(`isRuntimeContinueMessage`,判 `[续写]` 前缀)与 `[输出中断]` 占位(`INTERRUPTED_ASSISTANT_TEXT`)在入轨前跳过;`isRuntimeSyntheticText` **前缀感知**(先剥可选的 `[-*] ` 与 `[r{N}] ` 前缀,兼容轨行 `- [r2] [续写] …`)。
     - **两层清理**:①`buildResidentMap` 对 `demands` 与 `latest()` 统一过滤 → 地图六段全净;②`compact()` 合并后对**四条轨**(demands/conclusions/explanations/ledger)一次性过滤 → 清除旧会话遗留的轨行垃圾(否则 `mergeCompactedTracks` 会把它永久合并进「需求」轨,每轮复述"上一轮输出中断")。
@@ -74,7 +71,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
   - **`isTransientSummaryText` 改形状校验**:须匹配 `^[TRANSIENT-SUMMARY field=… chars=<数字>]`(或 ≤320 字符的旧式标记),消除「引用该标记的正常文档/编辑被误拒」。
   - **`TOOL_USE_KEEP_RECENT_COUNT=8`**:最近 8 条**已消费** tool_use 一律不精简(「已消费」≠ 垃圾,与 thinking 的 15 条对齐)。
 - `toolResultPolicy.ts` 工具结果精简(Bash/Grep 完整输出保留,trim 阈值 4000/100/12000;thinking 精简阈值 400、最近保留 15)。
-- `taskMap.ts`:常驻任务地图(纯函数、确定性,同输入必同输出 → 字节稳定可缓存)。`buildResidentMap` 由轨道推导六段:`**目标:**`(需求轨首条)/`**最新要求:**`(需求轨末条,覆盖多轮澄清)/`### 近期需求`(累积式)/`### 更早的需求`(较早中间需求,**不宣称是待办**)/`### 已做`(ledger 最近 3)/`### 结果`(conclusions 最近 3);每段 ≤3 行、单行 ≤160 字符(clip)。`next`(「下一步」)保留给**任务锚**用真实未完成待办生成,**压缩块内不输出**(块内访问不到 todo,用历史需求冒充待办会把已完成事项显示为「下一步」→ 诱导重复劳动)。含 `extractMapSectionItems`(从上一轮地图取段)、`accumulateRecentDemands`(累积合并去重)、`EARLIER_DEMANDS_TITLE`。
+- ~~`taskMap.ts`~~ **已删除(2026-09-16)**:原为常驻任务地图(纯函数六段推导)。因六段是压缩块 4 轨投影、且「已做/结果」两段把模型自身输出回喂(self-reinforcing loop),整文件删除;目标保留改为 `ContextManager` 的 `residentGoal`(单值,= `demands[0]`),锚以 1 行 `**会话目标:**` 投递。`contextCompactor.ts` 的 `CompactBlockParts.map` 字段**保留** —— 仅用于向后兼容解析旧会话的压缩块,不再写入。
 - `modePolicy.ts` / `thinkingPolicy.ts`:运行模式与 thinking 控制;`permission.ts` / `permissionRules.ts` / `capabilityGate.ts`:权限门禁与能力门(修复孤儿/缺 id tool_use 配对、禁止 todo 并入 tool_result)。
 - `systemPrompt.ts` / `agentTemplates.ts`:系统提示组装、子代理模板解析。
 - `subagentRunner.ts`:子代理执行;`workflow.ts`:多阶段工作流;`worktree.ts`:Git worktree 隔离。
@@ -158,6 +155,28 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 - 单测:`npx vitest run`(110 文件 / 1166 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(108 文件 / ~11MB,内置多平台 ripgrep)。
 - CI:`.github/workflows/ci.yml`(typecheck → vitest → vsce package,**windows/macos/ubuntu 三平台矩阵** + Marketplace/Open VSX/GitHub Release 发布 job)。
 - 引擎层(src/ 非 webview)不依赖 `vscode` 模块,全部逻辑可脱离宿主单测。
+
+## 近期工作重点(2026-09-16:去掉「任务地图」→ 降级为单行目标锚)
+
+> 用户核心诉求:加了任务地图后,「短消息 → 大量子任务」放大明显(疑与地图有关);且地图内容与真实待办无关(发「我现在重启了」,地图里却冒出 git 相关条目)。
+> 结论:**地图不是「少信息」,而是「多了一份自我回声」**——把它整个撤掉,只保留「把目标搬到消息尾部」这一真价值。
+
+1. **删除 `src/agent/taskMap.ts`**(及 `tests/taskMap.test.ts`):六段地图(目标/最新要求/近期需求/更早的需求/已做/结果)在语义上全是压缩块 4 轨(`demands/conclusions/explanations/ledger`)的**投影**,零新增信息。
+2. **根因 = 自我强化闭环**:「已做」来自 `ledger`(工具履历**原文**,旁白规则治不到),「结果」来自 `conclusions`(模型结论/过程旁白)。链路:模型自己的过程旁白 → 结论轨 → 地图「结果」段 → 任务锚 → **回喂模型自身**。
+   - 实证:短消息(≤15 字)中位轮次 **5 → 56**;决定性单例「现在重启了」5 字 → **56 轮 / 151 次工具调用**。
+   - 多轮补丁(旁白降级/只读化/输出行剔除/提示去标签)均未消除**物理入口**,故整块删。
+3. **降级为单行目标锚**:`ContextManager.buildResidentMap` → `buildResidentGoal(parts)`(只取 `demands[0]`);`residentMap: string[]` → `residentGoal: string`;`getResidentMap()`/`seedResidentMap()` → `getResidentGoal()`/`seedResidentGoal()`。
+4. **任务锚改签名**:`buildTaskAnchor(todoBlock, goalLine?, pendingTodos?, modeNote?)` 新增 `**会话目标:** ${goalLine}` 单行;`injectTodoIntoMessages` 的 `opts.mapLines` → `opts.goalLine`;删除 `sanitizeMapLines` / `toReadOnlyMapLines` 与 `./taskMap` import。
+5. **「不迷失」的三条替代保证**:① 长会话忘最初目标 → 单行 `**会话目标:**`(demands[0],首条免裁);② 忘还剩什么 → `### 下一步`(来自 `TodoManager` 真实 pending,有完成度判定);③ 忘历史细节 → `ContextRecall(seq=n)` 回查 `[r{n}]`。
+6. **向后兼容**:`CompactBlockParts.map` 字段保留(仅供解析旧会话遗留压缩块),不再写入;设置主键 `dsbAgent.compaction.goalAnchorEnabled`,**旧键 `taskMapEnabled` 回退兼容**(新键优先,老用户配置不静默失效)。
+7. **验证**:`tsc --noEmit` 0 错;`vitest run` **1227 项通过 / 110 文件**;锚仍只走消息尾部,字节更短(去 5 段),不破坏任何缓存前缀。
+8. **回归口径(长期)**:「短消息(≤15 字)中位轮次」应回落至 **≤10 轮**、`>60 轮占比` < 10%。
+
+### 文档落点
+
+- 设计:`.dsb/specs/2026-09-16-去任务地图-降级为单行目标锚-design.md`
+- 实证:`.dsb/docs/2026-09-16-任务地图放大子任务实证与修复.md`
+- 根因:`.dsb/docs/2026-09-16-任务锚复述闭环根因与修复.md`
 
 ## 近期工作重点(2026-09-14:压缩「目标漂移」修复)
 
