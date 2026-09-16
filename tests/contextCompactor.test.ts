@@ -96,6 +96,15 @@ describe("summarizeToolUse", () => {
     expect(s).toMatch(/^Bash: npm test/);
     expect(s.length).toBeLessThanOrEqual(90);
   });
+  it("flattens multi-line command to one line (P0-5: 防轨条目裂行)", () => {
+    // Bash heredoc / 多段 command 含换行:若不单行化,压缩块 join("\n") 后
+    // 一条轨条目会裂成多个物理行,parse 读回即成为无前缀碎片行。
+    const s = summarizeToolUse("Bash", { command: "cd /x && python3 - <<'PY'\nimport json, os\nprint(1)\nPY" });
+    expect(s).not.toContain("\n");
+    expect(s).toBe("Bash: cd /x && python3 - <<'PY' | import json, os | print(1) | PY");
+    // 制表符 / 连续空格也归一化,保证「一条工具调用 == 一行」
+    expect(summarizeToolUse("Read", { path: "a\t\tb" })).toBe("Read: a b");
+  });
   it("maps search/query tools", () => {
     expect(summarizeToolUse("Grep", { pattern: "needsCompaction", path: "src" })).toBe("Grep: needsCompaction src");
     expect(summarizeToolUse("WebSearch", { query: "how to x" })).toBe("WebSearch: how to x");

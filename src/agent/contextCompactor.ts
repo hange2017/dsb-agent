@@ -255,7 +255,14 @@ export function summarizeToolUse(tool: string, input: unknown): string {
     default:
       detail = Object.keys(obj).join(",");
   }
-  const body = truncate(detail ?? "(no input)", 80);
+  // 单行化(写前定型):多行参数(如 Bash heredoc / 多段 command)若保留 `\n`,
+  // 压缩块 `join("\n")` 序列化后会把**一条轨条目裂成多个物理行**;`parseCompactedBlock`
+  // 按行读回时,续行便成了**无前缀碎片行**(现场:地图「已做」出现
+  // `- import json, os, datetime, …`)。此处把内部空白(含换行)归一化,
+  // 保证「一条工具调用 == 一行」,从源头杜绝裂行。
+  const oneLine = (s: string): string =>
+    s.replace(/\s*\n+\s*/g, " | ").replace(/[ \t]+/g, " ").trim();
+  const body = truncate(oneLine(detail ?? "(no input)"), 80);
   return `${tool}: ${body}`;
 }
 
