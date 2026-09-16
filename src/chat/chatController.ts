@@ -1521,7 +1521,13 @@ export class ChatController {
     }
     // 统计大模块:通用事件打点(只记录长度,不落消息内容,隐私友好)
     try {
-      this.deps.statsStore?.record("message_sent", { textLen: userText.length });
+      // sessionId:首轮此刻会话尚未 ensure(见下方 ensureSession),取不到则不带该字段,
+      // 由 turn_summary(收尾时落)提供完整的会话级归属,避免这里出现 "default" 伪归属。
+      const sid = this.sessionService.getSessionId();
+      this.deps.statsStore?.record("message_sent", {
+        textLen: userText.length,
+        ...(sid ? { sessionId: sid } : {}),
+      });
     } catch {
       // 打点失败不影响发送
     }
