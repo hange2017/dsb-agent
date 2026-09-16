@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages, TASK_ANCHOR_HINT, buildNextStepSection, NEXT_STEP_TITLE } from "../src/agent/agentLoop";
+import { AgentSession, clampHistoryTokenBudget, injectTodoIntoMessages, TASK_ANCHOR_HINT, TASK_ANCHOR_HINT_IDLE, buildNextStepSection, NEXT_STEP_TITLE } from "../src/agent/agentLoop";
 import { CompactionStats } from "../src/agent/compactionStats";
 import { PermissionManager } from "../src/agent/permission";
 import { PermissionRules } from "../src/agent/permissionRules";
@@ -1803,7 +1803,32 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     const out = injectTodoIntoMessages(base, "## 任务清单\n- [x] a (t1)", { pendingTodos: [] });
     const text = out[out.length - 1].content as string;
     expect(text).not.toContain(NEXT_STEP_TITLE);
-    expect(text).toBe(`${TASK_ANCHOR_HINT}\n## 任务清单\n- [x] a (t1)\n\nhi`);
+    // P0-3:无未完成待办 → 用「空闲」提示,不再宣称"继续推进"(否则纯状态汇报被读成继续历史任务)
+    expect(text).not.toContain("按下面清单继续推进");
+    expect(text).toBe(`${TASK_ANCHOR_HINT_IDLE}\n## 任务清单\n- [x] a (t1)\n\nhi`);
+  });
+
+  it("P0-3: 无未完成待办时提示为「空闲」,且清单里残留 `- [ ]` 仍算有活", () => {
+    // 场景 A:全完成 + 无 pending → 空闲提示
+    const a = injectTodoIntoMessages([{ role: "user", content: "现在重启了" }], "## 任务清单\n- [x] a (t1)", {
+      pendingTodos: [],
+    });
+    expect(a[a.length - 1].content as string).toContain(TASK_ANCHOR_HINT_IDLE);
+    expect(a[a.length - 1].content as string).not.toContain("按下面清单继续推进");
+
+    // 场景 B:清单里仍有未勾选 `- [ ]`(调用方 pendingTodos 为空时以清单为准)→ 仍用"继续推进"
+    const b = injectTodoIntoMessages([{ role: "user", content: "hi" }], "## 任务清单\n- [ ] b (t2)", {
+      pendingTodos: [],
+    });
+    const bt = b[b.length - 1].content as string;
+    expect(bt).toContain(TASK_ANCHOR_HINT);
+    expect(bt).not.toContain("当前没有未完成的待办");
+
+    // 场景 C:有 pending → 继续推进
+    const c = injectTodoIntoMessages([{ role: "user", content: "hi" }], "## 任务清单\n- [ ] c (t3)", {
+      pendingTodos: ["c"],
+    });
+    expect(c[c.length - 1].content as string).toContain(TASK_ANCHOR_HINT);
   });
 
   it("首轮 system 不含 todo,尾部 user 消息注入最新清单", async () => {

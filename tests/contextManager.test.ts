@@ -433,8 +433,9 @@ describe("ContextManager thinking", () => {
     // 最旧的 r2 被丢,r4 保留
     expect(t).not.toContain("- [r2] 链路");
     expect(t).toContain("- [r4]");
-    // 收缩不引入额外 LLM 调用(仅 1 次 thinking 调用)
-    expect(summarize).toHaveBeenCalledTimes(1);
+    // 裁剪(丢弃最旧脉络行)本身**不产生** LLM 调用;此处 2 次 = P0-1 说明轨 1 次
+    // (过程轮短文本「采用因式分解法」降级为说明,需 summarize)+ thinking 脉络 1 次。
+    expect(summarize).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to placeholder lines when thinking summarization throws", async () => {

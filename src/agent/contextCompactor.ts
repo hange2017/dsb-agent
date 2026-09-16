@@ -38,6 +38,7 @@ const CONCLUSION_KEYWORDS = [
   "决定",
   "推荐",
   "建议",
+  "总结",
   "summary",
   "conclusion",
   "decision",
@@ -132,11 +133,16 @@ export function splitBlocks(text: string): TextBlock[] {
   return blocks;
 }
 
+/** 文本是否含结构性块(标题/列表/代码/表格)——这类内容是交付物,而非过程旁白(P0-1)。 */
+function hasStructuralBlock(text: string): boolean {
+  return splitBlocks(text).some((b) => b.type !== "para");
+}
+
 /**
  * 分类 assistant 文本:
  *  - heading/list/code/table 块 → 结论
- *  - 短文本(整体) → 结论
- *  - 首段 / 尾段(未超长)→ 结论(开场结论 + 总结)
+ *  - 短文本(整体)→ 结论;但**带 tool_use 且无结构块**的短文本是过程旁白 → 解释(P0-1)
+ *  - 首段 / 尾段(未超长)→ 结论(仅**终答轮**;过程轮不适用,P0-1)
  *  - 含结论关键词的段落 → 结论
  *  - 其余 → 解释
  */
@@ -151,7 +157,15 @@ export function classifyAssistantText(text: string, hasToolUse: boolean): Assist
   const len = trimmed.length;
   const shortThreshold = hasToolUse ? SHORT_TEXT : SHORT_NO_TOOL;
   if (len < shortThreshold) {
-    conclusion.push(trimmed);
+    // P0-1:带 tool_use 的短文本是「过程旁白」(先取证不臆断 / 继续推进 / 收到),不是终答。
+    // 若判为结论 → 进 conclusions 轨 → 地图「结果」段 → 下轮任务锚回喂自身,
+    // 形成自我强化循环(实测:「现在重启了」5 字被读成继续未竟 git 任务,烧 56 轮/151 次工具调用)。
+    // 但含结构块(标题/列表/代码/表格)的短文本是**交付物**,仍判结论。
+    if (hasToolUse && !hasStructuralBlock(trimmed)) {
+      explanation.push(trimmed);
+    } else {
+      conclusion.push(trimmed);
+    }
     return { conclusion, explanation };
   }
 
@@ -162,7 +176,9 @@ export function classifyAssistantText(text: string, hasToolUse: boolean): Assist
       conclusion.push(block.text);
       return;
     }
-    const isEdge = idx === 0 || idx === n - 1;
+    // P0-1:过程轮(伴 tool_use)的首/尾段落不再自动判结论 —— 那是开场铺垫/过渡旁白;
+    // 只有明确含结论关键词的段落才进结论轨。终答轮(无 tool_use)保留首/尾规则。
+    const isEdge = !hasToolUse && (idx === 0 || idx === n - 1);
     const hasKeyword = CONCLUSION_KEYWORDS.some((k) => block.text.toLowerCase().includes(k.toLowerCase()));
     if ((isEdge && block.text.length <= EDGE_PARA_MAX) || hasKeyword) {
       conclusion.push(block.text);

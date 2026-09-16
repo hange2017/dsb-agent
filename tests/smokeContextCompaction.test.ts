@@ -59,7 +59,13 @@ describe("冒烟:压缩 → 冷存储 → 回查", () => {
     expect(block).toContain("## 说明");
     expect(block).toContain("## 工具履历");
     expect(block).toContain("- [r1] 修复 sessionStore 的隔离问题");
-    expect(block).toContain("- [r2] 已定位问题");
+    // P0-1:过程轮(伴 tool_use)首段「已定位问题」不含结论关键词 → 降级说明轨,
+    // 不再冒充「已获得的结论」(此前会经地图 results 回喂,构成自我强化循环)。
+    const parsed0 = parseCompactedBlock(block);
+    expect(parsed0.conclusions.join("\n")).not.toContain("已定位问题");
+    expect(parsed0.explanations.join("\n")).toContain("已定位问题");
+    // 含结论关键词(「建议」)的段仍留在结论轨。
+    expect(parsed0.conclusions.join("\n")).toContain("建议按 projectKey 分目录");
     expect(block).toContain("[解释摘要]");
     expect(block).toContain("- [r2] Read: src/session/sessionStore.ts");
     expect(block).toContain("- [r3] ⤷ file contents | line2 | line3");

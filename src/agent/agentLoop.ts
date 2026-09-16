@@ -103,9 +103,21 @@ const FALLBACK_SUMMARY = "已省略前文对话。";
 /** todo 注入:能并入普通 user 则改 messages 尾部;否则不注入(绝不进 system、绝不追加伪 user)。 */
 export type TodoInjection = ProviderMessage[];
 
-/** 任务锚固定提示:字节恒定,跨轮可缓存;提醒目标/清单位置与历史回查入口。 */
+/**
+ * 任务锚固定提示(有未完成待办):字节恒定,跨轮可缓存;提醒目标/清单位置与历史回查入口。
+ * P0-3:仅在**确有未完成待办**时使用 —— 否则"继续推进"会把纯状态汇报(如「现在重启了」)
+ * 读成「继续未竟的历史任务」,实测引发 56 轮/151 次工具调用的失控(见
+ * `.dsb/docs/2026-09-16-任务地图放大子任务实证与修复.md`)。
+ */
 export const TASK_ANCHOR_HINT =
   "〔任务锚〕按下面清单继续推进;需要更早的历史原文时,用 ContextRecall(seq=n) 回查压缩块中的 [r{n}] 行。";
+
+/**
+ * 任务锚固定提示(无未完成待办,P0-3):不再宣称"继续推进",避免历史需求被读成待办。
+ * 地图中的「近期需求/更早的需求」是**历史需求**,无完成度判定,不能当作待办执行。
+ */
+export const TASK_ANCHOR_HINT_IDLE =
+  "〔任务锚〕当前没有未完成的待办;若本轮消息未给出明确指令,请只回应本条消息,不要自行继续历史任务。需要更早的历史原文时,用 ContextRecall(seq=n) 回查压缩块中的 [r{n}] 行。";
 
 /**
  * 「下一步」段固定标题:由**真实未完成待办**生成(非历史需求)。
@@ -142,10 +154,14 @@ export function buildTaskAnchor(
 ): string {
   const map = mapLines && mapLines.length > 0 ? `${mapLines.join("\n")}\n` : "";
   const next = buildNextStepSection(pendingTodos);
+  // P0-3:提示语按"是否确有未完成待办"选择。两个信号取并集(调用方 pendingTodos 为准,
+  // 清单里仍有 `- [ ]` 项时同样视为有活)——避免"无待办却催继续推进"诱导模型重复劳动。
+  const hasUnchecked = /^-\s*\[ \]/m.test(todoBlock);
+  const hint = next.length > 0 || hasUnchecked ? TASK_ANCHOR_HINT : TASK_ANCHOR_HINT_IDLE;
   // 模式说明(T2):原先挂在 system 后缀,会让 system 变长 → tools + 全部 messages miss;
   // 现改由锚投递到消息尾部,mode 切换只影响尾部字节,前缀照常命中。
   const mode = modeNote && modeNote.length > 0 ? `${modeNote}\n` : "";
-  return `${TASK_ANCHOR_HINT}\n${mode}${next ? `${next}\n` : ""}${map}${todoBlock}`;
+  return `${hint}\n${mode}${next ? `${next}\n` : ""}${map}${todoBlock}`;
 }
 
 /**
