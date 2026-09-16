@@ -25,6 +25,29 @@ DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);�
 - 新增 `.dsb/specs/2026-09-16-去任务地图-降级为单行目标锚-design.md`;
 - 同步 `.dsb/docs/project-overview.md`(能力清单 + 近期工作重点)。
 
+### 新增(统计:轮次档案)
+
+> 为「Agent 效果评估」补齐分母:一次大任务(一次 send)的散落计数在**收尾时落一条** `turn_summary`。
+
+- **`turn_summary` 事件**(新模块 `src/agent/turnSummary.ts`,纯 TS 可单测):记录
+  `rounds` / `toolCalls` / `toolErrors` / `distinctTools` / `toolRepeatCount` /
+  `toolRepeatWasteCount` / `redundantTokens` / `compactionCount` / `contextRecallCalls` /
+  `appends` / 四项 token / `durationMs` / `chatMs` / `endReason`(`done`/`error`/`aborted`/`maxRounds`)。
+  此前 `tool_repeat` **只有分子没有分母**,算不出重复率;`ContextRecall` 调用次数则是信息丢失的直接计分板。
+- **派生命中率**:`cacheHitRate` 用**权威口径** `cacheReadTokens / (cacheReadTokens + inputTokens)`
+  (与 `scripts/analyze-cache-prefix.py` 一致,拒绝自造口径);分母为 0 时**不写该字段**(不用 0% 误导)。
+  另落 `repeatWasteRate = toolRepeatWasteCount / toolCalls`(浪费型重复,排除合理复查)。
+- **`message_sent` 补 `sessionId`**:首轮此刻会话尚未 ensure,取不到则不带该字段,
+  完整会话归属由收尾的 `turn_summary` 提供。
+- **统计保留期可配置**:新增 `dsbAgent.stats.retentionDays`,**默认 365 天**(旧硬编码 30 天,
+  跨月回看时会把早期样本清掉),`0` = 永久保留。
+- **纯旁路**:不进入任何发给 provider 的载荷 → 不触碰 system/压缩块/tail/messages 字节,
+  **不影响缓存前缀稳定性**;只记数字不记内容;收尾打点 fail-open。
+
+### 文档(统计)
+
+- 新增 `.dsb/specs/2026-09-16-轮次档案埋点-design.md`。
+
 ## [0.4.0] — 2026-09-15
 
 > 主线:**消灭多轮压缩后的「目标漂移」与「已存内容读不回来」**。核心手段是把任务目标从

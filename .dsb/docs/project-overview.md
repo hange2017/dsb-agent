@@ -110,12 +110,13 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ### 9. 会话持久化与统计 — `src/session/` + `src/stats/`
 - `session/sessionStore.ts` / `sessionProgress.ts`:会话落盘与进度记忆。
-- `stats/statsStore.ts`:事件日志(`~/.dsb/stats/<projectKey>/events-YYYY-MM-DD.jsonl`,按项目隔离,保留 30 天)。
+- `stats/statsStore.ts`:事件日志(`~/.dsb/stats/<projectKey>/events-YYYY-MM-DD.jsonl`,按项目隔离,保留期可配置 `dsbAgent.stats.retentionDays`,**默认 365 天**、`0` = 永久保留)。
 - `stats/providerSendStats.ts`:provider_send 消息组成统计(compactedBlock / tool_result / thinking / system 等占比)+ **内容 hash 指纹与会话标识**(方案 B 缓存前缀命中分析)。
 - `stats/compactionEvents.ts`:压缩事件(含 LLM 调用统计字段 llmCalls/llmMs/algoMs/selfTokens);`stats/activityStats.ts`:活动统计 + 每日总结提醒。
 - **统计扩展 A 清单(全量落地)**:A1 压缩自身成本统计 + A2 provider_round phase/roundMs + A7 逐位置明细 + A5 QA 抽查 + A8 preparedMs + 聚合函数 + 统计开关。
 - **压缩质量抽查(`compaction_qa` 事件)**:压缩后对 `[r{n}]` 键值提问验证信息保真(seq / answerable / qaMs / qaIn·qaOutputTokens + 该轮 in/outTokens)。落盘为 `compaction_qa` 事件(聚合时单列扣减,不混入真实使用成本)。**可开关**:`dsbAgent.stats.compactionQa`(默认 true);关闭时完全不触发抽查(不额外 provider 请求、不落盘)。
 - **ContextRecall 埋点(`context_recall` 事件)**:`RecallStat` 六模式(seq_hit/seq_miss/index_hit/index_empty/cross_session/unavailable)+ queryLen/queryHash(sha1 16hex),可随 stats 总开关 `dsbAgent.stats.enabled=false` 经 `?.` 静默关闭。
+- **轮次档案埋点(`turn_summary` 事件,2026-09-16)**:一次「大任务」(一次 send)的散落计数在**收尾时落一条** —— `rounds`/`toolCalls`(分母)/`toolErrors`/`distinctTools`/`toolRepeat*`/`redundantTokens`/`compactionCount`/`contextRecallCalls`/`appends`/四项 token/`durationMs`/`chatMs`/`endReason`。此前 `tool_repeat` **只有分子没有分母**,算不出重复率;`ContextRecall` 次数是信息丢失的直接计分板。派生命中率用**权威口径** `cacheRead/(cacheRead+input)`(同 `analyze-cache-prefix.py`,分母 0 时不写该字段)。累加器 `src/agent/turnSummary.ts` 纯 TS 可单测;**纯旁路**,不进 provider 载荷,不影响缓存前缀稳定性。
 - **provider_round**:记录每次 provider 交互真实 token 与缓存命中率(`cacheReadTokens` 等),官方数据小时级对账口径见 `.dsb/docs/`。
 
 ### 10. 其它
