@@ -158,4 +158,15 @@ export class Configuration {
   compactionQaEnabled(): boolean {
     return this.reader.getString("dsbAgent.stats.compactionQa") !== "false";
   }
+
+  /**
+   * 统计事件保留天数(events-*.jsonl 按天清理);缺省 365(比旧硬编码 30 天长,
+   * 避免跨周/跨月回看样本被清)、0 = 不清理(永久保留);非法值回退 365。
+   */
+  statsRetentionDays(): number {
+    const raw = this.reader.getString("dsbAgent.stats.retentionDays");
+    if (!raw) return 365;
+    const v = Number(raw);
+    return Number.isFinite(v) && v >= 0 ? v : 365;
+  }
 }

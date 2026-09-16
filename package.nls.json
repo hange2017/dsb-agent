@@ -39,5 +39,6 @@
   "configuration.dsbAgent.compaction.tailFoldRatio.description": "Tail fold ratio (direction 2): the older part of tail-budget messages is folded into the compacted block (summarized, append-only); only the recent (1-ratio) part stays raw. Reduces post-compaction first-round tail miss. Default 0.35, 0 = off.",
   "configuration.dsbAgent.stats.enabled.description": "Enable local usage statistics (when disabled, no statistics events are recorded).",
   "configuration.dsbAgent.stats.detailLevel.description": "Statistics detail level: basic = round-level stats only, full = includes per-position compaction details and compaction quality sampling.",
-  "configuration.dsbAgent.stats.compactionQa.description": "Run compaction quality sampling (asks the model about compacted [r{n}] entries): off means QA sampling is fully disabled (no extra provider request, no event recorded)."
+  "configuration.dsbAgent.stats.compactionQa.description": "Run compaction quality sampling (asks the model about compacted [r{n}] entries): off means QA sampling is fully disabled (no extra provider request, no event recorded).",
+  "configuration.dsbAgent.stats.retentionDays.description": "How many days of local statistics events (events-YYYY-MM-DD.jsonl) to keep. Default 365; 0 = keep forever. Older daily files are deleted, so raise this if you need cross-month comparisons."
 }

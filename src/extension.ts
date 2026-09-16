@@ -376,7 +376,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 统计大模块:通用事件日志(JSONL,按天分文件),供未来使用方式/参数调优分析。
   // 总开关 dsbAgent.stats.enabled=false 时注入 undefined,所有打点经 `?.` 静默跳过(不逐打点改)。
   const statsStore = configuration.statsEnabled()
-    ? new StatsStore(path.join(path.dirname(configuration.memoryDir()), "stats", projectKey))
+    ? new StatsStore(path.join(path.dirname(configuration.memoryDir()), "stats", projectKey), {
+        // 保留期可配置(缺省 365 天;0 = 永久保留),替代旧硬编码 30 天——
+        // 30 天会在跨月回看时把早期样本清掉,影响效果评估的对比窗口。
+        maxAgeDays: configuration.statsRetentionDays(),
+      })
     : undefined;
   // 旧版会话文件(直接落在 sessionsRoot 根下)迁移到 `<sessionsRoot>/<projectKey>/`,
   // 会话 id 不变,lastSessionId 指向的旧会话仍可恢复。

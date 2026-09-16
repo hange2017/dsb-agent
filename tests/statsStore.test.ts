@@ -60,6 +60,28 @@ describe("StatsStore", () => {
     expect(fs.existsSync(freshFile)).toBe(true);
   });
 
+  it("keeps every file when maxAgeDays is 0 (keep forever)", () => {
+    const s = new StatsStore(dir, { maxAgeDays: 0 });
+    const old = new Date();
+    old.setDate(old.getDate() - 400);
+    const oldFile = path.join(dir, `events-${statsLocalDate(old)}.jsonl`);
+    fs.writeFileSync(oldFile, JSON.stringify({ t: old.getTime(), type: "old" } satisfies StatsEvent) + "\n", "utf8");
+    s.prune();
+    expect(fs.existsSync(oldFile)).toBe(true);
+    // 事件仍可被 list 读到(保留期不误伤读取)
+    expect(s.list().some((e) => e.type === "old")).toBe(true);
+  });
+
+  it("defaults to a 30-day window only when maxAgeDays is omitted", () => {
+    const s = new StatsStore(dir); // 缺省语义保持兼容(显式接线处传配置值)
+    const stale = new Date();
+    stale.setDate(stale.getDate() - 31);
+    const staleFile = path.join(dir, `events-${statsLocalDate(stale)}.jsonl`);
+    fs.writeFileSync(staleFile, JSON.stringify({ t: stale.getTime(), type: "stale" } satisfies StatsEvent) + "\n", "utf8");
+    s.prune();
+    expect(fs.existsSync(staleFile)).toBe(false);
+  });
+
   it("survives corrupted single lines", () => {
     const s = new StatsStore(dir);
     s.record("good");

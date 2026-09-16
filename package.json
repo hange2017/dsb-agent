@@ -243,6 +243,12 @@
           "type": "boolean",
           "default": true,
           "description": "%configuration.dsbAgent.stats.compactionQa.description%"
+        },
+        "dsbAgent.stats.retentionDays": {
+          "type": "number",
+          "default": 365,
+          "minimum": 0,
+          "description": "%configuration.dsbAgent.stats.retentionDays.description%"
         }
       }
     }

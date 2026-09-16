@@ -31,7 +31,7 @@ export interface StatsEvent {
 }
 
 export interface StatsStoreOpts {
-  /** 事件文件保留天数;缺省 30。 */
+  /** 事件文件保留天数;缺省 30。0 = 不清理(永久保留)。 */
   maxAgeDays?: number;
 }
 
@@ -99,8 +99,9 @@ export class StatsStore {
     return path.join(this.dir, `events-${statsLocalDate(d)}.jsonl`);
   }
 
-  /** 删除超过 maxAgeDays 天的旧事件文件。 */
+  /** 删除超过 maxAgeDays 天的旧事件文件;maxAgeDays<=0 表示不清理(永久保留)。 */
   prune(now?: Date): void {
+    if (this.maxAgeDays <= 0) return;
     const ref = now ?? new Date();
     let files: string[];
     try {

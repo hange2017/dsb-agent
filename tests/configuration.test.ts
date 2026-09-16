@@ -219,4 +219,16 @@ describe("Configuration context window & trigger/target pct", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.stats.compactionQa" ? "yes" : "") });
     expect(junk.compactionQaEnabled()).toBe(true);
   });
+
+  it("statsRetentionDays defaults to 365, honors 0 (keep forever) and falls back on junk", () => {
+    expect(new Configuration({ getString: () => "" }).statsRetentionDays()).toBe(365);
+    const zero = new Configuration({ getString: (k) => (k === "dsbAgent.stats.retentionDays" ? "0" : "") });
+    expect(zero.statsRetentionDays()).toBe(0);
+    const custom = new Configuration({ getString: (k) => (k === "dsbAgent.stats.retentionDays" ? "90" : "") });
+    expect(custom.statsRetentionDays()).toBe(90);
+    const junk = new Configuration({ getString: (k) => (k === "dsbAgent.stats.retentionDays" ? "abc" : "") });
+    expect(junk.statsRetentionDays()).toBe(365);
+    const negative = new Configuration({ getString: (k) => (k === "dsbAgent.stats.retentionDays" ? "-1" : "") });
+    expect(negative.statsRetentionDays()).toBe(365);
+  });
 });
