@@ -55,23 +55,25 @@ describe("Configuration", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "yes" : "") });
     expect(junk.compactionThinkingEnabled()).toBe(false);
   });
-  it("compactionGoalAnchorEnabled defaults to true and only \"false\" disables it", () => {
-    expect(new Configuration({ getString: () => "" }).compactionGoalAnchorEnabled()).toBe(true);
-    const off = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.goalAnchorEnabled" ? "false" : "") });
-    expect(off.compactionGoalAnchorEnabled()).toBe(false);
+  it("compactionGoalAnchorEnabled defaults to false and only \"true\" enables it", () => {
+    expect(new Configuration({ getString: () => "" }).compactionGoalAnchorEnabled()).toBe(false);
     const on = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.goalAnchorEnabled" ? "true" : "") });
     expect(on.compactionGoalAnchorEnabled()).toBe(true);
+    const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.goalAnchorEnabled" ? "yes" : "") });
+    expect(junk.compactionGoalAnchorEnabled()).toBe(false);
   });
-  it("compactionGoalAnchorEnabled falls back to legacy taskMapEnabled=false (老用户配置不静默失效)", () => {
-    // 0.4.0 及以前键名为 taskMapEnabled;新键缺省时应回退读旧键
-    const legacyOff = new Configuration({
-      getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "false" : ""),
-    });
-    expect(legacyOff.compactionGoalAnchorEnabled()).toBe(false);
+  it("compactionGoalAnchorEnabled falls back to legacy taskMapEnabled=true (老用户显式开启仍生效)", () => {
+    // 0.4.0 及以前键名为 taskMapEnabled;新键缺省时应回退读旧键。
+    // 旧键 "true" = 老用户显式开启过注入 → 新版本仍应开启,不能静默失效。
     const legacyOn = new Configuration({
       getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "true" : ""),
     });
     expect(legacyOn.compactionGoalAnchorEnabled()).toBe(true);
+    // 旧键 "false":新默认本就是关闭,结果一致(不因回退而异常)
+    const legacyOff = new Configuration({
+      getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "false" : ""),
+    });
+    expect(legacyOff.compactionGoalAnchorEnabled()).toBe(false);
     // 新键优先于旧键
     const bothOff = new Configuration({
       getString: (k) =>

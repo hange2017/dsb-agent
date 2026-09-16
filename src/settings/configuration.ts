@@ -129,16 +129,18 @@ export class Configuration {
   }
 
   /**
-   * 会话目标锚开关:开启时任务锚在消息尾部输出一行 `**会话目标:** <最初需求>`;缺省 true,仅 "false" 关闭。
+   * 会话目标锚开关:开启时任务锚在消息尾部输出一行 `**会话目标:** <最新需求>`;缺省 **false**(0.5.0 起),
+   * 仅 "true" 开启。默认关闭的原因:钉住一个目标在**跨多个任务的长会话**里会把已完成/陈旧的旧任务
+   * 当成当前目标反复注入 → 诱导模型回跑去关联早已结束的任务(实测「完成git处理」被钉死数十天)。
    * 键名演进:0.4.0 及以前为 `dsbAgent.compaction.taskMapEnabled`(6 段常驻任务地图,已移除),
    * 0.5.0 起为语义更准的 `dsbAgent.compaction.goalAnchorEnabled`。**回退读旧键** —— 老用户若设过
-   * `taskMapEnabled: false`(关闭注入),在新版本仍应关闭目标锚,不能静默失效。
+   * `taskMapEnabled: true`(显式开启注入),在新版本仍应开启目标锚,不能静默失效。
    */
   compactionGoalAnchorEnabled(): boolean {
     const v =
       this.reader.getString("dsbAgent.compaction.goalAnchorEnabled") ||
       this.reader.getString("dsbAgent.compaction.taskMapEnabled");
-    return v !== "false";
+    return v === "true";
   }
 
   /** 统计总开关:false 关闭后不再记录任何统计事件(StatsStore 不落盘);缺省 true。 */
