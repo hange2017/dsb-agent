@@ -3,6 +3,8 @@ import {
   accumulateRecentDemands,
   buildTaskMap,
   extractMapSectionItems,
+  isToolResultLedgerLine,
+  sanitizeMapLines,
   EARLIER_DEMANDS_TITLE,
   RECENT_DEMANDS_TITLE,
   taskMapLines,
@@ -234,5 +236,133 @@ describe("地图降噪与只读化(P0-3 补全)", () => {
     const a = toReadOnlyMapLines(["**目标:** g"]);
     const b = toReadOnlyMapLines(["**目标:** g"]);
     expect(a).toEqual(b);
+  });
+});
+
+describe("isToolResultLedgerLine (P0-4: 工具输出行识别)", () => {
+  it("识别 ⤷ 输出行(含带 seq 前缀形态)", async () => {
+    const { isToolResultLedgerLine: f } = await import("../src/agent/taskMap");
+    expect(f("- [r464] ⤷ ERROR: path must be a non-empty string")).toBe(true);
+    expect(f("- [r556] ⤷ exit=0 | src/a.ts(1,2): error TS2802")).toBe(true);
+    expect(f("⤷ 裸开头也判输出行")).toBe(true);
+  });
+
+  it("放过工具调用行 / 需求行 / 结论行", () => {
+    expect(isToolResultLedgerLine("- [r4678] Bash: cd /x && python3 - <<'PY'")).toBe(false);
+    expect(isToolResultLedgerLine("- [r1] 修复多轮迷失目标")).toBe(false);
+    expect(isToolResultLedgerLine("- [r3] 结论段")).toBe(false);
+  });
+});
+
+describe("sanitizeMapLines (P0-5: 注入侧存量地图兜底过滤)", () => {
+  it("剔除「已做」段内的裂行碎片与 ⤷ 输出行, 保留合法调用行", () => {
+    const lines = [
+      "## 任务地图",
+      "**目标:** 完成git处理",
+      "### 已做",
+      "- import glob, json, os, coll…",
+      "- [r4678] Bash: cd /home/hange/projects/DSBAgent && python3 - <<'PY'",
+      "- import json, os, datetime, …",
+      "- [r464] ⤷ ERROR: path must be a non-empty string",
+      "- Read: src/agent/taskMap.ts",
+      "### 结果",
+      "- 先查看当前工作区改动详情。",
+    ];
+    expect(sanitizeMapLines(lines)).toEqual([
+      "## 任务地图",
+      "**目标:** 完成git处理",
+      "### 已做",
+      "- [r4678] Bash: cd /home/hange/projects/DSBAgent && python3 - <<'PY'",
+      "- Read: src/agent/taskMap.ts",
+      "### 结果",
+      "- 先查看当前工作区改动详情。",
+    ]);
+  });
+
+  it("只作用「已做」段:其它段内以中文/代码开头的条目原样保留", () => {
+    const lines = [
+      "### 结果",
+      "- 先查看当前工作区改动详情。",
+      "- import json, os",
+      "### 近期需求",
+      "- import 也是用户原话",
+    ];
+    expect(sanitizeMapLines(lines)).toEqual(lines);
+  });
+
+  it("兼容只读态标题「### 已执行的工具」", () => {
+    const lines = ["### 已执行的工具", "- import x", "- Bash: npm test"];
+    expect(sanitizeMapLines(lines)).toEqual(["### 已执行的工具", "- Bash: npm test"]);
+  });
+
+  it("空输入安全 + 确定性(同输入同输出)", () => {
+    expect(sanitizeMapLines([])).toEqual([]);
+    const a = sanitizeMapLines(["### 已做", "- import x", "- Read: a.ts"]);
+    const b = sanitizeMapLines(["### 已做", "- import x", "- Read: a.ts"]);
+    expect(a).toEqual(b);
+  });
+
+  // P0-6-C:结果段剔除「结构碎片」与「元叙述」——回喂会自我强化(闭环)
+  it("P0-6-C: 剔除「结果」段内的结构碎片(降级标题/压平表格)", () => {
+    const lines = [
+      "### 结果",
+      "- \\## 一句话",
+      "- | 问题 | 答案 | |---|---| | 下一个任务生效？ | ❌ |",
+      "- 所以你要让 70K 立刻生效,**开个新会话**即可。",
+    ];
+    expect(sanitizeMapLines(lines)).toEqual([
+      "### 结果",
+      "- 所以你要让 70K 立刻生效,**开个新会话**即可。",
+    ]);
+  });
+
+  it("P0-6-C: 剔除「结果」段内的过程旁白/客套收尾(元叙述)", () => {
+    const lines = [
+      "### 结果",
+      "- 我继续查完再答。",
+      "- 需要精确核对某段行为时,我可以跑测试…要我做只读诊断也随时说。",
+      "- 缓存命中率从 68% 提升到 97%(见 provider_round 统计)。",
+    ];
+    expect(sanitizeMapLines(lines)).toEqual([
+      "### 结果",
+      "- 缓存命中率从 68% 提升到 97%(见 provider_round 统计)。",
+    ]);
+  });
+
+  it("P0-6-C: 兼容只读态标题「### 历史结论」,且不误伤其它段", () => {
+    const lines = [
+      "### 历史结论",
+      "- 我继续查完再答。",
+      "### 近期历史消息",
+      "- 我继续查完再答。",
+    ];
+    // 「历史结论」段过滤元叙述;「近期历史消息」段是用户原话,必须保真
+    expect(sanitizeMapLines(lines)).toEqual([
+      "### 历史结论",
+      "### 近期历史消息",
+      "- 我继续查完再答。",
+    ]);
+  });
+
+  it("P0-6-C: 实质结论(含数字/文件/结论词)不被元叙述规则误伤", () => {
+    const lines = [
+      "### 结果",
+      "- 我把历史预算从 70K 提到 150K 会影响压缩频率。",
+      "- 我需要确认 0.3.0 是否发布到 Marketplace。",
+      "- 我需要的不是更高预算,而是更稳的前缀。",
+    ];
+    // 三条虽以「我…」开头但都是**陈述既有事实/需求**,非旁白句式 → 全部保留
+    expect(sanitizeMapLines(lines)).toEqual([
+      "### 结果",
+      "- 我把历史预算从 70K 提到 150K 会影响压缩频率。",
+      "- 我需要确认 0.3.0 是否发布到 Marketplace。",
+      "- 我需要的不是更高预算,而是更稳的前缀。",
+    ]);
+  });
+
+  it("P0-6-C: 未来意图旁白(我继续/我接着)仍按元叙述剔除", () => {
+    const lines = ["### 结果", "- 我继续跟踪 provider_round 数据。"];
+    // 「我继续跟踪 X」是对**自身后续动作**的旁白(无结论),与「我把 X 改成 Y」不同 → 剔除
+    expect(sanitizeMapLines(lines)).toEqual(["### 结果"]);
   });
 });

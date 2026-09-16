@@ -119,24 +119,67 @@ export function toReadOnlyMapLines(lines: string[]): string[] {
  * 非「已做」段原样保留。
  */
 const DID_SECTION_TITLES = new Set(["### 已做", "### 已执行的工具"]);
+const RESULT_SECTION_TITLES = new Set(["### 结果", "### 历史结论"]);
 const TOOL_CALL_LINE = /^[A-Za-z][A-Za-z0-9_]*: /;
+
+/**
+ * 结构碎片判据(P0-6-C):被 `clip()` 压平 / `demoteInnerHeadings()` 降级后残留的
+ * **结构骨架**,不是结论。现场(锚「结果」段):
+ * ```
+ * - \## 一句话                                  ← 降级标题(demoteInnerHeadings 产物)
+ * - | 问题 | 答案 | |---|---| | 下一个任务生效？ | …
+ * ```
+ * 表格行被 `clip()` 把换行压成空格 → 整张表塌成一行 `|…|…|`;标题被转义成 `\##`。
+ * 二者语义上是"格式残骸",回喂只污染语境、无信息增量,故在**注入侧**剔除。
+ */
+function isStructuralFragment(body: string): boolean {
+  return (
+    /^\\#{1,6}\s/.test(body) || // 降级标题 `\## 一句话`
+    /^#{1,6}\s*$/.test(body) || // 空标题(降级后只剩井号)
+    /^`{3,}/.test(body) || // 代码围栏
+    /^\|.*\|.*\|/.test(body) || // 表格行 / 被压平的表
+    /^[-*_]{3,}$/.test(body) // 水平线
+  );
+}
+
+/**
+ * 元叙述判据(P0-6-C):过程旁白 / 客套收尾 —— **不是结论**,且回喂会自我强化。
+ *
+ * 闭环:我的正文 → assistant 消息 → 压缩时判为结论 → 进 conclusions 轨 → 地图「结果」段
+ * → 下轮任务锚回喂自己 → 语域被强化。现场:地图「历史结论」里固化了
+ * "需要精确核对某段行为时,我可以跑测试…要我做只读诊断…也随时说。"(纯客套)。
+ * 另:本轮实测同一句式("我继续查完再答")连出 10 个 round,根因之一即过程旁白被判结论。
+ *
+ * 只作用于「结果/历史结论」段,且只匹配**明确的过程旁白句式**;实质结论(含数字/文件/结论词)
+ * 不受影响。
+ */
+const META_NARRATION =
+  /(我(继续|接着|这就|马上|先去|先来|再查|查完再答)|查完再答|随时(说|告诉|叫我|找我|问)|需要我(做|帮|继续)|要不要我|我可以(继续|帮你|为你|跑|读)|如需我|我先(看看|查|确认|做)|接下来我)/;
 
 export function sanitizeMapLines(lines: string[]): string[] {
   const out: string[] = [];
   let inDid = false;
+  let inResult = false;
   for (const raw of lines ?? []) {
     const line = typeof raw === "string" ? raw : "";
     if (/^###\s/.test(line)) {
-      inDid = DID_SECTION_TITLES.has(line.trim());
+      const t = line.trim();
+      inDid = DID_SECTION_TITLES.has(t);
+      inResult = RESULT_SECTION_TITLES.has(t);
       out.push(line);
       continue;
     }
-    if (inDid && /^\s*-\s/.test(line)) {
+    if (/^\s*-\s/.test(line)) {
       // 归一化:地图条目可能带 `- [rN] `(轨内原始形态)或已去前缀(轨条目经 section() 输出),
       // 统一用 stripSeq 剥掉前缀再判形态。
       const body = stripSeq(line);
-      const isToolResult = isToolResultLedgerLine(line);
-      if (isToolResult || !TOOL_CALL_LINE.test(body)) continue;
+      if (inDid) {
+        const isToolResult = isToolResultLedgerLine(line);
+        if (isToolResult || !TOOL_CALL_LINE.test(body)) continue;
+      } else if (inResult) {
+        // C:结果段剔除「结构碎片」与「元叙述」——它们不是结论,回喂会自我强化。
+        if (isStructuralFragment(body) || META_NARRATION.test(body)) continue;
+      }
     }
     out.push(line);
   }
