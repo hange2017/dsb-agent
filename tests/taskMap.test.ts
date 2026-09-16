@@ -180,3 +180,59 @@ describe("accumulateRecentDemands: 中期澄清粘住(不被滑动窗口挤掉)"
     expect(accumulateRecentDemands(["a"], ["b"], 0)).toEqual([]);
   });
 });
+
+describe("地图降噪与只读化(P0-3 补全)", () => {
+  it("isToolResultLedgerLine: 识别『⤷ 工具输出行』, 放过工具调用行", async () => {
+    const { isToolResultLedgerLine } = await import("../src/agent/taskMap");
+    // 现场:`### 已做` 里混进 `- [rN] ⤷ exit=0 | …` 原始输出,单条顶掉整段
+    expect(isToolResultLedgerLine("- [r4678] ⤷ [tool-result-trimmed] | exit=0 | …")).toBe(true);
+    expect(isToolResultLedgerLine("- [r9] ⤷ exit=0 | ok")).toBe(true);
+    // 工具调用行(summarizeToolUse 生成)必须保留
+    expect(isToolResultLedgerLine("- [r8] Read: src/agent/taskMap.ts")).toBe(false);
+    expect(isToolResultLedgerLine("- [r8] Bash: npm test")).toBe(false);
+    // 需求/结论行也不能被误判
+    expect(isToolResultLedgerLine("- [r1] 修复压缩")).toBe(false);
+  });
+
+  it("toReadOnlyMapLines: 标题降为历史语义, 条目正文保真", async () => {
+    const { toReadOnlyMapLines } = await import("../src/agent/taskMap");
+    const out = toReadOnlyMapLines([
+      "## 任务地图",
+      "**目标:** 完成git处理",
+      "**最新要求:** 按照你的建议做",
+      "### 近期需求",
+      "- [r1] 压缩一下",
+      "### 已做",
+      "### 结果",
+      "### 更早的需求",
+      "### 下一步",
+    ]);
+    const joined = out.join("\n");
+    // 行动暗示措辞全部消除
+    expect(joined).not.toContain("**目标:**");
+    expect(joined).not.toContain("**最新要求:**");
+    expect(joined).not.toContain("### 近期需求");
+    expect(joined).not.toContain("### 更早的需求");
+    // 历史语义替代
+    expect(joined).toContain("**历史目标:** 完成git处理");
+    expect(joined).toContain("**最近一条用户消息:** 按照你的建议做");
+    expect(joined).toContain("### 近期历史消息");
+    expect(joined).toContain("### 更早的历史消息");
+    // 条目正文(用户原话)必须逐字保真,且不得被改写
+    expect(joined).toContain("- [r1] 压缩一下");
+  });
+
+  it("toReadOnlyMapLines: 空输入安全, 未知行原样透传(确定性)", async () => {
+    const { toReadOnlyMapLines } = await import("../src/agent/taskMap");
+    expect(toReadOnlyMapLines([])).toEqual([]);
+    expect(toReadOnlyMapLines(["## 任务地图", "### 未知段", "- x"])).toEqual([
+      "## 任务地图",
+      "### 未知段",
+      "- x",
+    ]);
+    // 同输入同输出(字节稳定,不破缓存前缀)
+    const a = toReadOnlyMapLines(["**目标:** g"]);
+    const b = toReadOnlyMapLines(["**目标:** g"]);
+    expect(a).toEqual(b);
+  });
+});
