@@ -220,10 +220,10 @@
           "maximum": 0.99,
           "description": "%configuration.dsbAgent.compaction.tailFoldRatio.description%"
         },
-        "dsbAgent.compaction.taskMapEnabled": {
+        "dsbAgent.compaction.goalAnchorEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "%configuration.dsbAgent.compaction.taskMapEnabled.description%"
+          "description": "%configuration.dsbAgent.compaction.goalAnchorEnabled.description%"
         },
         "dsbAgent.stats.enabled": {
           "type": "boolean",

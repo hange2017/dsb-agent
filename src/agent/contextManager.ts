@@ -1,13 +1,6 @@
 import type { ProviderMessage, ProviderUserContent } from "./provider/types";
 import { estimateMessageTokens, estimateTokens } from "../stats/providerSendStats";
 import {
-  accumulateRecentDemands,
-  extractMapSectionItems,
-  RECENT_DEMANDS_TITLE,
-  taskMapLines,
-  isToolResultLedgerLine,
-} from "./taskMap";
-import {
   classifyAssistantText,
   summarizeToolUse,
   extractKeyLines,
@@ -163,31 +156,30 @@ export interface ContextManagerOptions {
    */
   presetCompactedBlock?: string;
   /**
-   * 任务地图:true 时生成常驻地图并经**任务锚(消息尾部)**投递
-   * (目标/最新要求/近期需求/更早的需求/已做/结果;「下一步」由任务锚注入)。
-   * T1 起地图**不再写入压缩块** —— 其滑动窗口段每轮都变,置于块首会让整块 hash 变化;
-   * 缺省 false(不生成地图,等价旧行为)。
+   * 目标锚:true 时维护**单行会话目标**(`demands[0]` = 最初需求),
+   * 经任务锚在**消息尾部**投递(仅在锚里输出一行 `**会话目标:** …`)。
+   *
+   * 历史(2026-09-16):此处原为「任务地图(taskMapEnabled)」——6 段地图
+   * (目标/最新要求/近期需求/已做/结果/更早的需求)。实测其「已做/结果」两段构成
+   * **自我强化闭环**(模型自己的旁白 → conclusions 轨 → 地图结果段 → 锚 → 回喂自身),
+   * 使「短消息 → LLM 轮次」中位数从 5 轮涨到 56 轮;且 6 段全是压缩块 4 轨的投影,
+   * **零新增信息**。故整块删除,只保留「把最初目标放到尾部」这一个真正有价值的点。
+   * 详见 `.dsb/specs/2026-09-16-去任务地图降级为单行目标锚-design.md`。
+   *
+   * 缺省 false(不输出目标行,等价旧行为)。
    */
-  taskMapEnabled?: boolean;
+  goalAnchorEnabled?: boolean;
 }
 
 /** 可被压缩裁掉的轨道(map 除外:地图永不删)。 */
 type TrimTrack = "demands" | "conclusions" | "explanations" | "ledger";
 
 /**
- * 常驻地图「近期需求」条数(需求轨中间最近 N 条)。
- * 中期「目标澄清/修正」常落在需求轨中间:既非首条(goal)也非末条(latestGoal),
- * 若只靠两条兜底,第 15 轮的澄清一旦被裁就会「目标漂移」。N 条中间需求随地图常驻。
- */
-const RESIDENT_MAP_RECENT_DEMANDS = 3;
-
-/**
  * 需求轨**免裁保护**条数:首条 + 末尾 K 条。
- * 首条 = 最初目标;末尾 = 最新要求(含用户中途修正)。
- * K = 地图「近期需求」条数 + 1:地图取的是「中间段」最近 N 条,而保护取「末尾段」,
- * 两者错开一位,故多保护 1 条即可保证「凡进入地图的中间需求都在保护窗口内」。
+ * 首条 = 最初目标(会作为「会话目标」单行常驻于任务锚尾部);末尾 = 最新要求。
+ * 软保护开启时只裁中间段,保证「目标 + 最新要求」永不因预算被裁掉。
  */
-const DEMAND_KEEP_TAIL = RESIDENT_MAP_RECENT_DEMANDS + 1;
+const DEMAND_KEEP_TAIL = 2;
 
 /** A5:从消息列表内容中提取 `[r{n}]` 序号(保持出现顺序)。 */
 function extractSeqsFromMessages(messages: ProviderMessage[]): number[] {
@@ -214,8 +206,8 @@ export class ContextManager {
   private nextSeq = 1;
   /** thinking 压缩开关(可热更新;plan/ask 模式关闭)。 */
   private thinkingEnabled: boolean;
-  /** 常驻任务地图(T1 起只经任务锚在消息尾部投递,不再进压缩块);供每轮锚顶部复用。 */
-  private residentMap: string[] = [];
+  /** 常驻会话目标(`demands[0]` = 最初需求);只经任务锚在消息尾部投递,不进压缩块。 */
+  private residentGoal = "";
   /** thinking 压缩发生时的回调(成功或失败均触发,用于成本统计);缺省不回调。 */
   onThinkingCompaction?: () => void;
 
@@ -264,28 +256,28 @@ export class ContextManager {
   }
 
   /**
-   * 常驻任务地图:最近一次压缩从 4 轨重建的地图行;未压缩/未开启且无恢复种子时返回 []。
-   * 供任务锚每轮顶部复用(**只走消息尾部**,不参与压缩块前缀)。
+   * 常驻**会话目标**(`demands[0]`,即最初需求):最近一次压缩/恢复种子得到。
+   * 供任务锚每轮在**消息尾部**输出一行 `**会话目标:** …`;不参与压缩块前缀。
+   * 未压缩/未开启/无种子时返回空串(锚不输出该行,字节与旧版一致)。
    */
-  getResidentMap(): string[] {
-    return this.residentMap;
+  getResidentGoal(): string {
+    return this.residentGoal;
   }
 
   /**
-   * T1 恢复路径种子:从恢复的压缩块(或 preset 快照)的 4 轨重建常驻地图。
+   * 恢复路径种子:从恢复的压缩块(或 preset 快照)的**需求轨首条**重建会话目标。
    *
-   * T1 把地图移出压缩块后,地图不再随块持久化 → 会话恢复后到「下次压缩」之间
-   * `residentMap` 为空,任务锚会短时丢失「目标/已做/结果」。
-   * 此处用恢复块里仍在的 4 轨(需求/结论/说明/履历)重建一份地图:幂等且确定性
-   * (同块 → 同地图),不引入额外字节抖动 —— 地图只走消息尾部锚,不参与压缩块前缀。
-   * 仅在开启地图、且当前地图为空时生效;旧块自带地图时其「近期需求」继续累积。
+   * 地图移出压缩块后不再随块持久化 → 会话恢复后到「下次压缩」之间 `residentGoal` 为空,
+   * 任务锚会短时丢失目标行。此处用恢复块里仍在的需求轨重建:幂等且确定性
+   * (同块 → 同目标),不引入额外字节抖动 —— 只走消息尾部锚,不参与压缩块前缀。
+   * 仅在开启目标锚、且当前目标为空时生效。
    */
-  seedResidentMap(blockText?: string): void {
-    if (!this.opts.taskMapEnabled || this.residentMap.length > 0) return;
+  seedResidentGoal(blockText?: string): void {
+    if (!this.opts.goalAnchorEnabled || this.residentGoal !== "") return;
     const text = blockText ?? this.opts.presetCompactedBlock;
     if (!text || !isCompactedBlock(text)) return;
     const parts = parseCompactedBlock(text);
-    this.residentMap = this.buildResidentMap(parts, parts.map ?? []);
+    this.residentGoal = this.buildResidentGoal(parts);
   }
 
   track(usage?: { inputTokens?: number; outputTokens?: number }): number {
@@ -473,15 +465,12 @@ export class ContextManager {
       explanations: merged.explanations.filter((l) => !isRuntimeSyntheticText(l)),
       ledger: merged.ledger.filter((l) => !isRuntimeSyntheticText(l)),
     };
-    // T1(缓存前缀):任务地图**不再写入压缩块**。
-    // 地图含滑动窗口段(已做/结果/更早的需求),每轮重建都在变;它此前位于块首
-    // (块内最前缀位置),其变化会让整块(实测中位 1.8 万 tok)全额 miss ——
-    // 实测 09-14/09-15 的全部「块重建」皆源于此。块现在只由 4 轨构成,
-    // 配合「只追加/只删尾」即可做到字节跨轮恒定。
-    // 地图改存常驻缓存,仅经任务锚在**消息尾部**投递(尾部变化不破坏任何前缀)。
+    // 地图(6 段)已整块删除(2026-09-16):其「已做/结果」两段构成自我强化闭环
+    // (模型旁白 → conclusions 轨 → 地图结果段 → 锚 → 回喂自身),且 6 段全是 4 轨投影、零新增信息。
+    // 现只保留「会话目标」一行(需求轨首条 = 最初需求),经任务锚在**消息尾部**投递。
     const blockParts: CompactBlockParts = { ...purged, map: undefined };
-    if (this.opts.taskMapEnabled) {
-      this.residentMap = this.buildResidentMap(purged, prev?.map ?? this.residentMap);
+    if (this.opts.goalAnchorEnabled) {
+      this.residentGoal = this.buildResidentGoal(purged);
     }
     const fitted = budget
       ? await this.ensureBlockFits(blockParts, Math.max(1, Math.floor(budget.compactedTokens * this.targetPct)))
@@ -819,61 +808,24 @@ export class ContextManager {
   }
 
   /**
-   * 生成常驻任务地图(确定性):从合并后的轨道推导
-   * 「目标/最新要求/近期需求/更早的需求/已做/结果」;
-   * T1 起只经任务锚在**消息尾部**投递(不再进压缩块,故不参与前缀)。
-   *  - 目标    = 「需求」轨首条(最初需求,受 P0-a 保护);
-   *  - 最新要求 = 「需求」轨末条(覆盖多轮中的目标澄清/修正,避免只记住最初目标);
-   *  - 每次压缩都会用当前轨道重建地图 → 澄清一旦进来即常驻,不再随中间行被裁掉。
-   * 注意:**不生成「下一步」段** —— 压缩时无法访问 todo,用历史需求冒充待办会把
-   * 已完成事项显示为下一步;真实「下一步」由 agentLoop 的任务锚注入(见 buildTaskAnchor)。
+   * 生成常驻**会话目标**(`demands[0]` = 最初需求,受 pickTrimVictim 首条保护)。
+   *
+   * 历史(2026-09-16):此处原为 `buildResidentMap` —— 生成 6 段常驻地图
+   * (目标/最新要求/近期需求/更早的需求/已做/结果)。该地图有致命闭环:
+   *   `parts.conclusions`(结论轨)本就是「assistant 文本」的投影,而「结果」段直接取它
+   *   → 模型在上一轮的**过程旁白**会被写入结论轨 → 进入地图「结果」段 → 经任务锚回到模型眼前。
+   *   于是模型开始「回应自己的分析」而不是推进任务:「现在重启了」5 个字跑 56 轮 / 151 次工具调用。
+   *   同时「已做」取 ledger 原文(原始 Bash 命令),对定位毫无帮助,只稀释注意力。
+   *   整块删除:6 段全是压缩块 4 轨的**投影**,零新增信息;「还剩什么没做」由 TodoManager
+   *   的 pending 项(锚的 `### 下一步`)负责,本来就不该由地图冒充。
+   * 保留唯一真价值:把最初目标放到**消息尾部**(注意力更强),即下面这一行。
    */
-  private buildResidentMap(parts: CompactBlockParts, prevMap: string[] = []): string[] {
-    // 过滤历史遗留的「运行时合成」行(`- [rN] [续写] …` / `[输出中断]`):
-    // 旧会话压缩块已持久化这些行,且经 mergeCompactedTracks 不断向前合并;若不过滤,
-    // 它们会占据地图「目标/最新要求/近期需求/更早的需求」位 → 目标语义反被污染。
+  private buildResidentGoal(parts: CompactBlockParts): string {
+    // 过滤历史遗留的「运行时合成」行(`- [rN] [续写] …` / `[输出中断]`),避免污染目标语义。
     const demands = parts.demands.filter((l) => !isRuntimeSyntheticText(l));
-    const goal = demands[0];
-    // 最新要求:最近一条需求(常驻一行,避免「中期目标澄清」被裁后目标漂移)。
-    const latestGoal = demands.length > 1 ? demands[demands.length - 1] : undefined;
-    // 已做/结果/更早的需求取各轨「最新」若干条(与块尾提示行一致:需要细节 → ContextRecall)。
-    const latest = (lines: string[], n: number): string[] =>
-      n <= 0 ? [] : lines.filter((l) => !isRuntimeSyntheticText(l)).slice(-n);
-    // 受裁保护的末尾 keepTail 条(与 pickTrimVictim 同源);去掉末条(latestGoal)后即为
-    // 「受保护的中间需求」→ 放进地图「近期需求」段,保证进了地图的行永远不会被裁。
-    const keepTail = Math.min(DEMAND_KEEP_TAIL, Math.max(0, demands.length - 1));
-    const protectedMiddle =
-      keepTail > 1 ? demands.slice(demands.length - keepTail, demands.length - 1) : [];
-    // 累积式「近期需求」:候选 = 本轮受保护的中间需求;并叠加**上一轮地图里已有的条目**。
-    // 关键:中期「目标澄清/修正」一旦进入地图即粘住——即便它随后被更新的需求挤出滑动窗口、
-    // 甚至被裁出需求轨,地图(永不参与裁剪)仍保留它,下次重建也不会丢。这是「中期澄清
-    // 仍可能被压缩删掉」的最后一道保险。
-    const prevRecent = extractMapSectionItems(prevMap, RECENT_DEMANDS_TITLE).filter(
-      (x) => !isRuntimeSyntheticText(x),
-    );
-    const recentDemands = accumulateRecentDemands(
-      prevRecent,
-      protectedMiddle,
-      RESIDENT_MAP_RECENT_DEMANDS,
-    );
-    // 更早的中间需求(不受保护,仍可被裁):作为「更早的需求」段的来源,与近期需求不重复。
-    // 注意:**不得**把历史需求冒充成「下一步」—— 无完成度判定会把已完成事项显示为待办,
-    // 诱导模型重复劳动;真正的「下一步」由任务锚用 TodoManager 的 pending 项生成。
-    const olderMiddle = demands.slice(1, Math.max(1, demands.length - keepTail));
-    return taskMapLines({
-      goal,
-      latestGoal,
-      recentDemands,
-      // P0-1(补全):「已做」只取**工具调用行**(`Bash: …`),剔除工具输出行(`⤷ exit=0 | …`)。
-      // 输出行会让单条「已做」占据整个 MAX_LINE(现场:一行原始输出顶掉其余条目),
-      // 地图无谓变长、稀释注意力;需要输出细节走 ContextRecall 回查。
-      did: latest(
-        parts.ledger.filter((l) => !isToolResultLedgerLine(l)),
-        3,
-      ),
-      results: latest(parts.conclusions, 3),
-      earlierDemands: latest(olderMiddle, 2),
-    });
+    const first = demands[0] ?? "";
+    // 剥掉轨行前缀 `- [rN] `:目标行在锚里作普通文本展示,保留序号无意义且显得杂乱。
+    return first.replace(/^-\s*\[r\d+\]\s*/, "").trim();
   }
 
   /**

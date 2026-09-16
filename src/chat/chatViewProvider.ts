@@ -395,7 +395,7 @@ export class ChatViewProvider {
             triggerPct: this.configuration.compactionTriggerPct(),
             targetPct: this.configuration.compactionTargetPct(),
             tailFoldRatio: this.configuration.compactionTailFoldRatio(),
-            taskMapEnabled: this.configuration.compactionTaskMapEnabled(),
+            goalAnchorEnabled: this.configuration.compactionGoalAnchorEnabled(),
             compactedPreset,
             // 每会话独立统计:thinking 压缩频率(对话轮次 + 压缩次数,滑动窗口 100)
             stats: new CompactionStats(),

@@ -315,7 +315,7 @@ export interface CompactBlockParts {
    * (块内无法访问 todo,真实待办由 agentLoop 的任务锚注入)。
    *
    * 保留原因:旧会话持久化的压缩块(含块首地图)仍需被 `parseCompactedBlock`
-   * 解析出来,以便恢复时用 4 轨重建地图(`seedResidentMap`)。
+   * 解析出来,以便恢复时用需求轨重建**单行会话目标**(`seedResidentGoal`)。
    * 新块构建时恒为 `undefined`(见 `buildCompactedBlock`),故块字节只由 4 轨决定。
    */
   map?: string[];
@@ -591,7 +591,7 @@ export function truncateLongLines(lines: string[], maxLine = 240): string[] {
 /** 把多轨行统一截断(供块超限时的兜底)。 */
 export function truncateParts(parts: CompactBlockParts, maxLine = 240): CompactBlockParts {
   return {
-    // 任务地图原样保留(行已由 taskMap 裁剪到 ≤160),不参与截断/裁剪。
+    // 旧块若带地图轨(历史遗留),原样保留、不参与截断/裁剪(地图已废弃,不再写入新块)。
     ...(parts.map ? { map: parts.map } : {}),
     demands: truncateLongLines(parts.demands, maxLine),
     conclusions: truncateLongLines(parts.conclusions, maxLine),

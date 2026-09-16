@@ -128,9 +128,17 @@ export class Configuration {
     return Number.isFinite(v) && v >= 0 && v < 1 ? v : 0.35;
   }
 
-  /** 常驻任务地图开关(P2):每次压缩重建「目标/最新要求/近期需求/更早的需求/已做/结果」并置于块首、永不裁剪;「下一步」由任务锚按真实待办注入。缺省 true,仅 "false" 关闭。 */
-  compactionTaskMapEnabled(): boolean {
-    return this.reader.getString("dsbAgent.compaction.taskMapEnabled") !== "false";
+  /**
+   * 会话目标锚开关:开启时任务锚在消息尾部输出一行 `**会话目标:** <最初需求>`;缺省 true,仅 "false" 关闭。
+   * 键名演进:0.4.0 及以前为 `dsbAgent.compaction.taskMapEnabled`(6 段常驻任务地图,已移除),
+   * 0.5.0 起为语义更准的 `dsbAgent.compaction.goalAnchorEnabled`。**回退读旧键** —— 老用户若设过
+   * `taskMapEnabled: false`(关闭注入),在新版本仍应关闭目标锚,不能静默失效。
+   */
+  compactionGoalAnchorEnabled(): boolean {
+    const v =
+      this.reader.getString("dsbAgent.compaction.goalAnchorEnabled") ||
+      this.reader.getString("dsbAgent.compaction.taskMapEnabled");
+    return v !== "false";
   }
 
   /** 统计总开关:false 关闭后不再记录任何统计事件(StatsStore 不落盘);缺省 true。 */

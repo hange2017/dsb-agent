@@ -54,7 +54,6 @@ import { ToolRepeatTracker, type ToolRepeatHit } from "./toolRepeatDetector";
 import type { ColdChunk } from "../context/contextStore";
 import type { CompactionRecord } from "../stats/compactionEvents";
 import { isToolAllowed, modeSystemSegment, thinkingEnabledForMode, type AgentMode } from "./modePolicy";
-import { sanitizeMapLines, toReadOnlyMapLines } from "./taskMap";
 import { effectiveContextWindowTokens } from "../providers/capabilities";
 import type { ModelCapabilities } from "../providers/types";
 import {
@@ -155,17 +154,21 @@ export function buildNextStepSection(pending: string[] | undefined): string {
 }
 
 /**
- * 组合任务锚文本(固定提示 + 下一步 + 最新清单)。mapLines 可选:非空时前置常驻任务地图(P2-4)。
+ * 组合任务锚文本(固定提示 + 会话目标 + 下一步 + 最新清单)。
+ * `goalLine` 可选:非空时输出单行 `**会话目标:** <最初需求>`(压缩块需求轨首条)。
+ *   历史(2026-09-16):此处原为 `mapLines`(6 段常驻任务地图)。地图的「已做/结果」两段
+ *   构成自我强化闭环 —— 模型自己的过程旁白 → 结论轨 → 地图「结果」段 → 锚 → 回喂自身,
+ *   实测让「现在重启了」5 个字跑 56 轮。整块删除,只保留「把目标放到消息尾部」这个真价值。
  * `pendingTodos` 为**未完成**待办的文本(通常取 TodoManager.list() 里 done=false 的 content);
  * 有值时注入 `### 下一步` —— 这是锚里唯一宣称"待办"的地方,且来源是真实 todo 状态。
  */
 export function buildTaskAnchor(
   todoBlock: string,
-  mapLines?: string[],
+  goalLine?: string,
   pendingTodos?: string[],
   modeNote?: string,
 ): string {
-  const map = mapLines && mapLines.length > 0 ? `${mapLines.join("\n")}\n` : "";
+  const goal = goalLine && goalLine.trim().length > 0 ? `**会话目标:** ${goalLine.trim()}\n` : "";
   const next = buildNextStepSection(pendingTodos);
   // P0-3:提示语按"是否确有未完成待办"选择。两个信号取并集(调用方 pendingTodos 为准,
   // 清单里仍有 `- [ ]` 项时同样视为有活)——避免"无待办却催继续推进"诱导模型重复劳动。
@@ -174,7 +177,7 @@ export function buildTaskAnchor(
   // 模式说明(T2):原先挂在 system 后缀,会让 system 变长 → tools + 全部 messages miss;
   // 现改由锚投递到消息尾部,mode 切换只影响尾部字节,前缀照常命中。
   const mode = modeNote && modeNote.length > 0 ? `${modeNote}\n` : "";
-  return `${hint}\n${mode}${next ? `${next}\n` : ""}${map}${todoBlock}`;
+  return `${hint}\n${mode}${goal}${next ? `${next}\n` : ""}${todoBlock}`;
 }
 
 /**
@@ -196,22 +199,22 @@ export function injectTodoIntoMessages(
   todoBlock: string,
   opts?: {
     anchorOnToolResult?: boolean;
-    mapLines?: string[];
+    /** 单行会话目标(压缩块需求轨首条);非空时输出 `**会话目标:** …`。 */
+    goalLine?: string;
     pendingTodos?: string[];
     /** 模式说明(T2):原先挂 system 后缀,现随锚投递到消息尾部。 */
     modeNote?: string;
   },
 ): TodoInjection {
-  const hasMap = (opts?.mapLines?.length ?? 0) > 0;
+  const hasGoal = (opts?.goalLine?.trim().length ?? 0) > 0;
   const hasPending = (opts?.pendingTodos?.length ?? 0) > 0;
   const hasMode = (opts?.modeNote?.length ?? 0) > 0;
-  // T1:清单为空但**存在任务地图**时仍需注入 —— 地图自 T1 起不再进压缩块,
-  // 尾部锚是它唯一的投递通道(仅靠清单判断会让地图整段消失)。
-  // T2:仅 mode 说明也存在时同样要注入(plan/ask 且无清单/地图时它是唯一投递通道)。
-  if (todoBlock.length === 0 && !hasMap && !hasPending && !hasMode) return messages;
+  // 清单为空但**存在会话目标**时仍需注入 —— 目标行是锚的一部分,尾部锚是它唯一的投递通道。
+  // T2:仅 mode 说明也存在时同样要注入(plan/ask 且无清单/目标时它是唯一投递通道)。
+  if (todoBlock.length === 0 && !hasGoal && !hasPending && !hasMode) return messages;
   const last = messages[messages.length - 1];
   if (!last || last.role !== "user") return messages;
-  const anchor = buildTaskAnchor(todoBlock, opts?.mapLines, opts?.pendingTodos, opts?.modeNote);
+  const anchor = buildTaskAnchor(todoBlock, opts?.goalLine, opts?.pendingTodos, opts?.modeNote);
   const content = last.content;
   const merged = messages.slice(0, -1);
   if (typeof content === "string") {
@@ -274,8 +277,8 @@ export class AgentSession {
       contextStore?: ContextStore;
       /** 工具执行轮是否也注入任务锚(默认 true);个别兼容端点若拒绝 tool_result 后跟 text,可置 false 回退。 */
       todoAnchorOnToolResult?: boolean;
-      /** 是否启用常驻任务地图(仅经任务锚在消息尾部投递;T1 起不再进压缩块);默认 true,显式 false 可回退旧行为。 */
-      taskMapEnabled?: boolean;
+      /** 是否启用单行会话目标锚(仅经任务锚在消息尾部投递一行;不再有 6 段地图);默认 true,显式 false 可回退旧行为。 */
+      goalAnchorEnabled?: boolean;
       /** 冷存储按会话隔离;缺省 "default"。 */
       sessionId?: string;
       /** 压缩触发阈值(0~1);缺省 DEFAULT_TRIGGER_RATIO。 */
@@ -362,14 +365,14 @@ export class AgentSession {
       targetPct: this.deps.targetPct,
       tailFoldRatio: this.deps.tailFoldRatio,
       presetCompactedBlock: this.deps.compactedPreset,
-      // 默认开启常驻任务地图(仅经任务锚在消息尾部投递);显式传 false 可回退。
-      taskMapEnabled: this.deps.taskMapEnabled !== false,
+      // 默认开启会话目标锚(仅 1 行,经任务锚在消息尾部投递);显式传 false 可回退。
+      goalAnchorEnabled: this.deps.goalAnchorEnabled !== false,
     });
-    // T1 恢复路径种子:地图已移出压缩块(不再随块持久化),会话恢复后到下次压缩之间
-    // residentMap 会为空 → 任务锚短时丢「目标/已做/结果」。此处从恢复块里仍在的 4 轨
-    // 重建一份地图(幂等/确定性,只走消息尾部锚,不参与压缩块前缀)。
+    // 恢复路径种子:目标已移出压缩块(不再随块持久化),会话恢复后到下次压缩之间
+    // residentGoal 会为空 → 任务锚短时丢目标行。此处从恢复块的需求轨首条重建
+    // (幂等/确定性,只走消息尾部锚,不参与压缩块前缀)。
     // 优先取 apiHistory 里的压缩块,其次回退 preset 快照(ContextManager 内部处理)。
-    this.contextManager.seedResidentMap?.(this.extractCompactedBlock());
+    this.contextManager.seedResidentGoal?.(this.extractCompactedBlock());
     this.hooks = this.deps.hooks;
     // SessionStart:会话创建时触发(构造器为同步,fire-and-forget;失败由 fireHook 吞掉)。
     if (this.hooks) void fireHook(this.hooks, "SessionStart", "", {});
@@ -780,28 +783,20 @@ export class AgentSession {
           // 三类内容互相独立,任一非空即注入(T1 地图已移出压缩块、T2 模式说明已移出 system,
           // 尾部锚是它们唯一的投递通道):
           //  - 清单:仅未完成项(全完成不注入,避免模型反复 TodoWrite);
-          //  - 地图:自 T1 起不再进压缩块,只能经锚投递,保证每轮可见(含工具轮);
+          //  - 会话目标:压缩块需求轨首条(最初需求),单行投递,保证每轮可见(含工具轮);
           //  - 模式说明:自 T2 起不再挂 system 后缀(system 字节变化会让 tools + 全部 messages 前缀 miss)。
           // 全空不注入,避免无意义尾部膨胀;清单最新状态由 TodoWrite 的 tool_result(尾部)传播——
           // 绝不进 system(todo / mode 等动态内容都会打断前缀)。
           const todoBlock = this.todo.hasPending() ? this.todo.toPromptBlock() : "";
-          // 兜底可选调用:注入式 ContextManager(测试替身/旧实现)可能没有该方法。
-          const mapLinesRaw = sanitizeMapLines(this.contextManager.getResidentMap?.() ?? []);
+          // 单行会话目标(兜底可选调用:注入式 ContextManager 测试替身可能没有该方法)。
+          const goalLine = this.contextManager.getResidentGoal?.() ?? "";
           // 真实未完成待办(done=false)→ 锚的「下一步」段;历史需求不再冒充待办。
           const pendingTodos = this.todo.list().filter((i) => !i.done).map((i) => i.content);
-          // P0-3(补全):**无未完成待办**时,地图退化为「只读上下文」——
-          // 地图原措辞(`**目标:**`/`**最新要求:**`/`### 近期需求`)带行动暗示,与锚首句
-          // 「当前没有未完成的待办,不要自行继续历史任务」自相矛盾;实测模型取后者继续干活
-          // (纯状态汇报消息被读成"继续未竟任务")。只改标题措辞为历史语义,条目正文保真。
-          const mapLines =
-            todoBlock.length === 0 && pendingTodos.length === 0
-              ? toReadOnlyMapLines(mapLinesRaw)
-              : mapLinesRaw;
           const requestMessages =
-            todoBlock.length > 0 || mapLines.length > 0 || modeSeg.length > 0
+            todoBlock.length > 0 || goalLine.length > 0 || modeSeg.length > 0
               ? injectTodoIntoMessages(this.messages, todoBlock, {
                   anchorOnToolResult: this.deps.todoAnchorOnToolResult !== false,
-                  mapLines,
+                  goalLine,
                   pendingTodos,
                   modeNote: modeSeg,
                 })

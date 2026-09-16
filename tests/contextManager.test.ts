@@ -1278,15 +1278,15 @@ describe("ContextManager compaction events", () => {
   });
 });
 
-describe("ContextManager 任务地图(P2 常驻地图)", () => {
+describe("ContextManager 会话目标锚(单行)", () => {
   const textMsg = (n: number): ProviderMessage => ({ role: "user", content: "中".repeat(n) });
 
-  it("taskMapEnabled: 块首含地图;目标=首条需求、最新要求=末条需求(目标漂移不丢)", async () => {
+  it("goalAnchorEnabled: 会话目标=需求轨首条(最初需求),且不写入压缩块", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
     });
     const msgs: ProviderMessage[] = [
       { role: "user", content: "最初目标:修压缩" },
@@ -1300,100 +1300,97 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
     ];
     const out = await cm.compact(msgs);
     const content = out[0].content as string;
-    // T1:地图**不再**写入压缩块(块只由 4 轨构成 → 字节跨轮稳定,不再整块 miss)
-    expect(content).not.toContain("## 任务地图");
+    // 6 段地图已整块删除:块内绝无任务地图段(块骨架只由 4 轨构成)
+    expect(content).not.toContain("任务地图");
+    expect(content).not.toContain("**目标:**");
+    expect(content).not.toContain("### 已做");
+    expect(content).not.toContain("### 结果");
     expect(content).toContain("## 需求");
-    // 地图仍在:改由常驻缓存承载,经任务锚在消息尾部投递(尾部变化不破坏前缀)
-    const map = cm.getResidentMap();
-    expect(map.some((l) => l.includes("**目标:** 最初目标"))).toBe(true);
-    // 关键:落在需求轨中间的「目标澄清」也必须常驻,否则多轮后会漂移
-    expect(map.some((l) => l.includes("**最新要求:** 澄清"))).toBe(true);
-    // 中间需求进「更早的需求」,且不与目标/最新要求重复;**不得**冒充「下一步」
-    expect(map.some((l) => l.includes("中间需求一"))).toBe(true);
-    expect(map.some((l) => l.includes("### 下一步"))).toBe(false);
-    const goals = map.filter((l) => l.includes("**目标:**") || l.includes("**最新要求:**"));
-    expect(goals).toHaveLength(2);
+    // 单行目标 = 需求轨首条(最初需求);已剥掉 `- [rN] ` 轨行前缀
+    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
   });
 
-  it("更早的需求: 需求轨较早的中间需求落入该段(语义为历史需求, 非待办)", async () => {
-    const cm = new ContextManager({
-      windowTokens: 1000,
-      triggerRatio: 0.8,
-      summarize: async () => "S",
-      taskMapEnabled: true,
-    });
-    // 8 条需求:首条(目标)+ 6 条中间 + 末条(最新要求)。keepTail=4 → 中间 3 条进「近期需求」,
-    // 更早的 3 条进「更早的需求」(取最新 2 条)。
-    const msgs: ProviderMessage[] = [
-      { role: "user", content: "最初目标:修压缩" },
-      { role: "user", content: "较早需求甲" },
-      { role: "user", content: "较早需求乙" },
-      { role: "user", content: "较早需求丙" },
-      { role: "user", content: "近期需求甲" },
-      { role: "user", content: "近期需求乙" },
-      { role: "user", content: "近期需求丙" },
-      { role: "user", content: "最新要求:保住地图" },
-      { role: "user", content: "tail0" },
-      { role: "user", content: "tail1" },
-      { role: "user", content: "tail2" },
-      { role: "user", content: "tail3" },
-    ];
-    await cm.compact(msgs);
-    const map = cm.getResidentMap();
-    const joined = map.join("\n");
-    expect(joined).toContain("### 近期需求");
-    expect(joined).toContain("### 更早的需求");
-    // 段序:近期需求在更早的需求之前
-    expect(joined.indexOf("### 近期需求")).toBeLessThan(joined.indexOf("### 更早的需求"));
-    // 「更早的需求」段内的条目落在较早需求区
-    const idx = map.findIndex((l) => l.includes("### 更早的需求"));
-    const seg = map.slice(idx, idx + 4).join("\n");
-    expect(seg).toContain("较早需求");
-    // 关键:绝不以「下一步」冒充待办(块内无 todo 信息)
-    expect(joined).not.toContain("### 下一步");
-  });
-
-  it("taskMapEnabled 缺省(false):不生成地图,getResidentMap 为空(字节与旧版一致)", async () => {
+  it("goalAnchorEnabled 缺省(false):不生成目标,getResidentGoal 为空(字节与旧版一致)", async () => {
     const cm = new ContextManager({ windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" });
     const msgs: ProviderMessage[] = Array.from({ length: 8 }, (_, i) => ({ role: "user", content: `m${i}` }));
-    const out = await cm.compact(msgs);
-    expect(out[0].content as string).not.toContain("任务地图");
-    expect(cm.getResidentMap()).toEqual([]);
+    await cm.compact(msgs);
+    expect(cm.getResidentGoal()).toBe("");
   });
 
-  it("中期澄清落在需求轨中间 → 进地图「近期需求」段(不随中间行被裁)", async () => {
-    // 第 15 轮才出现的澄清落在中间:既非首条(目标)也非末条(最新要求)。
+  it("目标不漂移:中途加入澄清/新需求后,目标仍是首条(最初需求)", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
     });
+    const base: ProviderMessage[] = [
+      { role: "user", content: "最初目标:修压缩" },
+      { role: "user", content: "中间需求一" },
+      ...Array.from({ length: 4 }, () => textMsg(30)),
+    ];
+    const first = await cm.compact(base);
+    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
+    // 第二轮:旧块 + 新的澄清 + 新需求;目标不得被末条需求顶掉
+    await cm.compact([
+      ...first,
+      { role: "user", content: "澄清:其实重点是缓存命中" },
+      { role: "user", content: "新需求:再加一层保护" },
+      ...Array.from({ length: 3 }, () => textMsg(30)),
+    ]);
+    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
+  });
+
+  it("目标行已剥离运行时合成行(`[续写]`/`[输出中断]` 不作目标)", async () => {
+    const cm = new ContextManager({
+      windowTokens: 1000,
+      triggerRatio: 0.8,
+      summarize: async () => "S",
+      goalAnchorEnabled: true,
+    });
+    const msgs: ProviderMessage[] = [
+      {
+        role: "user",
+        content:
+          "[续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
+      },
+      { role: "user", content: "真实需求:修压缩" },
+      ...Array.from({ length: 4 }, () => textMsg(30)),
+    ];
+    const out = await cm.compact(msgs);
+    // 合成行不入需求轨 → 目标顺延到真实需求
+    expect(cm.getResidentGoal()).toBe("真实需求:修压缩");
+    expect(out[0].content as string).not.toContain("[续写]");
+  });
+
+  it("核心:目标对压缩块字节零影响(开/关逐字节相同)", async () => {
     const msgs: ProviderMessage[] = [
       { role: "user", content: "最初目标:修压缩" },
       { role: "user", content: "中间需求一" },
-      { role: "user", content: "中间需求二" },
       { role: "user", content: "澄清:其实要保住地图" },
-      { role: "user", content: "tail0" },
-      { role: "user", content: "tail1" },
-      { role: "user", content: "tail2" },
-      { role: "user", content: "tail3" },
+      ...Array.from({ length: 4 }, () => textMsg(50)),
     ];
-    await cm.compact(msgs);
-    const map = cm.getResidentMap();
-    expect(map).toContain("### 近期需求");
-    // 关键:澄清必须常驻(否则多轮后目标漂移)
-    expect(map.some((l) => l.includes("澄清:其实要保住地图"))).toBe(true);
-    // 近期需求段位于地图内、且整段随地图永不参与裁剪
-    expect(map.indexOf("### 近期需求")).toBeGreaterThan(map.indexOf("**目标:**"));
+    const opts = { windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" };
+    const cmOn = new ContextManager({ ...opts, goalAnchorEnabled: true });
+    const cmOff = new ContextManager({ ...opts, goalAnchorEnabled: false });
+    const on = await cmOn.compact(msgs);
+    const off = await cmOff.compact(msgs);
+
+    // 前置:目标确实生成了(否则本测试失去意义),且确实不在块内
+    expect(cmOn.getResidentGoal()).toBe("最初目标:修压缩");
+    expect(on[0].content as string).not.toContain("会话目标");
+
+    // 核心断言:块字节与「关掉目标锚」逐字节相同 → 目标不触碰任何前缀
+    expect(on[0].content).toBe(off[0].content);
+    expect(on.slice(1)).toEqual(off.slice(1));
   });
 
-  it("裁剪保护:极小预算下首条需求(目标)免裁,只削中间", async () => {
+  it("裁剪保护:极小预算下首条需求(目标)免裁", async () => {
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
       historyTokenBudget: 2000, // 极紧预算:块必须裁剪才能收敛
     });
     // 20 条长需求 → 按预算裁剪;首条(目标)是硬保护(软保护放开后仍免裁)
@@ -1406,107 +1403,9 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
     const content = out[0].content as string;
     // 首条需求(最初目标)在任何预算下都不得被裁掉 → 目标不丢
     expect(content).toContain("需求0:");
-    // 软保护阶段:末尾需求(最新要求)优先于中间行被保留;块内裁剪只削中间
     const demandLines = content.split("\n").filter((l) => /^-\s*\[r\d+\]\s*需求\d+:/.test(l));
     expect(demandLines.length).toBeGreaterThan(0);
     expect(demandLines[0]).toContain("需求0:");
-  });
-
-  it("运行时「续写提示」不进需求轨(否则会顶掉地图的最新要求/更早的需求)", async () => {
-    const cm = new ContextManager({
-      windowTokens: 1000,
-      triggerRatio: 0.8,
-      summarize: async () => "S",
-      taskMapEnabled: true,
-    });
-    // 真实需求 A → 续写提示(运行时合成) → 真实澄清 B(真正的最新要求)
-    const msgs: ProviderMessage[] = [
-      { role: "user", content: "需求A:修压缩" },
-      {
-        role: "user",
-        content:
-          "[续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
-      },
-      { role: "user", content: "澄清B:其实重点是保住地图" },
-      { role: "user", content: "tail0" },
-      { role: "user", content: "tail1" },
-      { role: "user", content: "tail2" },
-      { role: "user", content: "tail3" },
-    ];
-    const out = await cm.compact(msgs);
-    const content = out[0].content as string;
-    // 续写提示不得出现在任何轨(尤其需求轨)
-    expect(content).not.toContain("[续写]");
-    expect(content).not.toContain("上一轮输出因长度上限中断");
-    // 地图「最新要求」= 真正的最后一条用户需求 B,而非续写提示
-    const map = cm.getResidentMap();
-    expect(map.some((l) => l.includes("澄清B:其实重点是保住地图"))).toBe(true);
-    expect(map.some((l) => l.includes("[续写]"))).toBe(false);
-  });
-
-  it("历史遗留的续写污染条目会被地图剔除(累积式不粘住垃圾)", async () => {
-    const cm = new ContextManager({
-      windowTokens: 1000,
-      triggerRatio: 0.8,
-      summarize: async () => "S",
-      taskMapEnabled: true,
-    });
-    // 第一轮:旧版本 bug 已把 [续写] 写进地图「近期需求」段(prevMap 里就有)
-    const buggyPrevMap = [
-      "## 任务地图",
-      "**目标:** 修压缩",
-      "### 近期需求",
-      "- [续写] 上一轮输出因长度上限中断",
-    ];
-    // 通过连续压缩让 prevMap 从上一轮块中解析出来
-    const msgs: ProviderMessage[] = [
-      { role: "user", content: "需求A:修压缩" },
-      { role: "user", content: "需求B:保住地图" },
-      { role: "user", content: "tail0" },
-      { role: "user", content: "tail1" },
-      { role: "user", content: "tail2" },
-      { role: "user", content: "tail3" },
-    ];
-    await cm.compact(msgs);
-    // 模拟:把上一轮地图(含污染行)喂给本轮重建
-    const rebuilt = (cm as unknown as { buildResidentMap: (p: unknown, prev: string[]) => string[] })
-      .buildResidentMap(
-        { demands: ["- [r1] 需求A:修压缩", "- [r2] 需求B:保住地图"], conclusions: [], explanations: [], ledger: [], map: [] },
-        buggyPrevMap,
-      );
-    expect(rebuilt.some((l) => l.includes("[续写]"))).toBe(false);
-  });
-
-  it("轨行形态 `- [rN] [续写] …` 也被剔除(前缀感知判定;旧版只比裸文本会漏判)", async () => {
-    const cm = new ContextManager({
-      windowTokens: 1000,
-      triggerRatio: 0.8,
-      summarize: async () => "S",
-      taskMapEnabled: true,
-    });
-    // 关键:历史落盘的轨行带 `- [rN] ` 编号前缀,裸 `startsWith("[续写]")` 匹配不到 → 会残留。
-    const rebuilt = (cm as unknown as { buildResidentMap: (p: unknown, prev: string[]) => string[] })
-      .buildResidentMap(
-        {
-          demands: [
-            "- [r1] 需求A:修压缩",
-            "- [r2] [续写] 上一轮输出因长度上限中断。请从中断处继续；需要改文件或执行命令时直接发起完整工具调用，不要重复已完成的步骤。",
-            "- [r3] 澄清C:重点是保住地图",
-          ],
-          conclusions: ["- [r4] [输出中断]", "- [r5] 真实结论:地图已生效"],
-          explanations: [],
-          ledger: [],
-          map: [],
-        },
-        ["## 任务地图", "**目标:** 修压缩", "### 近期需求", "- [r6] [续写] 更早的遗留污染"],
-      );
-    // 三种形态都不得出现在地图:目标/最新要求/近期需求/更早的需求/结果
-    expect(rebuilt.some((l) => l.includes("[续写]"))).toBe(false);
-    expect(rebuilt.some((l) => l.includes("上一轮输出因长度上限中断"))).toBe(false);
-    expect(rebuilt.some((l) => l.includes("[输出中断]"))).toBe(false);
-    // 真实需求仍在(没有把整段过滤掉)
-    expect(rebuilt.some((l) => l.includes("需求A:修压缩"))).toBe(true);
-    expect(rebuilt.some((l) => l.includes("澄清C:重点是保住地图"))).toBe(true);
   });
 
   it("旧块「需求/结论」轨里的历史合成行会被一次性清除(不再随 merge 永久残留)", async () => {
@@ -1514,7 +1413,7 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
       windowTokens: 1000,
       triggerRatio: 0.8,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
     });
     // 构造「旧代码产出的」压缩块:需求轨/结论轨里混着历史合成行(现场:r125/r129)。
     const polluted = buildCompactedBlock({
@@ -1548,74 +1447,12 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
     expect(content).toContain("新需求C");
   });
 
-  it("T1 核心:地图滑动窗口每轮都变,但对压缩块字节零影响(不再整块 miss)", async () => {
-    // 压缩块是**单条消息**(atomic):块内任一字节变化 = 整消息 miss。
-    // 修复前,地图的「已做/结果/更早的需求」是 latest(...) 滑动窗口,
-    // 每次压缩都让块首那段变化 → 整块(实测中位 1.8 万 tok)全额 miss。
-    // T1 判据:**同一批消息,开关地图产出的块字节必须完全一致** —— 即地图对块零影响。
-    const msgs: ProviderMessage[] = [
-      { role: "user", content: "最初目标:修压缩" },
-      { role: "user", content: "中间需求一" },
-      { role: "user", content: "澄清:其实要保住地图" },
-      ...Array.from({ length: 4 }, () => textMsg(50)),
-    ];
-    const opts = { windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" };
-    const cmOn = new ContextManager({ ...opts, taskMapEnabled: true });
-    const cmOff = new ContextManager({ ...opts, taskMapEnabled: false });
-    const on = await cmOn.compact(msgs);
-    const off = await cmOff.compact(msgs);
-
-    // 前置:地图确实生成了(否则本测试失去意义),且确实**不在**块内
-    const map = cmOn.getResidentMap();
-    expect(map.length).toBeGreaterThan(0);
-    expect(map.join("\n")).toContain("任务地图");
-    expect(on[0].content as string).not.toContain("任务地图");
-
-    // 核心断言:块字节与「关掉地图」逐字节相同 → 地图的任何滑动都不再触碰块
-    expect(on[0].content).toBe(off[0].content);
-    // 且 tail 侧也不受影响(地图只经锚注入,不进持久历史)
-    expect(on.slice(1)).toEqual(off.slice(1));
-  });
-
-  it("T1:地图仍可跨压缩轮次完整重建(移出块后不丢信息)", async () => {
+  it("恢复路径:seedResidentGoal 从恢复块需求轨重建目标(会话重启后锚不再为空)", () => {
     const cm = new ContextManager({
       windowTokens: 1_000_000,
       triggerRatio: 0.75,
       summarize: async () => "S",
-      historyTokenBudget: 1000,
-      taskMapEnabled: true,
-    });
-    const first = await cm.compact(Array.from({ length: 6 }, () => textMsg(50)));
-    const map1 = cm.getResidentMap().join("\n");
-    expect(map1).toContain("**目标:**");
-    // 第二轮:旧块 + 新消息 → 地图从旧块轨(parse 出来的 4 轨)+ 新段重建
-    const second = await cm.compact([...first, ...Array.from({ length: 3 }, () => textMsg(50))]);
-    const map2 = cm.getResidentMap().join("\n");
-    expect(map2.length).toBeGreaterThan(0);
-    expect(map2).toContain("**目标:**");
-    // 两轮的块都不含地图
-    expect(second[0].content as string).not.toContain("任务地图");
-  });
-
-  it("T1:taskMapEnabled=false 时块与地图均不受影响(字节与旧版一致)", async () => {
-    const cm = new ContextManager({
-      windowTokens: 1000,
-      triggerRatio: 0.8,
-      summarize: async () => "S",
-    });
-    const out = await cm.compact(Array.from({ length: 8 }, () => textMsg(50)));
-    expect(out[0].content as string).not.toContain("任务地图");
-    expect(cm.getResidentMap()).toEqual([]);
-  });
-
-  it("T1 恢复路径:seedResidentMap 从恢复块重建地图(会话重启后锚不再为空)", () => {
-    // T1 后地图不再随压缩块持久化 → 会话恢复时 residentMap 为空,
-    // 到「下次压缩」之间任务锚会丢「目标/已做/结果」。种子用恢复块的 4 轨重建。
-    const cm = new ContextManager({
-      windowTokens: 1_000_000,
-      triggerRatio: 0.75,
-      summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
     });
     const legacy = [
       "[前文摘要]",
@@ -1629,55 +1466,51 @@ describe("ContextManager 任务地图(P2 常驻地图)", () => {
       "## 工具履历",
       "- [r4] Bash: ls",
     ].join("\n");
-    expect(cm.getResidentMap()).toEqual([]);
-    cm.seedResidentMap(legacy);
-    const map = cm.getResidentMap().join("\n");
-    expect(map).toContain("## 任务地图");
-    expect(map).toContain("最初目标:修压缩");
-    expect(map).toContain("澄清:其实要保住地图");
-    expect(map).toContain("结论:地图已移出块");
+    expect(cm.getResidentGoal()).toBe("");
+    cm.seedResidentGoal(legacy);
+    // 目标是需求轨**首条**;结论/履历不参与
+    expect(cm.getResidentGoal()).toBe("最初目标:修压缩");
   });
 
-  it("T1 恢复路径:种子幂等、不覆盖已有地图;非压缩块/关闭地图时不生效", () => {
+  it("恢复路径:种子幂等、不覆盖已有目标;非压缩块/关闭目标锚时不生效", () => {
     const cm = new ContextManager({
       windowTokens: 1_000_000,
       triggerRatio: 0.75,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
     });
-    cm.seedResidentMap(["[compacted]", "## 需求", "- [r1] 目标A"].join("\n"));
-    const first = cm.getResidentMap();
-    expect(first.join("\n")).toContain("目标A");
-    // 幂等:已有地图时不再被种子改写(避免恢复期字节抖动)
-    cm.seedResidentMap(["[compacted]", "## 需求", "- [r1] 目标B"].join("\n"));
-    expect(cm.getResidentMap()).toEqual(first);
+    cm.seedResidentGoal(["[compacted]", "## 需求", "- [r1] 目标A"].join("\n"));
+    expect(cm.getResidentGoal()).toBe("目标A");
+    // 幂等:已有目标时不再被种子改写(避免恢复期字节抖动)
+    cm.seedResidentGoal(["[compacted]", "## 需求", "- [r1] 目标B"].join("\n"));
+    expect(cm.getResidentGoal()).toBe("目标A");
 
     // 非压缩块文本:不生效
     const cm2 = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
     });
-    cm2.seedResidentMap("一段普通文本,不带 [compacted] 标记");
-    expect(cm2.getResidentMap()).toEqual([]);
+    cm2.seedResidentGoal("一段普通文本,不带 [compacted] 标记");
+    expect(cm2.getResidentGoal()).toBe("");
 
-    // 关闭地图:不生成
+    // 关闭目标锚:不生效
     const cm3 = new ContextManager({ windowTokens: 1000, triggerRatio: 0.8, summarize: async () => "S" });
-    cm3.seedResidentMap(["[compacted]", "## 需求", "- [r1] 目标A"].join("\n"));
-    expect(cm3.getResidentMap()).toEqual([]);
+    cm3.seedResidentGoal(["[compacted]", "## 需求", "- [r1] 目标A"].join("\n"));
+    expect(cm3.getResidentGoal()).toBe("");
   });
 
-  it("T1 恢复路径:未显式传块时回退 presetCompactedBlock 快照种子", () => {
+  it("恢复路径:未显式传块时回退 presetCompactedBlock 快照种子", () => {
     const preset = ["[compacted]", "## 需求", "- [r1] 恢复自快照的目标"].join("\n");
     const cm = new ContextManager({
       windowTokens: 1_000_000,
       triggerRatio: 0.75,
       summarize: async () => "S",
-      taskMapEnabled: true,
+      goalAnchorEnabled: true,
       presetCompactedBlock: preset,
     });
-    cm.seedResidentMap();
-    expect(cm.getResidentMap().join("\n")).toContain("恢复自快照的目标");
+    cm.seedResidentGoal();
+    expect(cm.getResidentGoal()).toBe("恢复自快照的目标");
   });
 });

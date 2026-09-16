@@ -1191,8 +1191,8 @@ describe("AgentSession compaction events wiring", () => {
       initialHistory: history,
       triggerRatio: 0, // 立即触发窗口兜底压缩
       historyTokenBudget: 1000, // 预算模式:压缩前 head(5 条×50) > 压缩后块(≈219)
-      // 本用例只验证压缩事件接线与 head/tail 切分;任务地图会改变块骨架 token,故显式关闭。
-      taskMapEnabled: false,
+      // 本用例只验证压缩事件接线与 head/tail 切分;目标锚不写入压缩块,故不受影响(显式关闭以固定块骨架)。
+      goalAnchorEnabled: false,
       onCompaction: (ev) => events.push(ev),
     });
     await session.send("hello", () => {});

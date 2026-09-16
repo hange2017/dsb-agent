@@ -55,12 +55,29 @@ describe("Configuration", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.thinking" ? "yes" : "") });
     expect(junk.compactionThinkingEnabled()).toBe(false);
   });
-  it("compactionTaskMapEnabled defaults to true and only \"false\" disables it", () => {
-    expect(new Configuration({ getString: () => "" }).compactionTaskMapEnabled()).toBe(true);
-    const off = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "false" : "") });
-    expect(off.compactionTaskMapEnabled()).toBe(false);
-    const on = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "true" : "") });
-    expect(on.compactionTaskMapEnabled()).toBe(true);
+  it("compactionGoalAnchorEnabled defaults to true and only \"false\" disables it", () => {
+    expect(new Configuration({ getString: () => "" }).compactionGoalAnchorEnabled()).toBe(true);
+    const off = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.goalAnchorEnabled" ? "false" : "") });
+    expect(off.compactionGoalAnchorEnabled()).toBe(false);
+    const on = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.goalAnchorEnabled" ? "true" : "") });
+    expect(on.compactionGoalAnchorEnabled()).toBe(true);
+  });
+  it("compactionGoalAnchorEnabled falls back to legacy taskMapEnabled=false (老用户配置不静默失效)", () => {
+    // 0.4.0 及以前键名为 taskMapEnabled;新键缺省时应回退读旧键
+    const legacyOff = new Configuration({
+      getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "false" : ""),
+    });
+    expect(legacyOff.compactionGoalAnchorEnabled()).toBe(false);
+    const legacyOn = new Configuration({
+      getString: (k) => (k === "dsbAgent.compaction.taskMapEnabled" ? "true" : ""),
+    });
+    expect(legacyOn.compactionGoalAnchorEnabled()).toBe(true);
+    // 新键优先于旧键
+    const bothOff = new Configuration({
+      getString: (k) =>
+        k === "dsbAgent.compaction.goalAnchorEnabled" ? "true" : k === "dsbAgent.compaction.taskMapEnabled" ? "false" : "",
+    });
+    expect(bothOff.compactionGoalAnchorEnabled()).toBe(true);
   });
   it("historyTokenBudget defaults to 64000 and accepts 0 (disabled)", () => {
     expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(64000);
