@@ -382,7 +382,7 @@ function track(title: string, lines: string[], includeEmptyTitle = true): string
  * 注意:内容固定不变,否则每次压缩重建都会改变块尾字节 → 缓存前缀断裂。
  */
 export const RECALL_HINT_LINE =
-  "(hint: 当前目标见任务锚;原文→ContextRecall(seq=n))";
+  "(hint: 当前目标见会话计划;原文→ContextRecall(seq=n))";
 
 /**
  * 旧版提示行(历史会话已落盘的块):解析时同样跳过,避免被当成业务行。
@@ -391,16 +391,20 @@ export const RECALL_HINT_LINE =
  *   —— v2 文案把「需求轨**首条**」指为会话目标;目标语义已改为「最新一条」后,
  *   该文案会把模型引回早已完成的陈旧目标(实测「完成git处理」钉死数十天),
  *   故 v3 改为不指向具体轨行(目标由任务锚单行给出),降低迷失概率。
+ * - v3(2026-09-19 前):`(hint: 当前目标见任务锚;原文→ContextRecall(seq=n))`
+ *   —— P0-7 把尾部锚的标签由「任务锚」改为「会话计划」(去可引用名词),此处同步指向新名。
  */
 export const LEGACY_RECALL_HINT_LINE = "(hint: ContextRecall(seq=n) → [r{n}])";
 export const LEGACY_RECALL_HINT_LINE_V2 = "(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))";
+export const LEGACY_RECALL_HINT_LINE_V3 = "(hint: 当前目标见任务锚;原文→ContextRecall(seq=n))";
 
 /** 是否为压缩块提示行(当前或历史版本)。 */
 export function isRecallHintLine(line: string): boolean {
   return (
     line === RECALL_HINT_LINE ||
     line === LEGACY_RECALL_HINT_LINE ||
-    line === LEGACY_RECALL_HINT_LINE_V2
+    line === LEGACY_RECALL_HINT_LINE_V2 ||
+    line === LEGACY_RECALL_HINT_LINE_V3
   );
 }
 

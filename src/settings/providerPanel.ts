@@ -62,7 +62,8 @@ export interface ProviderPanelServices {
   setActiveProvider(id: string): Promise<void>;
   setApiKey(id: string, key: string): Promise<void>;
   resolveModels(providerId: string): ModelView[];
-  refreshModels(providerId: string): Promise<void>;
+  /** 强制刷新模型列表;返回本次探测到的模型数量(供 UI 提示)。无供应商时抛错。 */
+  refreshModels(providerId: string): Promise<number>;
   setCapabilityOverride(providerId: string, modelId: string, patch: Partial<ProviderCapabilities>): Promise<void>;
   importFromCcSwitch(): Promise<{ imported: number }>;
   /** 测试连接:发最小请求验证 baseUrl + API key。返回 { ok, message }。 */
@@ -218,10 +219,14 @@ async function handleMessage(
           raw.providerId ??
           services.getActiveProviderId() ??
           services.listProviders()[0]?.id;
-        if (providerId) {
-          await services.refreshModels(providerId);
-          await postState(panel, services);
+        if (!providerId) {
+          // 无任何供应商:静默 break 会让"点了没反应",这里显式提示
+          await toast(panel, "尚无供应商,请先在上方新建。", true);
+          break;
         }
+        const count = await services.refreshModels(providerId);
+        await postState(panel, services);
+        await toast(panel, `已刷新模型列表(${count} 个模型)`);
         break;
       }
       case "set_capability": {

@@ -65,7 +65,8 @@ export const TODO_TOOL_DEF: ToolDef = {
   description:
     "管理任务清单:list/add/update/clear。长任务建议先建清单再逐项完成。" +
     "子步骤请用多条独立 todo(各自 id),不要在单条 content 里嵌套 - [ ] 清单;" +
-    "update done=true 表示整项完成。全部完成后无需再调用本工具。",
+    "update done=true 表示整项完成。全部完成后无需再调用本工具。" +
+    "用户新指令使部分项失效或中止时,用 update/clear 修订清单使其与本轮任务一致(修订不必向用户解释)。",
   input_schema: {
     type: "object",
     properties: {

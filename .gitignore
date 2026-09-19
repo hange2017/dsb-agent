@@ -12,3 +12,4 @@ benchmark/out/
 .dsb/checkpoints/
 __pycache__/
 *.pyc
+typecheck.out

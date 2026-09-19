@@ -35,18 +35,18 @@ describe("Configuration", () => {
     const bad = new Configuration({ getString: (k) => (k === "dsbAgent.language" ? "fr" : "") });
     expect(bad.language()).toBe("");
   });
-  it("compactionTriggerRatio defaults to 0.75 and accepts valid values", () => {
-    expect(new Configuration({ getString: () => "" }).compactionTriggerRatio()).toBe(0.75);
+  it("compactionTriggerRatio defaults to 0.85 and accepts valid values", () => {
+    expect(new Configuration({ getString: () => "" }).compactionTriggerRatio()).toBe(0.85);
     const cfg = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerRatio" ? "0.55" : "") });
     expect(cfg.compactionTriggerRatio()).toBe(0.55);
   });
   it("compactionTriggerRatio rejects out-of-range and non-numeric values", () => {
     const tooBig = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerRatio" ? "1.5" : "") });
-    expect(tooBig.compactionTriggerRatio()).toBe(0.75);
+    expect(tooBig.compactionTriggerRatio()).toBe(0.85);
     const negative = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerRatio" ? "-0.1" : "") });
-    expect(negative.compactionTriggerRatio()).toBe(0.75);
+    expect(negative.compactionTriggerRatio()).toBe(0.85);
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerRatio" ? "abc" : "") });
-    expect(junk.compactionTriggerRatio()).toBe(0.75);
+    expect(junk.compactionTriggerRatio()).toBe(0.85);
   });
   it("compactionThinkingEnabled defaults to false and accepts true", () => {
     expect(new Configuration({ getString: () => "" }).compactionThinkingEnabled()).toBe(false);
@@ -81,8 +81,8 @@ describe("Configuration", () => {
     });
     expect(bothOff.compactionGoalAnchorEnabled()).toBe(true);
   });
-  it("historyTokenBudget defaults to 64000 and accepts 0 (disabled)", () => {
-    expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(64000);
+  it("historyTokenBudget defaults to 30000 and accepts 0 (disabled)", () => {
+    expect(new Configuration({ getString: () => "" }).historyTokenBudget()).toBe(30000);
     const zero = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "0" : "") });
     expect(zero.historyTokenBudget()).toBe(0);
     const custom = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "20000" : "") });
@@ -90,15 +90,15 @@ describe("Configuration", () => {
   });
   it("historyTokenBudget rejects non-numeric and negative", () => {
     const junk = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "abc" : "") });
-    expect(junk.historyTokenBudget()).toBe(64000);
+    expect(junk.historyTokenBudget()).toBe(30000);
     const negative = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.historyTokenBudget" ? "-5" : "") });
-    expect(negative.historyTokenBudget()).toBe(64000);
+    expect(negative.historyTokenBudget()).toBe(30000);
   });
-  it("budgetSplit defaults to 45/20/35", () => {
+  it("budgetSplit defaults to two-part 20/0/80", () => {
     expect(new Configuration({ getString: () => "" }).budgetSplit()).toEqual({
-      compacted: 0.45,
-      thinking: 0.2,
-      tail: 0.35,
+      compacted: 0.2,
+      thinking: 0,
+      tail: 0.8,
     });
   });
   it("budgetSplit reads valid values and normalizes", () => {
@@ -123,22 +123,23 @@ describe("Configuration", () => {
     expect(twoRaw.budgetSplit()).toEqual({ compacted: 0.75, thinking: 0, tail: 0.25 });
   });
   it("budgetSplit falls back on invalid values", () => {
+    const def = { compacted: 0.2, thinking: 0, tail: 0.8 };
     // 缺项
     expect(
       new Configuration({ getString: () => "", getJson: <T>(_k: string) => ({ compacted: 1 }) as T }).budgetSplit(),
-    ).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
+    ).toEqual(def);
     // 非数
     expect(
       new Configuration({ getString: () => "", getJson: <T>(_k: string) => ({ compacted: "x", thinking: 0.2, tail: 0.35 }) as T }).budgetSplit(),
-    ).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
+    ).toEqual(def);
     // 非正数
     expect(
       new Configuration({ getString: () => "", getJson: <T>(_k: string) => ({ compacted: -1, thinking: 0.2, tail: 0.35 }) as T }).budgetSplit(),
-    ).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
+    ).toEqual(def);
     // 和为 0
     expect(
       new Configuration({ getString: () => "", getJson: <T>(_k: string) => ({ compacted: 0, thinking: 0, tail: 0 }) as T }).budgetSplit(),
-    ).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
+    ).toEqual(def);
     // 未归一化 → 按和归一化
     const unnormalized = new Configuration({
       getString: () => "",
@@ -163,8 +164,8 @@ describe("Configuration context window & trigger/target pct", () => {
     expect(mk("").contextWindowTokens()).toBe(600000);
   });
 
-  it("compactionTriggerPct defaults to 0.75 and accepts (0,1]", () => {
-    expect(new Configuration({ getString: () => "" }).compactionTriggerPct()).toBe(0.75);
+  it("compactionTriggerPct defaults to 0.85 and accepts (0,1]", () => {
+    expect(new Configuration({ getString: () => "" }).compactionTriggerPct()).toBe(0.85);
     const cfg = new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerPct" ? "0.8" : "") });
     expect(cfg.compactionTriggerPct()).toBe(0.8);
     expect(cfg.compactionTargetPct()).toBe(0.5);
@@ -172,9 +173,9 @@ describe("Configuration context window & trigger/target pct", () => {
 
   it("compactionTriggerPct rejects out-of-range values", () => {
     const mk = (v: string) => new Configuration({ getString: (k) => (k === "dsbAgent.compaction.triggerPct" ? v : "") });
-    expect(mk("0").compactionTriggerPct()).toBe(0.75);
-    expect(mk("1.5").compactionTriggerPct()).toBe(0.75);
-    expect(mk("x").compactionTriggerPct()).toBe(0.75);
+    expect(mk("0").compactionTriggerPct()).toBe(0.85);
+    expect(mk("1.5").compactionTriggerPct()).toBe(0.85);
+    expect(mk("x").compactionTriggerPct()).toBe(0.85);
   });
 
   it("compactionTargetPct defaults to 0.5, accepts (0,trigger)", () => {

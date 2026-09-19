@@ -58,25 +58,26 @@ export class Configuration {
     const v = this.reader.getString("dsbAgent.autoChipsOnPaste");
     return v !== "false";
   }
-  /** 上下文压缩触发阈值(0~1):上下文占用达到该比例时自动压缩;缺省 0.75,非法值回退。 */
+  /** 上下文压缩触发阈值(0~1):上下文占用达到该比例时自动压缩;缺省 0.85,非法值回退。 */
   compactionTriggerRatio(): number {
     const v = Number(this.reader.getString("dsbAgent.compaction.triggerRatio"));
-    return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.75;
+    return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.85;
   }
   /** thinking 独立压缩块开关;缺省 false(仅 "true" 视为开启,其余值关闭)——参数界面默认关闭 thinking 链路。 */
   compactionThinkingEnabled(): boolean {
     return this.reader.getString("dsbAgent.compaction.thinking") === "true";
   }
-  /** 历史信息 token 总预算;缺省 64000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
+  /** 历史信息 token 总预算;缺省 30000;0 = 关闭(回退现状固定 tail 4 条 + 压缩块 8K 字符)。非法值回退。 */
   historyTokenBudget(): number {
     const raw = this.reader.getString("dsbAgent.compaction.historyTokenBudget");
-    if (!raw) return 64000;
+    if (!raw) return 30000;
     const v = Number(raw);
-    return Number.isFinite(v) && v >= 0 ? v : 64000;
+    return Number.isFinite(v) && v >= 0 ? v : 30000;
   }
 
-  /** 默认预算比例(压缩块/thinking/tail)。 */
-  static readonly kDefaultBudgetSplit = { compacted: 0.45, thinking: 0.2, tail: 0.35 };
+  /** 默认预算比例(压缩块/thinking/tail)。thinking 为 0(处理侧 thinking 编排默认关闭),
+   *  即历史预算默认两段切分:压缩块 20% / tail 80%(近期信息优先,历史概要化)。 */
+  static readonly kDefaultBudgetSplit = { compacted: 0.2, thinking: 0, tail: 0.8 };
 
   /** 历史预算三块比例;非法(缺项/非数/负数/和≤0)回退默认并归一化。
    *  thinking 允许 0(思考编排关闭时写回的两段配置:compacted/tail 为正)。 */
@@ -106,10 +107,10 @@ export class Configuration {
     return Number.isFinite(v) && v >= 0 ? Math.floor(v) : 600000;
   }
 
-  /** 触发比例(每块 token ≥ 额定×该比例 → 触发压缩);缺省 0.75,(0,1] 有效。 */
+  /** 触发比例(每块 token ≥ 额定×该比例 → 触发压缩);缺省 0.85,(0,1] 有效。 */
   compactionTriggerPct(): number {
     const v = Number(this.reader.getString("dsbAgent.compaction.triggerPct"));
-    return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.75;
+    return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.85;
   }
 
   /** 压缩后目标比例(触发后收缩到额定×该比例);缺省 0.5;须满足 0 < target < trigger。 */

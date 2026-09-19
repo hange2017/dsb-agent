@@ -2,7 +2,73 @@
 
 DSBAgent 变更记录。版本遵循 [SemVer](https://semver.org/lang/zh-CN/);实现计划与设计说明见 `.dsb/plans/` 与 `.dsb/specs/`。
 
-## [Unreleased]
+## [0.5.0] — 2026-09-19
+
+> 主线(本轮):**修复「供应商设置 → 刷新模型」点击无响应** —— 从 UI 反馈、宿主回退、
+> 错误可见性到网络超时四处补齐;附带效果是**模型能力元数据首次被真正刷新**
+> (旧模型不支持图片输入 → 刷新后具备图片输入能力)。
+> 另含此前已落盘的压缩/统计相关改动(见下)。
+
+### 修复(设置面板:刷新模型无响应)
+
+- **现象**:供应商设置点「刷新模型」无任何反应(无 loading、无 toast、列表不变),
+  网络挂起时表现为"控件点不动"。
+- **四条根因 + 对应修复**:
+  - `src/extension.ts` — `refreshModels` 只读 provider 自身 key,未回退全局 `apiKeyStore`,
+    仅配全局密钥的用户被误判「未配置 API Key」;且 provider 不存在时静默 `return`。
+    → **回退全局 key**、provider 不存在**抛错**、成功**返回模型数量**(`Promise<number>`)。
+  - `src/settings/providerPanel.ts` — `refresh_models` 分支既不回发 `state` 也不发 toast,
+    成功失败都"看起来没反应"。→ 成功后回发 `state` + toast「已刷新模型列表 (N)」;
+    无供应商时发 error toast。
+  - `webview/providerSettings.ts` — 点击后无 disabled/loading 态,`state` 未回流时按钮
+    永久停在原样。→ 点击即 `disabled` + 文案「刷新中…」,20s 兜底 `resetRefreshButton()`,
+    收到 `state`/`toast` 时恢复。
+  - `src/providers/modelCatalog.ts` — `fetchModels` 的 fetch **无超时**,网络挂起时请求
+    长期 pending。→ 加 `AbortSignal.timeout`(15s)超时,超时抛可读错误
+    (运行时无 `AbortSignal.timeout` 时优雅退化)。
+- **附带价值**:刷新前模型清单是陈旧条目(能力元数据从未更新),刷新后取回真实清单,
+  模型获得图片输入能力 → 实测可直接用图片提问并被正确理解。
+
+### 文档(设置面板)
+
+- 新增 `.dsb/docs/2026-09-19-刷新模型无响应修复.md`(现象/四根因/修复表/验证证据)。
+
+### 调整(压缩预算默认值:近期信息优先)
+
+> 诉求:完成任务主要靠**最近的信息**,历史信息只需**概括**;原默认(历史 64000 / tail 35%)偏「历史优先」。
+
+| 配置键 | 旧默认 | 新默认 |
+|---|---|---|
+| `dsbAgent.compaction.historyTokenBudget` | 64000 | **30000** |
+| `dsbAgent.compaction.budgetSplit.compacted` | 0.45 | **0.20** |
+| `dsbAgent.compaction.budgetSplit.thinking` | 0.20 | **0** |
+| `dsbAgent.compaction.budgetSplit.tail` | 0.35 | **0.80** |
+| `dsbAgent.compaction.triggerPct` | 0.75 | **0.85** |
+
+- **四层同时改**(否则「面板显示新值、实际生效旧值」):`package.json` 设置默认 →
+  `src/settings/configuration.ts` 读取端回退(`historyTokenBudget`/`kDefaultBudgetSplit`/`compactionTriggerPct`)→
+  `src/settings/agentSettingsPanel.ts` 面板归一化 `normalizeConfig`。
+- `thinking = 0` 时三段退化为两段:`applyThinkingToSplit` 归一化后即 **compacted 20% / tail 80%**。
+- `targetPct` 0.5、思考编排默认关闭 —— **不变**。
+- 副作用与观察项见 `.dsb/docs/2026-09-19-压缩预算默认值调整.md`(更晚触发压缩 → 每轮 token 升、压缩次数降;
+  compacted 降到 20% → 块内需求行更少,中期目标澄清更依赖三重保险)。
+- ⚠️ **已在设置里显式保存过旧值的用户不会自动迁移**(显式值优先于默认值)。
+
+### 修复(压缩后的任务锚:冲突与复述)
+
+> 现场:地图降级后把「未完成清单」放进锚里(v4)导致待办被冻结在「等用户确认」、干一步报一句等一句、
+> 反复请用户确认清单/复述计划。根因:**命令句 + 可引用名词(标签)= 复述发动机**;锚是**注入文本**,
+> 却被读成「用户的要求」。**语义转向**:锚从「该做什么」的指令源 → 「计划当前状态」的**只读快照**。
+
+- **去标签 + 声明优先级**:`〔任务锚〕` → `〔会话计划〕`;删命令句「按下面清单继续推进」,改为事实陈述
+  「下列未完成项即本会话待办,供导航」,并显式声明「**用户消息优先于本清单**」;
+  清单修订出口从锚内命令句移到 `TodoWrite` 描述(「用户新指令使部分项失效/中止时用 update/clear 修订,
+  **修订不必向用户解释**」)。
+- **段标题去汇报语域**:`### 下一步` → `### 未完成项`(`NEXT_STEP_TITLE`,最多 3 条)。
+- **idle 分支**:改用 `TASK_ANCHOR_HINT_IDLE`(〔只读参考·历史上下文〕…**不是待办**…不要自行继续历史任务)。
+- **回查提示行兼容**:`RECALL_HINT_LINE` 改为「当前目标见会话计划」;新增 `LEGACY_RECALL_HINT_LINE_V3`
+  (`当前目标见任务锚`)由 `isRecallHintLine` 兼容 → **历史已落盘旧块仍被识别**,字节恒定不破坏缓存前缀。
+- **文档**:新增 `.dsb/docs/2026-09-19-会话计划锚冲突与复述修复.md`。
 
 > 主线:**撤掉 6 段「任务地图」,降级为单行「会话目标」锚** —— 消除「模型输出→结论轨→地图结果段→锚→回喂自身」的自我强化闭环。
 

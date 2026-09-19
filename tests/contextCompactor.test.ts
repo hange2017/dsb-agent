@@ -184,9 +184,10 @@ describe("buildCompactedBlock / isCompactedBlock", () => {
     expect(empty).toContain(RECALL_HINT_LINE);
   });
 
-  it("parse 跳过历史版本 hint 行(v1/v2),不串进任何轨(旧块兼容)", () => {
+  it("parse 跳过历史版本 hint 行(v1/v2/v3),不串进任何轨(旧块兼容)", () => {
     // v1: `(hint: ContextRecall(seq=n) → [r{n}])`
     // v2: `(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))`  ← 目标语义改「最新条」后废弃
+    // v3: `(hint: 当前目标见任务锚;原文→ContextRecall(seq=n))`     ← P0-7 锚改称「会话计划」后废弃
     const legacyV1 = ["[前文摘要]", "[compacted]", "## 需求", "- [r1] a", "(hint: ContextRecall(seq=n) → [r{n}])"].join("\n");
     const legacyV2 = [
       "[前文摘要]",
@@ -195,9 +196,18 @@ describe("buildCompactedBlock / isCompactedBlock", () => {
       "- [r1] a",
       "(hint: 目标见「需求」轨首条;原文→ContextRecall(seq=n))",
     ].join("\n");
+    const legacyV3 = [
+      "[前文摘要]",
+      "[compacted]",
+      "## 需求",
+      "- [r1] a",
+      "(hint: 当前目标见任务锚;原文→ContextRecall(seq=n))",
+    ].join("\n");
     expect(parseCompactedBlock(legacyV1).demands).toEqual(["- [r1] a"]);
     expect(parseCompactedBlock(legacyV2).demands).toEqual(["- [r1] a"]);
     expect(parseCompactedBlock(legacyV2).ledger).toEqual([]);
+    expect(parseCompactedBlock(legacyV3).demands).toEqual(["- [r1] a"]);
+    expect(parseCompactedBlock(legacyV3).ledger).toEqual([]);
   });
 
   it("rejects plain text as compacted block", () => {

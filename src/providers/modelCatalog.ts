@@ -16,6 +16,22 @@ export interface CatalogProvider {
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
 
+/** 单次模型列表探测请求的超时(毫秒)。避免网络挂起时"点刷新没反应"。 */
+const FETCH_TIMEOUT_MS = 15 * 1000;
+
+/**
+ * 组合调用方 signal 与超时 signal(Node ≥17.3 原生 AbortSignal.timeout)。
+ * 运行时不支持时退化为原始 signal,保持向后兼容。
+ */
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal | undefined {
+  const timeoutFn = (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }).timeout;
+  if (typeof timeoutFn !== "function") return signal;
+  const t = timeoutFn(ms);
+  if (!signal) return t;
+  const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  return typeof anyFn === "function" ? anyFn([signal, t]) : t;
+}
+
 /** 内置模型能力表(exact profiles 派生;远程拉取失败/未返回能力信息时兜底 id 列表)。 */
 export const kBuiltinCapabilities: Record<string, Partial<ModelCapabilities>> = {
   ...kExactProfiles,
@@ -122,7 +138,7 @@ export class ModelCatalog {
     const failures: string[] = [];
     for (const url of attempts) {
       try {
-        const res = await this.fetchImpl(url, { headers });
+        const res = await this.fetchImpl(url, { headers, signal: withTimeout(undefined, FETCH_TIMEOUT_MS) });
         if (!res.ok) {
           failures.push(`GET ${url} -> ${res.status}`);
           // 401/403:密钥问题,继续打其它路径通常无意义

@@ -34,7 +34,7 @@ function makeServices(overrides: Partial<ProviderPanelServices> = {}): ProviderP
     resolveModels: () => [
       { id: "deepseek-v4-flash", capabilities: { supportsVision: true, supportsThinking: true }, source: "builtin" },
     ],
-    refreshModels: vi.fn(async () => {}),
+    refreshModels: vi.fn(async () => 1),
     setCapabilityOverride: vi.fn(async () => {}),
     importFromCcSwitch: vi.fn(async () => ({ imported: 2 })),
     testConnection: vi.fn(async () => ({ ok: true, message: "连接成功" })),
@@ -142,12 +142,30 @@ describe("providerPanel", () => {
     expect(setCap).toHaveBeenCalledWith("p1", "m1", { supportsThinking: true });
   });
 
-  it("refresh_models 缺省 providerId 时回退当前供应商", async () => {
+  it("refresh_models 缺省 providerId 时回退当前供应商,并回发 state + 成功 toast(含模型数)", async () => {
     const services = makeServices();
-    const refresh = vi.fn(async () => {});
+    const refresh = vi.fn(async () => 3);
     createProviderPanel(fake.panel, { ...services, refreshModels: refresh });
     await dispatch(fake, { type: "refresh_models" });
     expect(refresh).toHaveBeenCalledWith("p1");
+    expect(fake.posted.some((m) => m.type === "state")).toBe(true);
+    const toastMsg = fake.posted.find((m) => m.type === "toast");
+    expect(toastMsg?.message).toContain("3");
+    expect(toastMsg?.error).toBeFalsy();
+  });
+
+  it("refresh_models 无任何供应商时给出 error toast(不再静默无反应)", async () => {
+    const services = makeServices({
+      listProviders: () => [],
+      getActiveProviderId: () => undefined,
+    });
+    const refresh = vi.fn(async () => 0);
+    createProviderPanel(fake.panel, { ...services, refreshModels: refresh });
+    await dispatch(fake, { type: "refresh_models" });
+    expect(refresh).not.toHaveBeenCalled();
+    const toastMsg = fake.posted.find((m) => m.type === "toast");
+    expect(toastMsg?.error).toBe(true);
+    expect(toastMsg?.message).toContain("供应商");
   });
 
   it("import_ccswitch 导入后回发 state 与 toast", async () => {

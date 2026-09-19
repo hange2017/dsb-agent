@@ -535,9 +535,16 @@ describe("ContextManager thinking toggle", () => {
     expect((again[1].content as string)).toContain("[thinking]");
   });
 
-  it("thinking off normalizes budget to two shorts (compacted+tail), default split {0.45,0.2,0.35}->{0.5625,0,0.4375}", () => {
+  // 显式传入三段 split,单测「thinking 关 → 两段归一化」的数学,不受产品默认值(20/0/80)变动影响。
+  it("thinking off normalizes budget to two shorts (compacted+tail), split {0.45,0.2,0.35}->{0.5625,0,0.4375}", () => {
     const summarize = thinkingSummarize();
-    const cm = new ContextManager({ windowTokens: 1_000_000, triggerRatio: 0.9, historyTokenBudget: 20000, summarize });
+    const cm = new ContextManager({
+      windowTokens: 1_000_000,
+      triggerRatio: 0.9,
+      historyTokenBudget: 20000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
+      summarize,
+    });
     const budgetOf = (): { tailTokens: number; compactedTokens: number; thinkingTokens: number } =>
       (cm as unknown as { budgetInfo: () => { tailTokens: number; compactedTokens: number; thinkingTokens: number } }).budgetInfo();
     // thinking 开启:三段分配(默认 split)
@@ -677,14 +684,15 @@ describe("ContextManager history token budget", () => {
   const textMsg = (n: number): ProviderMessage => ({ role: "user", content: "中".repeat(n) });
 
   it("keeps tail within budget and compacts the rest", async () => {
-    // 8 条,每条 50 tokens;total=1000 → tail 35% = 350;v2 压缩后目标 = 350×50% = 175
-    // → 从尾部累加 3 条(150 ≤ 175,第 4 条 200 > 175),cut=5
+    // 显式三段 split(机制单测,不依赖产品默认);8 条,每条 50 tokens;total=1000 → tail 35% = 350
+    // v2 压缩后目标 = 350×50% = 175 → 从尾部累加 3 条(150 ≤ 175,第 4 条 200 > 175),cut=5
     const msgs: ProviderMessage[] = Array.from({ length: 8 }, () => textMsg(50));
     const cm = new ContextManager({
       windowTokens: 1000,
       triggerRatio: 0.8,
       summarize: async () => "S",
       historyTokenBudget: 1000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     });
     const out = await cm.compact(msgs);
     // 压缩块 + tail(3 条原样) = 4 条
@@ -834,6 +842,8 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
       triggerRatio: 0.75,
       summarize: async () => "S",
       historyTokenBudget: 1000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
+      triggerPct: 0.75,
     });
     const msgs: ProviderMessage[] = Array.from({ length: 8 }, () => textMsg(50));
     expect(cm.needsCompaction(msgs)).toBe(true);
@@ -873,6 +883,7 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
       triggerRatio: 0.8,
       summarize: async () => "S",
       historyTokenBudget: 1000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     });
     const out = await cm.compact(msgs);
     const block = out[0].content as string;
@@ -889,6 +900,7 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
       triggerRatio: 0.75,
       summarize: async () => "S",
       historyTokenBudget: 1000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
       triggerPct: 0.6,
       targetPct: 0.4,
     });
@@ -910,6 +922,7 @@ describe("ContextManager pipeline v2 (tail self-driven + hysteresis)", () => {
       triggerRatio: 0.75,
       summarize,
       historyTokenBudget: 430,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     });
     const first = await cm.compact(Array.from({ length: 6 }, () => textMsg(50)));
     expect(first[0].role).toBe("user");
@@ -941,6 +954,8 @@ describe("ContextManager compaction events", () => {
       triggerRatio: 0.75,
       summarize: async () => "S",
       historyTokenBudget: 1000, // tail 额定 350,trigger 75% = 262
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
+      triggerPct: 0.75,
       onCompaction: (ev) => events.push(ev),
     });
     const msgs = Array.from({ length: 20 }, () => textMsg(50)); // tail 1000 ≥ 262 → 触发
@@ -969,6 +984,8 @@ describe("ContextManager compaction events", () => {
       triggerRatio: 0.75,
       summarize: async () => "S",
       historyTokenBudget: 1000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
+      triggerPct: 0.75,
       onCompaction: (ev) => events.push(ev),
     });
     cm.track({ inputTokens: 900, outputTokens: 10 }); // ratio 0.9 ≥ 0.75
@@ -986,6 +1003,7 @@ describe("ContextManager compaction events", () => {
       triggerRatio: 0.75,
       summarize: async () => "S",
       historyTokenBudget: 1000,
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
       maxBlockChars: 100, // 需求轨 17×50=850 字 → 必收缩
       onCompaction: (ev) => events.push(ev),
     });
@@ -1397,6 +1415,7 @@ describe("ContextManager 会话目标锚(单行)", () => {
       summarize: async () => "S",
       goalAnchorEnabled: true,
       historyTokenBudget: 2000, // 极紧预算:块必须裁剪才能收敛
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     });
     // 20 条长需求 → 按预算裁剪。裁剪严格遵守规则 4「只删尾部」:
     // 需求轨是最后一个 section,段内按 seq 最新优先删 → 最早行(块内最前缀行)自然留到最后。

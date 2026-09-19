@@ -70,8 +70,8 @@ const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const thinkingCompactChk = document.getElementById("thinkingCompactChk") as HTMLInputElement;
 
-// 三个滑块当前值(整数百分比)
-let pct = { compacted: 45, thinking: 20, tail: 35 };
+// 三个滑块当前值(整数百分比);缺省 20/0/80(两段:压缩块 20% / tail 80%)
+let pct = { compacted: 20, thinking: 0, tail: 80 };
 
 function applyI18n(): void {
   for (const el of document.querySelectorAll<HTMLElement>("[data-i18n]")) {
@@ -138,7 +138,7 @@ function currentConfig(): AgentBudgetConfigView {
     windowTokens: Math.max(0, Number(windowTokensInput.value) || 0),
     budget: Math.max(0, Number(budgetInput.value) || 0),
     split: currentSplit(),
-    triggerPct: (Math.max(1, Math.min(100, Number(triggerPctInput.value) || 75)) / 100),
+    triggerPct: (Math.max(1, Math.min(100, Number(triggerPctInput.value) || 85)) / 100),
     targetPct: (Math.max(1, Math.min(100, Number(targetPctInput.value) || 50)) / 100),
     thinking: {
       compact: thinkingCompactChk.checked,
@@ -169,7 +169,7 @@ targetPctInput.addEventListener("change", () => {
 });
 thinkingCompactChk.addEventListener("change", () => {
   // 思考编排关闭 → thinking 占比归零,份额按比例分给 compacted/tail;
-  // 重新打开 → 恢复默认三段(45/20/35)。
+  // 重新打开 → 恢复关闭前的 thinking 份额(首次缺省 20%)。
   if (!thinkingCompactChk.checked) {
     // 记录关闭前 thinking 份额,便于重新打开时恢复
     const savedThinking = pct.thinking;
@@ -181,8 +181,8 @@ thinkingCompactChk.addEventListener("change", () => {
       pct.tail = 100 - pct.compacted;
       pct.thinking = 0;
     } else {
-      pct.compacted = 56;
-      pct.tail = 44;
+      pct.compacted = 20;
+      pct.tail = 80;
       pct.thinking = 0;
     }
   } else {
@@ -199,7 +199,7 @@ thinkingCompactChk.addEventListener("change", () => {
       }
       pct.thinking = restore;
     } else {
-      pct.compacted = Math.round((100 - restore) * 0.5625);
+      pct.compacted = Math.round((100 - restore) * 0.2);
       pct.tail = 100 - pct.compacted - restore;
       pct.thinking = restore;
     }
@@ -257,8 +257,8 @@ window.addEventListener("message", (ev) => {
           pct.compacted = Math.round(pct.compacted * scale);
           pct.tail = 100 - pct.compacted;
         } else {
-          pct.compacted = 56;
-          pct.tail = 44;
+          pct.compacted = 20;
+          pct.tail = 80;
         }
         pct.thinking = 0;
       }

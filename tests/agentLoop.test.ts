@@ -501,7 +501,7 @@ describe("AgentSession", () => {
     ]);
   });
 
-  it("compacts with default trigger ratio 0.75 (200000/256000 ≈ 0.781)", async () => {
+  it("compacts with trigger ratio 0.75 (200000/256000 ≈ 0.781)", async () => {
     const { provider } = fakeProvider([
       {
         result: {
@@ -519,6 +519,7 @@ describe("AgentSession", () => {
       permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
       workspaceRoot: "/tmp",
       systemPrompt: "s",
+      triggerRatio: 0.75, // 机制单测:显式阈值,不依赖产品默认(0.85)
       initialHistory: [
         { role: "user", content: "h0" },
         { role: "assistant", content: [{ type: "text", text: "h1" }] },
@@ -590,6 +591,7 @@ describe("AgentSession", () => {
       permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
       workspaceRoot: "/tmp",
       systemPrompt: "s",
+      triggerRatio: 0.75, // 机制单测:显式阈值(200000/256000 ≈ 0.781),不依赖产品默认(0.85)
       contextStore: store,
       sessionId: "s9",
       initialHistory: [
@@ -900,6 +902,7 @@ describe("AgentSession thinking compaction wiring", () => {
       permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
       workspaceRoot: "/tmp",
       systemPrompt: "s",
+      triggerRatio: 0.75, // 机制单测:显式阈值,不依赖产品默认(0.85)
       initialHistory: thinkingHistory,
     });
     await session.send("g", () => {}, { mode: "agent" });
@@ -921,6 +924,7 @@ describe("AgentSession thinking compaction wiring", () => {
         permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
         workspaceRoot: "/tmp",
         systemPrompt: "s",
+        triggerRatio: 0.75, // 机制单测:显式阈值,不依赖产品默认(0.85)
         initialHistory: thinkingHistory,
         onPersist: (m) => {
           persisted = JSON.stringify(m);
@@ -950,6 +954,7 @@ describe("AgentSession thinking compaction wiring", () => {
       workspaceRoot: "/tmp",
       systemPrompt: "s",
       stats,
+      triggerRatio: 0.75, // 机制单测:显式阈值,不依赖产品默认(0.85)
       initialHistory: thinkingHistory,
     });
     const statsEvents: Array<{ windowConversations: number; windowCompactions: number }> = [];
@@ -980,6 +985,7 @@ describe("AgentSession thinking compaction wiring", () => {
       workspaceRoot: "/tmp",
       systemPrompt: "s",
       stats,
+      triggerRatio: 0.75, // 机制单测:显式阈值,不依赖产品默认(0.85)
       initialHistory: thinkingHistory,
     });
     await session.send("g", () => {});
@@ -1060,6 +1066,7 @@ describe("AgentSession summarize budget", () => {
       permissions: new PermissionManager({ gateway: { request: async () => true }, rules: new PermissionRules() }),
       workspaceRoot: "/tmp",
       systemPrompt: "s",
+      triggerRatio: 0.75, // 机制单测:显式阈值(200000/256000 ≈ 0.781),不依赖产品默认(0.85)
       initialHistory: [
         { role: "user", content: "需求" },
         { role: "assistant", content: [{ type: "text", text: "开场结论\n\n" + "中间长解释内容".repeat(200) + "\n\n结尾结论" }] },
@@ -1089,6 +1096,8 @@ describe("AgentSession history token budget wiring", () => {
       initialHistory: history,
       triggerRatio: 0, // 立即触发压缩
       historyTokenBudget: 1000, // tail 35% = 350;v2 目标 = 175 → 保留 m5..m7+hello(≈152)
+      // 机制单测:显式三段比(与旧产品默认一致),不随产品默认改为 20/0/80 漂移
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
     });
     await session.send("hello", () => {});
     const sent = calls[0].messages;
@@ -1191,6 +1200,8 @@ describe("AgentSession compaction events wiring", () => {
       initialHistory: history,
       triggerRatio: 0, // 立即触发窗口兜底压缩
       historyTokenBudget: 1000, // 预算模式:压缩前 head(5 条×50) > 压缩后块(≈219)
+      // 机制单测:显式三段比(与旧产品默认一致),固定 head/tail 切分断言,不随产品默认漂移
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
       // 本用例只验证压缩事件接线与 head/tail 切分;目标锚不写入压缩块,故不受影响(显式关闭以固定块骨架)。
       goalAnchorEnabled: false,
       onCompaction: (ev) => events.push(ev),
@@ -1681,6 +1692,8 @@ describe("clampHistoryTokenBudget", () => {
       initialHistory: history,
       triggerRatio: 0, // 立即触发窗口兜底压缩
       historyTokenBudget: 1000, // 预算模式触发压缩
+      // 机制单测:显式三段比(与旧产品默认一致),保证触发 tail 压缩与 QA 抽查
+      budgetSplit: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
       onProviderRound: (u) => rounds.push(u),
       onCompactionQa: (ev) => qas.push(ev),
     });
@@ -1808,6 +1821,22 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     expect(text).toBe(`${TASK_ANCHOR_HINT_IDLE}\n## 任务清单\n- [x] a (t1)\n\nhi`);
   });
 
+  it("P0-7: 锚文案为声明式(无命令句/无可引用标签),并声明用户消息优先", () => {
+    // 旧文案「〔任务锚〕按下面清单继续推进」在用户中途改任务时反复与用户消息"打架",
+    // 模型每轮裁决一次冲突并把结论写进正文(实测连出多轮)。此处锁定新语义防回归。
+    expect(TASK_ANCHOR_HINT).not.toContain("任务锚");
+    expect(TASK_ANCHOR_HINT).not.toContain("继续推进");
+    expect(TASK_ANCHOR_HINT).toContain("用户消息优先");
+    expect(TASK_ANCHOR_HINT).toContain("TodoWrite");
+    expect(TASK_ANCHOR_HINT).toContain("ContextRecall(seq=n)");
+    // 空闲分支同样不得自称"任务锚"(P0-6 去标签)
+    expect(TASK_ANCHOR_HINT_IDLE).not.toContain("任务锚");
+    expect(TASK_ANCHOR_HINT_IDLE).not.toContain("继续推进");
+    // 段标题改为陈述清单状态,不再隐含"接下来就做这些"的命令语气
+    expect(NEXT_STEP_TITLE).toBe("### 未完成项");
+    expect(NEXT_STEP_TITLE).not.toContain("下一步");
+  });
+
   it("P0-3: 无未完成待办时提示为「空闲」,且清单里残留 `- [ ]` 仍算有活", () => {
     // 场景 A:全完成 + 无 pending → 空闲提示
     const a = injectTodoIntoMessages([{ role: "user", content: "现在重启了" }], "## 任务清单\n- [x] a (t1)", {
@@ -1816,7 +1845,7 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     expect(a[a.length - 1].content as string).toContain(TASK_ANCHOR_HINT_IDLE);
     expect(a[a.length - 1].content as string).not.toContain("按下面清单继续推进");
 
-    // 场景 B:清单里仍有未勾选 `- [ ]`(调用方 pendingTodos 为空时以清单为准)→ 仍用"继续推进"
+    // 场景 B:清单里仍有未勾选 `- [ ]`(调用方 pendingTodos 为空时以清单为准)→ 用「有活」提示(P0-7 起为声明式文案)
     const b = injectTodoIntoMessages([{ role: "user", content: "hi" }], "## 任务清单\n- [ ] b (t2)", {
       pendingTodos: [],
     });
@@ -1824,7 +1853,7 @@ describe("todo 注入: 可并入 user 则改消息尾部,否则不注入(绝不�
     expect(bt).toContain(TASK_ANCHOR_HINT);
     expect(bt).not.toContain("当前没有未完成的待办");
 
-    // 场景 C:有 pending → 继续推进
+    // 场景 C:有 pending → 有活提示
     const c = injectTodoIntoMessages([{ role: "user", content: "hi" }], "## 任务清单\n- [ ] c (t3)", {
       pendingTodos: ["c"],
     });

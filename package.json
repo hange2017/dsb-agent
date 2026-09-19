@@ -175,16 +175,16 @@
         },
         "dsbAgent.compaction.historyTokenBudget": {
           "type": "number",
-          "default": 64000,
+          "default": 30000,
           "minimum": 0,
           "description": "%configuration.dsbAgent.compaction.historyTokenBudget.description%"
         },
         "dsbAgent.compaction.budgetSplit": {
           "type": "object",
           "default": {
-            "compacted": 0.45,
-            "thinking": 0.2,
-            "tail": 0.35
+            "compacted": 0.2,
+            "thinking": 0,
+            "tail": 0.8
           },
           "description": "%configuration.dsbAgent.compaction.budgetSplit.description%"
         },
@@ -201,7 +201,7 @@
         },
         "dsbAgent.compaction.triggerPct": {
           "type": "number",
-          "default": 0.75,
+          "default": 0.85,
           "minimum": 0,
           "maximum": 1,
           "description": "%configuration.dsbAgent.compaction.triggerPct.description%"

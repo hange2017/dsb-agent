@@ -91,6 +91,8 @@ const refreshModelsBtn = document.getElementById("refreshModelsBtn") as HTMLButt
 const importCcswitchBtn = document.getElementById("importCcswitch") as HTMLButtonElement;
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
+/** 刷新模型按钮的兜底计时器(host 无响应时恢复按钮,防永久卡死)。 */
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** 当前 UI 语言(host state 下发);文案经 t(key, locale) 渲染。 */
 let locale: "zh" | "en" = "zh";
@@ -121,6 +123,16 @@ function showToast(message: string, isError = false): void {
     statusEl.textContent = "";
     statusEl.classList.remove("error");
   }, 5000);
+}
+
+/** 恢复"刷新模型"按钮到可点击状态(成功/失败/超时统一走这里)。 */
+function resetRefreshButton(): void {
+  if (refreshTimer !== undefined) {
+    window.clearTimeout(refreshTimer);
+    refreshTimer = undefined;
+  }
+  refreshModelsBtn.disabled = false;
+  refreshModelsBtn.textContent = t("刷新模型", locale);
 }
 
 /** 创建元素的小助手(text 用 textContent 赋值,避免把用户输入当 HTML 注入)。 */
@@ -438,6 +450,13 @@ createForm.addEventListener("submit", (e) => {
 
 refreshModelsBtn.addEventListener("click", () => {
   post({ type: "refresh_models" });
+  // 立即给出反馈:网络探测期间禁用按钮并显示"刷新中…";
+  // host 侧无论成功(state 回流)、失败(toast)还是无供应商(toast)都会发回消息,
+  // 由下面的消息处理恢复按钮;此处再加超时兜底,避免 host 无响应时按钮永久卡死。
+  refreshModelsBtn.disabled = true;
+  refreshModelsBtn.textContent = t("刷新中…", locale);
+  if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+  refreshTimer = window.setTimeout(resetRefreshButton, 20000);
 });
 
 importCcswitchBtn.addEventListener("click", () => {
@@ -461,9 +480,13 @@ window.addEventListener("message", (event: MessageEvent<HostMessage>) => {
     renderModels(msg.models, msg.activeProviderId);
     importCcswitchBtn.disabled = false;
     importCcswitchBtn.textContent = t("从 cc-switch 导入", locale);
+    // 刷新成功或失败都会回流消息,统一在此恢复"刷新模型"按钮
+    resetRefreshButton();
     applyLocale();
   } else if (msg.type === "toast") {
     showToast(msg.message, Boolean(msg.error));
+    // 失败(含"尚无供应商")时按钮也要回到可点击,避免卡在"刷新中…"
+    resetRefreshButton();
   }
 });
 

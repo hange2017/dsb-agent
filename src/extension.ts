@@ -648,13 +648,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           },
           refreshModels: async (providerId) => {
             const p = providerStore.get(providerId);
-            if (!p) return;
-            const apiKey = (await providerStore.getApiKey(providerId)) ?? undefined;
-            if (!apiKey?.trim()) {
+            if (!p) {
+              throw new Error(t("供应商不存在: {id}", defaultLocale, { id: providerId }));
+            }
+            // key 优先本供应商,回退全局 apiKeyStore(与 chatController.clientDeps 同策略),
+            // 否则仅配了全局密钥的用户会在此被误判为"未配置 API Key"。
+            let apiKey = (await providerStore.getApiKey(providerId)) ?? "";
+            if (!apiKey.trim()) apiKey = (await apiKeyStore.getApiKey()) ?? "";
+            if (!apiKey.trim()) {
               throw new Error(t("未配置 API Key,请先保存密钥", defaultLocale));
             }
             // force 跳过 TTL 但不先清缓存:失败时仍保留上次成功列表
-            await modelCatalog.fetchModels(p, { apiKey, force: true });
+            const models = await modelCatalog.fetchModels(p, { apiKey, force: true });
+            return models.length;
           },
           setCapabilityOverride: async (providerId, modelId, patch) => {
             const p = providerStore.get(providerId);

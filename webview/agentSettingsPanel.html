@@ -91,27 +91,27 @@
   </div>
   <div class="row">
     <label data-i18n="历史信息总预算">历史信息总预算</label>
-    <input type="number" id="budgetInput" min="0" step="1000" value="150000" />
+    <input type="number" id="budgetInput" min="0" step="1000" value="30000" />
     <span class="unit" data-i18n="tokens(0 = 关闭)">tokens(0 = 关闭)</span>
   </div>
   <div class="divider"></div>
   <div class="split-row">
     <label data-i18n="压缩块">压缩块</label>
-    <input type="range" id="compactedRange" min="0" max="100" value="45" />
-    <span class="pct" id="compactedPct">45%</span>
-    <span class="tokens" id="compactedTokens">4500</span>
+    <input type="range" id="compactedRange" min="0" max="100" value="20" />
+    <span class="pct" id="compactedPct">20%</span>
+    <span class="tokens" id="compactedTokens">6000</span>
   </div>
   <div class="split-row">
     <label data-i18n="thinking 推理脉络">thinking 推理脉络</label>
-    <input type="range" id="thinkingRange" min="0" max="100" value="20" />
-    <span class="pct" id="thinkingPct">20%</span>
-    <span class="tokens" id="thinkingTokens">2000</span>
+    <input type="range" id="thinkingRange" min="0" max="100" value="0" />
+    <span class="pct" id="thinkingPct">0%</span>
+    <span class="tokens" id="thinkingTokens">0</span>
   </div>
   <div class="split-row">
     <label data-i18n="tail 最近保留">tail 最近保留</label>
-    <input type="range" id="tailRange" min="0" max="100" value="35" />
-    <span class="pct" id="tailPct">35%</span>
-    <span class="tokens" id="tailTokens">3500</span>
+    <input type="range" id="tailRange" min="0" max="100" value="80" />
+    <span class="pct" id="tailPct">80%</span>
+    <span class="tokens" id="tailTokens">24000</span>
   </div>
   <div class="row">
     <span class="hint" data-i18n="拖动任一滑块,其余等比例缩放,总和恒 100%。">拖动任一滑块,其余等比例缩放,总和恒 100%。</span>
@@ -119,7 +119,7 @@
   <div class="divider"></div>
   <div class="row">
     <label data-i18n="触发比例">触发比例</label>
-    <input type="number" id="triggerPctInput" min="1" max="100" step="1" value="75" />
+    <input type="number" id="triggerPctInput" min="1" max="100" step="1" value="85" />
     <span class="unit" data-i18n="% (每块达额定×此比例触发压缩)">% (每块达额定×此比例触发压缩)</span>
   </div>
   <div class="row">

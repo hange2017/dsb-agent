@@ -15,10 +15,10 @@ import { handleMessage } from "../src/settings/agentSettingsPanel";
 
 const defaultConfig = () => ({
   windowTokens: 600000,
-  budget: 64000,
-  // 默认思考编排关闭 → split 归一化为两段(thinking 份额按 45:35 并入 compacted/tail)
-  split: { compacted: 0.5625, thinking: 0, tail: 0.4375 },
-  triggerPct: 0.75,
+  budget: 30000,
+  // 默认思考编排关闭 → split 归一化为两段(默认三段 20/0/80,thinking 份额为 0 即原样两段)
+  split: { compacted: 0.2, thinking: 0, tail: 0.8 },
+  triggerPct: 0.85,
   targetPct: 0.5,
   thinking: { compact: false as const },
 });
@@ -42,23 +42,23 @@ function fakePanel() {
 }
 
 describe("normalizeSplit", () => {
-  it("defaults to 45/20/35 when missing or invalid", () => {
-    expect(normalizeSplit(undefined)).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
-    expect(normalizeSplit({ compacted: 1 })).toEqual({ compacted: 0.45, thinking: 0.2, tail: 0.35 });
+  it("defaults to 20/0/80 when missing or invalid", () => {
+    expect(normalizeSplit(undefined)).toEqual({ compacted: 0.2, thinking: 0, tail: 0.8 });
+    expect(normalizeSplit({ compacted: 1 })).toEqual({ compacted: 0.2, thinking: 0, tail: 0.8 });
     expect(normalizeSplit({ compacted: "x", thinking: 0.2, tail: 0.35 } as never)).toEqual({
-      compacted: 0.45,
-      thinking: 0.2,
-      tail: 0.35,
+      compacted: 0.2,
+      thinking: 0,
+      tail: 0.8,
     });
     expect(normalizeSplit({ compacted: -1, thinking: 0.2, tail: 0.35 })).toEqual({
-      compacted: 0.45,
-      thinking: 0.2,
-      tail: 0.35,
+      compacted: 0.2,
+      thinking: 0,
+      tail: 0.8,
     });
     expect(normalizeSplit({ compacted: 0, thinking: 0, tail: 0 })).toEqual({
-      compacted: 0.45,
-      thinking: 0.2,
-      tail: 0.35,
+      compacted: 0.2,
+      thinking: 0,
+      tail: 0.8,
     });
   });
   it("normalizes non-1 sums", () => {
@@ -120,14 +120,14 @@ describe("normalizeConfig", () => {
       targetPct: 0.5,
     });
     expect(out.windowTokens).toBe(600000);
-    expect(out.budget).toBe(64000);
-    // 默认思考编排关闭 → 默认三段 45/20/35 归一化为两段 56.25/0/43.75
-    expect(out.split).toEqual({ compacted: 0.5625, thinking: 0, tail: 0.4375 });
+    expect(out.budget).toBe(30000);
+    // 默认思考编排关闭 → 默认三段 20/0/80(thinking 份额 0,两段不变)
+    expect(out.split).toEqual({ compacted: 0.2, thinking: 0, tail: 0.8 });
   });
 
   it("rejects triggerPct out of (0,1] and targetPct >= trigger", () => {
-    expect(normalizeConfig({ triggerPct: 0, targetPct: 0.5 } as never).triggerPct).toBe(0.75);
-    expect(normalizeConfig({ triggerPct: 1.5, targetPct: 0.5 } as never).triggerPct).toBe(0.75);
+    expect(normalizeConfig({ triggerPct: 0, targetPct: 0.5 } as never).triggerPct).toBe(0.85);
+    expect(normalizeConfig({ triggerPct: 1.5, targetPct: 0.5 } as never).triggerPct).toBe(0.85);
     // target >= trigger → fallback 0.5
     const out = normalizeConfig({ triggerPct: 0.6, targetPct: 0.6 } as never);
     expect(out.triggerPct).toBe(0.6);
@@ -213,7 +213,7 @@ describe("agentSettingsPanel handleMessage", () => {
     expect(types).toContain("toast");
   });
 
-  it("rejects invalid budget with default 64000", async () => {
+  it("rejects invalid budget with default 30000", async () => {
     const { panel } = fakePanel();
     const updateBudget = vi.fn();
     const services = {
@@ -226,7 +226,7 @@ describe("agentSettingsPanel handleMessage", () => {
       panel as never,
       services,
     );
-    expect(updateBudget).toHaveBeenCalledWith({ ...defaultConfig(), budget: 64000 });
+    expect(updateBudget).toHaveBeenCalledWith({ ...defaultConfig(), budget: 30000 });
   });
 
   it("resets to defaults on reset_defaults", async () => {

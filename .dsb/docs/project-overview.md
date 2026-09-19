@@ -1,22 +1,23 @@
 # DSBAgent — 项目总体框架
 
 > 生成时间:2026-08-16(最近一周工作同步后重写;08-16 同步交互式追加 / 滚动冻结 / 轮次导航)
+> 更新:2026-09-19(**锚去命令句、改称「〔会话计划〕」、`### 下一步`→`### 未完成项`**;治理「每轮重列清单 / 反复请用户确认」。详见下方「近期工作重点(2026-09-19)」)
 > 更新:2026-09-16(**去掉 6 段「任务地图」→ 降级为单行「会话目标」锚**;地图六段是压缩块 4 轨的投影且构成「输出→结论轨→结果段→锚→回喂」自我强化闭环,实测短消息中位轮次 5→56 轮。保留「目标放消息尾部」这一真价值)
-> 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 117 个 .ts、webview 16 个文件、tests 110 个测试文件 / 1175 项)
+> 范围:**当前仓库真实架构与全部模块功能**(源码 `src/` 119 个 .ts、webview 16 个文件、tests 113 个测试文件 / 1242 项)
 
 ## 项目简介
 
 DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Agent(开源,非官方;操作方式参考主流编码 Agent 工具)。可对接任意 Anthropic Messages 兼容 `baseUrl`(内置 DeepSeek 等预设,默认端点可在设置中修改)。对话、工具执行、记忆、上下文压缩、冷存储归档等能力全部本地化,密钥存 VS Code SecretStorage,扩展自身不收集遥测。
 
-**技术栈**:TypeScript + VS Code Extension API(引擎层不依赖 `vscode` 模块,便于单测);esbuild 打包(`dist/extension.js` + `dist/webview/`);Vitest 测试(110 文件 / 1166 tests)。
+**技术栈**:TypeScript + VS Code Extension API(引擎层不依赖 `vscode` 模块,便于单测);esbuild 打包(`dist/extension.js` + `dist/webview/`);Vitest 测试(113 文件 / 1242 项)。
 
 ## 顶层目录
 
 ```
 ./ — 根(README.en.md / README / CHANGELOG / LICENSE / package.json / esbuild.mjs / .gitattributes)
-├── src/          引擎 + 扩展宿主(117 个 .ts)
+├── src/          引擎 + 扩展宿主(119 个 .ts)
 ├── webview/      Agent 聊天面板与各设置面板前端(16 个文件,esbuild 产物进 dist/webview)
-├── tests/        单元测试(110 个测试文件,1166 项)
+├── tests/        单元测试(113 个测试文件,1242 项)
 ├── resources/    打包资源(原创图标 resources/icon.png,128×128)
 ├── scripts/      构建/安装/分析脚本(generate-third-party-notices.mjs、install-extension.sh、analyze-cache-prefix.py、analyze-compaction-snowball.py、analyze-compaction-cost.py)
 ├── benchmark/    打榜评测(SWE-bench headless CLI 包装、T3 实例准备脚本、smoke 测试)
@@ -50,7 +51,8 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 ### 3. 引擎核心 — `src/agent/`(不依赖 vscode 模块,可单测)
 - `agentLoop.ts`:Agent 主循环(模型调用 → 工具执行 → 上下文管理 → 压缩判定),`deps` 注入全部依赖,事件通过 `onEvent` 外发(含 `compaction_stats`)。
   - **缓存前缀稳定性(P0-P3)**:todo 移出 system 注入请求尾部(P0);trim 类 tool_result 写前定型(P1);trim 类 tool_use/thinking 写前定型 + thinkingPolicy 幂等保护(P3)——保证 messages 前缀字节跨轮稳定,最大化缓存命中。
-  - **任务锚(task anchor,2026-09-16 降级为单行目标锚)**:`buildTaskAnchor(todoBlock, goalLine, pendingTodos, modeNote)` / `injectTodoIntoMessages(messages, todoBlock, { anchorOnToolResult, goalLine, pendingTodos, modeNote })` 把「固定提示 + 单行会话目标 + 下一步 + 最新清单 + 回查入口」注入本轮请求(仅请求视图,不进持久历史)。**会话目标**仅 1 行(`**会话目标:** ${goalLine}`,取压缩块需求轨**最新一条**真实需求 = 当前正在推进的任务;首条虽由裁剪硬保护(最前缀行)但不作目标,避免跨任务长会话被陈旧任务钉死);`### 下一步` 段(`buildNextStepSection`)由**真实未完成待办**生成(调用方只传 `done=false` 项),无未完成项时不输出。**工具执行轮也可见**(尾部为 tool_result 时把锚作为 text 块追加在同一条 user 消息内,不新增 user 消息 → 不破角色交替);绝不挂 system 后缀(避免前缀全 miss)。
+  - **会话计划锚(task anchor;2026-09-19 起文案为「〔会话计划〕」)**:`buildTaskAnchor(todoBlock, goalLine, pendingTodos, modeNote)` / `injectTodoIntoMessages(messages, todoBlock, { anchorOnToolResult, goalLine, pendingTodos, modeNote })` 把「固定提示 + 单行会话目标 + 下一步 + 最新清单 + 回查入口」注入本轮请求(仅请求视图,不进持久历史)。**会话目标**仅 1 行(`**会话目标:** ${goalLine}`,取压缩块需求轨**最新一条**真实需求 = 当前正在推进的任务;首条虽由裁剪硬保护(最前缀行)但不作目标,避免跨任务长会话被陈旧任务钉死);`### 未完成项` 段(`buildNextStepSection` / `NEXT_STEP_TITLE`)由**真实未完成待办**生成(调用方只传 `done=false` 项),无未完成项时不输出。**工具执行轮也可见**(尾部为 tool_result 时把锚作为 text 块追加在同一条 user 消息内,不新增 user 消息 → 不破角色交替);绝不挂 system 后缀(避免前缀全 miss)。
+    - **P0-7 声明式化(2026-09-19)**:①标签「〔任务锚〕」→「**〔会话计划〕**」(去「任务/锚」这类可被引用的名词);②删除命令句「按下面清单继续推进」,改为**事实陈述**「下列未完成项即本会话待办,供导航」,并显式声明**用户消息优先于本清单**、「清单是否需要修订用 `TodoWrite` 处理,不必在回复中说明」;③段标题 `### 下一步` → `### 未完成项`(去汇报语域;冲突裁决由首句「用户消息优先于本清单」一次声明,段内不再另写条款);④`TodoWrite` 工具描述补「用户新指令使部分项失效或中止时,用 update/clear 修订清单(修订不必向用户解释)」;⑤idle 分支改用 `TASK_ANCHOR_HINT_IDLE`(「〔只读参考·历史上下文〕…不是待办…不要自行继续历史任务」),不再自称「计划/锚」。**动因**:锚被当"用户要求",清单长期冻结在"等用户确认",模型每轮重新清点并反复请用户确认(现场复现;详见 `.dsb/docs/2026-09-19-会话计划锚冲突与复述修复.md`)。**残留风险**:「〔会话计划〕」仍是被引用名词,若再出现「会话计划显示…」类旁白,下一步考虑彻底去标签。
     - **为何去掉 6 段「任务地图」**(2026-09-16):地图六段(目标/最新要求/近期需求/更早的需求/已做/结果)全是压缩块 4 轨的**投影**,零新增信息;且「已做」(来自 ledger 工具履历原文)与「结果」(来自 conclusions)构成**自我强化闭环** —— 模型自己的过程旁白 → 结论轨 → 地图「结果」段 → 锚 → 回喂自身。实测短消息(≤15 字)中位轮次 5 → 56 轮(决定性单例:「现在重启了」跑 56 轮/151 次工具调用)。降级后只保留「把目标放到消息尾部」这一真价值(1 行即可)。详见 `.dsb/specs/2026-09-16-去任务地图-降级为单行目标锚.md`。
   - **交互式追加队列**:busy 期间 `append(text)` 把新消息排入 `pendingAppends`,下一轮发送前注入消息尾部并发出 `user_message` 事件(只 push 不改写既有消息 → 前缀字节稳定;空闲时追加按钮隐藏,走普通发送)。
   - **thinking 处理侧开关**:thinking 剥离不进历史/压缩/脉络(可整体关闭)。
@@ -62,7 +64,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
   - **运行时合成文本不入语义轨(2026-09-14)**:`maxTokensContinue` 注入的续写提示(`isRuntimeContinueMessage`,判 `[续写]` 前缀)与 `[输出中断]` 占位(`INTERRUPTED_ASSISTANT_TEXT`)在入轨前跳过;`isRuntimeSyntheticText` **前缀感知**(先剥可选的 `[-*] ` 与 `[r{N}] ` 前缀,兼容轨行 `- [r2] [续写] …`)。
     - **两层清理**:①`buildResidentMap` 对 `demands` 与 `latest()` 统一过滤 → 地图六段全净;②`compact()` 合并后对**四条轨**(demands/conclusions/explanations/ledger)一次性过滤 → 清除旧会话遗留的轨行垃圾(否则 `mergeCompactedTracks` 会把它永久合并进「需求」轨,每轮复述"上一轮输出中断")。
     - 稳态下过滤结果与输入一致 → 字节不变;仅在首次清理时改动一次。
-  - **回查提示行**:压缩块尾部恒输出 `RECALL_HINT_LINE`(`(hint: 会话目标见任务锚;原文→ContextRecall(seq=n))`,字节恒定),引导模型主动 ContextRecall 回查原文;文案**不指向具体轨行**(旧 v2 写「目标见需求轨首条」,目标语义改取最新条后会误导模型回跑陈旧目标,已修为指向任务锚单行)。v1/v2 旧文案经 `isRecallHintLine` 兼容跳过。
+  - **回查提示行**:压缩块尾部恒输出 `RECALL_HINT_LINE`(`(hint: 当前目标见会话计划;原文→ContextRecall(seq=n))`,字节恒定),引导模型主动 ContextRecall 回查原文;文案**不指向具体轨行**(旧 v2 写「目标见需求轨首条」,目标语义改取最新条后会误导模型回跑陈旧目标;v3 写「当前目标见任务锚」,随 2026-09-19 锚改称「会话计划」而废弃)。v1/v2/v3 旧文案经 `isRecallHintLine` 兼容跳过(历史已落盘旧块的字节不变 → 不破坏缓存前缀)。
   - **thinking 预算归一化**:思考编排关闭时 split 配置层归一化为两段(compacted+tail)。
 - `compactionStats.ts`:压缩成本统计(滑动窗口 100,`windowSeries` 趋势序列,供 UI 徽章/迷你柱状图)。
 - `archivePolicy.ts`:老会话完整历史归档到冷存储(压缩时引用,`dsbAgent.contextBrowse` 可浏览)。
@@ -153,9 +155,30 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
 
 ## 测试与验证
 
-- 单测:`npx vitest run`(110 文件 / 1166 项);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(108 文件 / ~11MB,内置多平台 ripgrep)。
+- 单测:`npx vitest run`(**113 文件 / 1241 通过 / 1 skipped**);类型检查:`npx tsc --noEmit`;打包:`npx vsce package`(**109 文件 / 5.37 MB**,内置多平台 ripgrep)。
 - CI:`.github/workflows/ci.yml`(typecheck → vitest → vsce package,**windows/macos/ubuntu 三平台矩阵** + Marketplace/Open VSX/GitHub Release 发布 job)。
 - 引擎层(src/ 非 webview)不依赖 `vscode` 模块,全部逻辑可脱离宿主单测。
+
+## 近期工作重点(2026-09-19:锚改「会话计划」+ 声明式化,治「反复请用户确认 / 复述清单」)
+
+> 用户核心诉求:agent 每轮都在重列清单、请用户确认,不肯连续推进(锚里的「下一步/清单」被读成"用户的要求")。
+
+1. **去标签 + 声明优先级**:`〔任务锚〕` → `〔会话计划〕`;删除命令句「按下面清单继续推进」,改为事实陈述「下列未完成项即本会话待办,供导航」,
+   并显式声明**用户消息优先于本清单**、「清单是否需要修订用 `TodoWrite` 处理,不必在回复中说明」。
+2. **段标题去汇报语域**:`### 下一步` → `### 未完成项`(`NEXT_STEP_TITLE`,最多 3 条);冲突裁决由首句「用户消息优先于本清单」一次声明(段内不再另写条款);
+   `TodoWrite` 工具描述补「用户新指令使部分项失效或中止时,用 update/clear 修订清单(修订不必向用户解释)」。
+3. **idle 分支**改用 `TASK_ANCHOR_HINT_IDLE`(「〔只读参考·历史上下文〕…不是待办…不要自行继续历史任务」),不再自称「计划/锚」(沿用 P0-6「不递可被引用的名词」)。
+4. **回查提示行**:`RECALL_HINT_LINE` → `(hint: 当前目标见会话计划;…)`;新增 `LEGACY_RECALL_HINT_LINE_V3`
+   (`当前目标见任务锚`)由 `isRecallHintLine` 兼容 —— 历史已落盘旧块继续被识别,字节恒定不破坏缓存前缀。
+5. **工具描述**:`TodoWrite` 补「修订不必向用户解释」,避免「先汇报再改」。
+6. **验证**:`tsc --noEmit` 0 错;`vitest run` **113 文件 / 1241 通过 / 1 skipped**;静态哨兵 **403 文件 0 污染**;
+   `compile` + `vsce package` + `--install-extension --force` 覆盖安装(22:51,109 文件 / 5.37 MB),已安装 `dist/extension.js`
+   (17,728,147 B)的 SHA256 与工作区**一致**(`4F0E6C28…8302F5`),且含新文案、不含旧命令句/`### 下一步`。
+
+### 文档落点
+
+- 根因与修复:`.dsb/docs/2026-09-19-会话计划锚冲突与复述修复.md`
+- 前情:`.dsb/docs/2026-09-16-任务锚复述闭环根因与修复.md`(P0-6)
 
 ## 近期工作重点(2026-09-16:去掉「任务地图」→ 降级为单行目标锚)
 
@@ -168,7 +191,7 @@ DSBAgent 是一个基于 **Anthropic Messages 兼容 API** 的 VS Code 编码 Ag
    - 多轮补丁(旁白降级/只读化/输出行剔除/提示去标签)均未消除**物理入口**,故整块删。
 3. **降级为单行目标锚**:`ContextManager.buildResidentMap` → `buildResidentGoal(parts)`(取需求轨**最新一条**真实需求);`residentMap: string[]` → `residentGoal: string`;`getResidentMap()`/`seedResidentMap()` → `getResidentGoal()`/`seedResidentGoal()`。
 4. **任务锚改签名**:`buildTaskAnchor(todoBlock, goalLine?, pendingTodos?, modeNote?)` 新增 `**会话目标:** ${goalLine}` 单行;`injectTodoIntoMessages` 的 `opts.mapLines` → `opts.goalLine`;删除 `sanitizeMapLines` / `toReadOnlyMapLines` 与 `./taskMap` import。
-5. **「不迷失」的三条替代保证**:① 长会话丢失已滚出视野的目标 → 单行 `**会话目标:**`(需求轨最新一条真实需求;tail 里的最新需求模型直接可见,无需锚重复);② 忘还剩什么 → `### 下一步`(来自 `TodoManager` 真实 pending,有完成度判定);③ 忘历史细节 → `ContextRecall(seq=n)` 回查 `[r{n}]`。
+5. **「不迷失」的三条替代保证**:① 长会话丢失已滚出视野的目标 → 单行 `**会话目标:**`(需求轨最新一条真实需求;tail 里的最新需求模型直接可见,无需锚重复);② 忘还剩什么 → `### 下一步`(来自 `TodoManager` 真实 pending,有完成度判定;**该标题已于 2026-09-19 改为 `### 未完成项`**,见上节);③ 忘历史细节 → `ContextRecall(seq=n)` 回查 `[r{n}]`。
 6. **`CompactBlockParts.map` 字段彻底删除**:`parse`/`merge`/`truncate` 三处分支一并移除;旧会话遗留的 `## 任务地图` 段在解析时被自然丢弃(不匹配任何现存轨)。设置主键 `dsbAgent.compaction.goalAnchorEnabled`(默认 false),**旧键 `taskMapEnabled` 回退兼容**(老用户显式设过 `true` 仍开启,新键优先,配置不静默失效)。
 7. **验证**:`tsc --noEmit` 0 错;`vitest run` **1227 项通过 / 110 文件**;锚仍只走消息尾部,字节更短(去 5 段),不破坏任何缓存前缀。
 8. **回归口径(长期)**:「短消息(≤15 字)中位轮次」应回落至 **≤10 轮**、`>60 轮占比` < 10%。

@@ -82,9 +82,9 @@ export interface AgentSettingsServices {
   updateBudget(config: AgentBudgetConfig): void | Promise<void>;
 }
 
-/** 归一化比例:非法/全 0 回退默认 45/20/35;thinking 可为 0(两段配置合法)。 */
+/** 归一化比例:非法/全 0 回退默认 20/0/80;thinking 可为 0(两段配置合法)。 */
 export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetSplit {
-  const def: BudgetSplit = { compacted: 0.45, thinking: 0.2, tail: 0.35 };
+  const def: BudgetSplit = { compacted: 0.2, thinking: 0, tail: 0.8 };
   if (!split || typeof split !== "object") return { ...def };
   const c = Number(split.compacted);
   const t = Number(split.thinking);
@@ -101,7 +101,7 @@ export function normalizeSplit(split: Partial<BudgetSplit> | undefined): BudgetS
 export function applyThinkingToSplit(split: BudgetSplit, compact: boolean): BudgetSplit {
   if (compact) return split;
   const two = split.compacted + split.tail;
-  if (!(two > 0)) return { compacted: 0.5625, thinking: 0, tail: 0.4375 };
+  if (!(two > 0)) return { compacted: 0.2, thinking: 0, tail: 0.8 };
   const compacted = split.compacted / two;
   const tail = split.tail / two;
   return { compacted: Math.round(compacted * 1e6) / 1e6, thinking: 0, tail: Math.round(tail * 1e6) / 1e6 };
@@ -116,9 +116,9 @@ export function normalizeThinkingConfig(t: Partial<AgentThinkingConfig> | undefi
 export function normalizeConfig(cfg: Partial<AgentBudgetConfig> | undefined): AgentBudgetConfig {
   const def: AgentBudgetConfig = {
     windowTokens: 600000,
-    budget: 64000,
-    split: { compacted: 0.45, thinking: 0.2, tail: 0.35 },
-    triggerPct: 0.75,
+    budget: 30000,
+    split: { compacted: 0.2, thinking: 0, tail: 0.8 },
+    triggerPct: 0.85,
     targetPct: 0.5,
     thinking: { compact: false },
   };
@@ -190,7 +190,7 @@ async function handleMessage(
         break;
       }
       case "reset_defaults": {
-        // 恢复默认 5 项:窗口 1M / 总预算 100K / 45-20-35 / 触发 75% / 目标 50%
+        // 恢复默认 5 项:窗口 1M / 总预算 30K / 20-0-80 / 触发 85% / 目标 50%
         await services.updateBudget(normalizeConfig(undefined));
         await postState(panel, services);
         await toast(panel, t("已恢复默认参数", services.getLocale()));

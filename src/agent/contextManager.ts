@@ -133,9 +133,9 @@ export interface ContextManagerOptions {
   onThinkingCompaction?: () => void;
   /** 历史信息 token 总预算;0/缺省 = 关闭(现状:固定 tail 4 条 + 压缩块 8K 字符自适应)。 */
   historyTokenBudget?: number;
-  /** 预算三块比例(压缩块/thinking/tail);缺省 45/20/35;调用方负责归一化。 */
+  /** 预算三块比例(压缩块/thinking/tail);缺省 20/0/80(两段:压缩块 20% / tail 80%);调用方负责归一化。 */
   budgetSplit?: { compacted: number; thinking: number; tail: number };
-  /** 触发比例:每块 token ≥ 额定×该比例 → 触发压缩(流水线主触发);缺省 0.75。 */
+  /** 触发比例:每块 token ≥ 额定×该比例 → 触发压缩(流水线主触发);缺省 0.85。 */
   triggerPct?: number;
   /** 压缩后目标比例:触发后收缩到额定×该比例(滞回);缺省 0.5,须 < triggerPct。 */
   targetPct?: number;
@@ -318,8 +318,8 @@ export class ContextManager {
   }
 
   private get triggerPct(): number {
-    const v = this.opts.triggerPct ?? 0.75;
-    return v > 0 && v <= 1 ? v : 0.75;
+    const v = this.opts.triggerPct ?? 0.85;
+    return v > 0 && v <= 1 ? v : 0.85;
   }
 
   private get targetPct(): number {
@@ -708,11 +708,11 @@ export class ContextManager {
   private budgetInfo(): { tailTokens: number; compactedTokens: number; thinkingTokens: number } | null {
     const total = this.opts.historyTokenBudget ?? 0;
     if (total <= 0) return null;
-    const split = this.opts.budgetSplit ?? { compacted: 0.45, thinking: 0.2, tail: 0.35 };
+    const split = this.opts.budgetSplit ?? { compacted: 0.2, thinking: 0, tail: 0.8 };
     const s = split.compacted + split.thinking + split.tail;
     if (!(s > 0)) return null;
     // thinking 独立压缩关闭时,把 thinking 份额按比例并入 compacted/tail 两段(两段归一化)。
-    // 默认 {0.45,0.2,0.35} → compacted 0.5625 / tail 0.4375;自定义 split 按实际值等比缩放。
+    // 默认 {0.2,0,0.8} 已是两段(thinking=0)→ compacted 0.2 / tail 0.8;自定义 split 按实际值等比缩放。
     const thinkingOn = this.thinkingEnabled;
     if (!thinkingOn) {
       const twoSum = split.compacted + split.tail;
